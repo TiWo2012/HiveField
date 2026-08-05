@@ -1,33 +1,62 @@
 mod pty;
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tauri::State;
 
-/// Managed state holding the live PTY session (spawned lazily in `setup`).
-pub struct PtyState(pub Mutex<Option<pty::PtySession>>);
-
-/// IPC command: send input (keystrokes) from the frontend to the shell's PTY.
-#[tauri::command]
-fn pty_write(state: State<'_, PtyState>, data: String) -> Result<(), String> {
-    pty::write(&state, &data).map_err(|e| e.to_string())
+/// Managed state holding all live PTY sessions, keyed by session id.
+pub struct PtyState {
+    pub sessions: Mutex<HashMap<u64, pty::PtySession>>,
+    next_id: AtomicU64,
 }
 
-/// IPC command: resize the PTY to match the frontend terminal's viewport.
+impl Default for PtyState {
+    fn default() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+        }
+    }
+}
+
+/// IPC command: spawn a new PTY shell session, returns its session id.
 #[tauri::command]
-fn pty_resize(state: State<'_, PtyState>, cols: u16, rows: u16) -> Result<(), String> {
-    pty::resize(&state, cols, rows).map_err(|e| e.to_string())
+fn pty_spawn(app: tauri::AppHandle, state: State<'_, PtyState>) -> Result<u64, String> {
+    let session_id = state.next_id.fetch_add(1, Ordering::Relaxed);
+    pty::spawn(&app, session_id).map_err(|e| e.to_string())?;
+    Ok(session_id)
+}
+
+/// IPC command: send input (keystrokes) from the frontend to a session's PTY.
+#[tauri::command]
+fn pty_write(state: State<'_, PtyState>, session_id: u64, data: String) -> Result<(), String> {
+    pty::write(&state, session_id, &data).map_err(|e| e.to_string())
+}
+
+/// IPC command: resize a session's PTY to match the frontend terminal viewport.
+#[tauri::command]
+fn pty_resize(
+    state: State<'_, PtyState>,
+    session_id: u64,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    pty::resize(&state, session_id, cols, rows).map_err(|e| e.to_string())
+}
+
+/// IPC command: kill a PTY session by id.
+#[tauri::command]
+fn pty_kill(state: State<'_, PtyState>, session_id: u64) -> Result<(), String> {
+    pty::kill(&state, session_id).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(PtyState(Mutex::new(None)))
-        .setup(|app| {
-            pty::spawn(app.handle().clone())?;
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![pty_write, pty_resize])
+        .manage(PtyState::default())
+        .invoke_handler(tauri::generate_handler![pty_spawn, pty_write, pty_resize, pty_kill])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

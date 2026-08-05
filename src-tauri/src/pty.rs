@@ -13,11 +13,13 @@
 //! # IPC contract (must match the frontend exactly)
 //!
 //! * Events emitted to the frontend:
-//!   - `pty://output` payload: `{ data: String }`
-//!   - `pty://exit`   payload: `{ code: i32 }`
+//!   - `pty://output` payload: `{ sessionId: u64, data: String }`
+//!   - `pty://exit`   payload: `{ sessionId: u64, code: i32 }`
 //! * Commands invoked by the frontend (registered in `lib.rs`):
-//!   - `pty_write`  (data: String)
-//!   - `pty_resize` (cols: u16, rows: u16)
+//!   - `pty_spawn`  () -> sessionId: u64
+//!   - `pty_write`  (sessionId: u64, data: String)
+//!   - `pty_resize` (sessionId: u64, cols: u16, rows: u16)
+//!   - `pty_kill`   (sessionId: u64)
 //!
 //! # Unicode
 //!
@@ -38,6 +40,7 @@ use tauri::{AppHandle, Emitter, Manager};
 /// A live PTY session: the master end of the pseudo-terminal plus the shell
 /// child process and a handle used to emit events to the frontend.
 pub struct PtySession {
+    session_id: u64,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
@@ -52,13 +55,17 @@ pub struct PtySession {
 
 /// Payload for the `pty://output` event emitted to the frontend.
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputPayload {
+    session_id: u64,
     data: String,
 }
 
 /// Payload for the `pty://exit` event emitted to the frontend.
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExitPayload {
+    session_id: u64,
     code: i32,
 }
 
@@ -129,9 +136,9 @@ impl Utf8StreamDecoder {
     }
 }
 
-/// Spawn the user's default shell in a fresh PTY, store the session in Tauri
-/// state, and start a reader thread that forwards output to the frontend.
-pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+/// Spawn a shell in a fresh PTY, store the session in Tauri state under
+/// `session_id`, and start a reader thread that forwards output to the frontend.
+pub fn spawn(app: &AppHandle, session_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
     } else {
@@ -164,6 +171,7 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let ready = Arc::new(AtomicBool::new(false));
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let session = PtySession {
+        session_id,
         master,
         child,
         writer,
@@ -171,7 +179,11 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         ready: ready.clone(),
         buffer: buffer.clone(),
     };
-    *app.state::<crate::PtyState>().0.lock().unwrap() = Some(session);
+    app.state::<crate::PtyState>()
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(session_id, session);
 
     let reader_app = app.clone();
     std::thread::spawn(move || {
@@ -190,7 +202,13 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                         pending.push(data);
                         if ready.load(Ordering::Relaxed) {
                             for s in pending.drain(..) {
-                                let _ = reader_app.emit("pty://output", OutputPayload { data: s });
+                                let _ = reader_app.emit(
+                                    "pty://output",
+                                    OutputPayload {
+                                        session_id,
+                                        data: s,
+                                    },
+                                );
                             }
                         }
                     }
@@ -201,10 +219,10 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
         let session = reader_app
             .state::<crate::PtyState>()
-            .0
+            .sessions
             .lock()
             .unwrap()
-            .take();
+            .remove(&session_id);
         match session {
             Some(mut session) => {
                 let code = session
@@ -213,10 +231,12 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     .ok()
                     .map(|status| status.exit_code())
                     .unwrap_or(0) as i32;
-                let _ = session.app.emit("pty://exit", ExitPayload { code });
+                let _ = session
+                    .app
+                    .emit("pty://exit", ExitPayload { session_id, code });
             }
             None => {
-                let _ = reader_app.emit("pty://exit", ExitPayload { code: 0 });
+                // Session was killed/removed via `pty_kill`: no spurious exit.
             }
         }
     });
@@ -224,24 +244,30 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Send input from the frontend into the PTY.
-pub fn write(state: &PtyState, data: &str) -> io::Result<()> {
-    let mut guard = state.0.lock().unwrap();
-    let session = guard
-        .as_mut()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no pty session"))?;
+/// Send input from the frontend into the session's PTY.
+pub fn write(state: &PtyState, session_id: u64, data: &str) -> io::Result<()> {
+    let mut guard = state.sessions.lock().unwrap();
+    let session = guard.get_mut(&session_id).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no pty session with id {session_id}"),
+        )
+    })?;
     session.writer.write_all(data.as_bytes())?;
     session.writer.flush()?;
     mark_ready(session);
     Ok(())
 }
 
-/// Resize the PTY to match the frontend terminal viewport.
-pub fn resize(state: &PtyState, cols: u16, rows: u16) -> io::Result<()> {
-    let mut guard = state.0.lock().unwrap();
-    let session = guard
-        .as_mut()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no pty session"))?;
+/// Resize the session's PTY to match the frontend terminal viewport.
+pub fn resize(state: &PtyState, session_id: u64, cols: u16, rows: u16) -> io::Result<()> {
+    let mut guard = state.sessions.lock().unwrap();
+    let session = guard.get_mut(&session_id).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no pty session with id {session_id}"),
+        )
+    })?;
     session
         .master
         .resize(PtySize {
@@ -255,13 +281,25 @@ pub fn resize(state: &PtyState, cols: u16, rows: u16) -> io::Result<()> {
     Ok(())
 }
 
+/// Kill the session's shell process and remove the session. Idempotent: a
+/// session that is already gone (or was never created) is not an error.
+pub fn kill(state: &PtyState, session_id: u64) -> io::Result<()> {
+    let mut guard = state.sessions.lock().unwrap();
+    if let Some(mut session) = guard.remove(&session_id) {
+        let _ = session.child.kill();
+    }
+    Ok(())
+}
+
 /// Mark the frontend as ready (first contact) and flush any output that was
 /// buffered before the webview finished registering its event listeners.
 fn mark_ready(session: &mut PtySession) {
     if !session.ready.swap(true, Ordering::Relaxed) {
         let drained: Vec<String> = session.buffer.lock().unwrap().drain(..).collect();
         for s in drained {
-            let _ = session.app.emit("pty://output", OutputPayload { data: s });
+            let _ = session
+                .app
+                .emit("pty://output", OutputPayload { session_id: session.session_id, data: s });
         }
     }
 }
