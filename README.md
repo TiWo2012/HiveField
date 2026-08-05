@@ -5,6 +5,10 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 ## Features
 
 - Real shell session (your default `$SHELL`) running in a PTY — one per tab/pane
+- **Opens in the directory it was launched from** (falls back to `$HOME` if the
+  launch dir is gone/unreadable)
+- **Auto-runs `opencode`** in every new session, so each tab lands straight in
+  the agent (the shell stays alive underneath — quit opencode to get the prompt)
 - **Tabs & split panes** via [dockview](https://dockview.dev):
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
