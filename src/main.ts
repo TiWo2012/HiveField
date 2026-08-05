@@ -10,6 +10,7 @@ import {
   type AddPanelPositionOptions,
   type CreateComponentOptions,
   type DockviewApi,
+  type GroupNavigationDirection,
   type GroupPanelPartInitParameters,
   type IContentRenderer,
   type IDockviewPanel,
@@ -279,18 +280,60 @@ async function init() {
     pendingOutputs.delete(sessionId);
   });
 
+  setupKeyboard();
+
   addPanelWithMode("opencode");
 }
 
-window.addEventListener("keydown", (e) => {
-  if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
-    e.preventDefault();
-    addPanelWithMode("opencode");
-  }
-  if (e.ctrlKey && e.shiftKey && (e.key === "W" || e.key === "w")) {
-    e.preventDefault();
-    api.activePanel?.api.close();
-  }
-});
+/** Ctrl+H/J/K/L move focus between panes (vim-style). */
+const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
+  h: "left",
+  j: "down",
+  k: "up",
+  l: "right",
+};
+
+function setupKeyboard() {
+  // Ctrl+Shift+T spawns an opencode tab, Ctrl+Shift+W closes the active panel.
+  // Bubble phase is fine here: these combos are not printable terminal keys.
+  window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+      e.preventDefault();
+      addPanelWithMode("opencode");
+    }
+    if (e.ctrlKey && e.shiftKey && (e.key === "W" || e.key === "w")) {
+      e.preventDefault();
+      api.activePanel?.api.close();
+    }
+  });
+
+  // Ctrl+H/J/K/L vim-style pane movement. Registered in the CAPTURE phase so
+  // the keys are intercepted before xterm sees them (otherwise Ctrl+H is
+  // backspace, Ctrl+J newline, Ctrl+K kill-line, Ctrl+L clear-screen). If
+  // there is no adjacent pane in that direction the key falls through to the
+  // terminal.
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+        const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
+        if (direction) {
+          const group = api.activePanel?.group;
+          if (group) {
+            const adjacent = api.adjacentGroupInDirection(group, direction);
+            if (adjacent) {
+              e.preventDefault();
+              e.stopPropagation();
+              // Activate the group via its active panel; our component's
+              // onDidActiveChange handler then focuses the terminal there.
+              adjacent.activePanel?.api.setActive();
+            }
+          }
+        }
+      }
+    },
+    true
+  );
+}
 
 init().catch((err) => console.error("failed to initialize terminal layout", err));

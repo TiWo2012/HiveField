@@ -15,6 +15,9 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
   - Drag tabs between groups, drag splitter handles to resize
+  - **`Ctrl+H` / `Ctrl+J` / `Ctrl+K` / `Ctrl+L`** move focus to the pane
+    left / down / up / right (vim-style); if no pane exists in that direction
+    the key passes through to the shell (so `Ctrl+L` still clears the screen)
   - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
   - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
 - Full **Unicode / UTF-8** support (incremental UTF-8 decoding on the Rust side
