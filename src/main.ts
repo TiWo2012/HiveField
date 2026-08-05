@@ -1,5 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -16,6 +17,13 @@ import {
   type IDockviewPanel,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
+import {
+  getSettings,
+  loadSettings,
+  subscribe,
+  type AppSettings,
+} from "./settings";
+import { toggleSettings } from "./settings-ui";
 import "./styles.css";
 
 /** What a session auto-runs: the opencode agent, or a plain shell. */
@@ -46,11 +54,10 @@ const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
     brightCyan: "#94e2d5",
     brightWhite: "#a6adc8",
   },
-  fontFamily: "monospace",
-  fontSize: 14,
+  // Font options are applied per-terminal from settings via applyTerminalSettings.
   cursorBlink: true,
   scrollback: 10000,
-  allowProposedApi: false,
+  allowProposedApi: true,
 };
 
 interface SessionEntry {
@@ -73,10 +80,25 @@ function nextPanelId(): string {
   return `panel-${++panelCounter}`;
 }
 
+/** Push the current settings into a terminal's xterm options and Unicode version. */
+function applyTerminalSettings(terminal: Terminal, settings: AppSettings): void {
+  terminal.options.fontFamily = settings.fontFamily;
+  terminal.options.fontSize = settings.fontSize;
+  terminal.options.lineHeight = settings.lineHeight;
+  terminal.options.letterSpacing = settings.letterSpacing;
+  terminal.options.fontWeight = settings.fontWeight;
+  terminal.options.fontWeightBold = settings.fontWeightBold;
+  terminal.options.minimumContrastRatio = settings.minimumContrastRatio;
+  terminal.options.cursorBlink = settings.cursorBlink;
+  terminal.unicode.activeVersion = settings.unicodeVersion;
+}
+
 function createTerminal(): { terminal: Terminal; fitAddon: FitAddon } {
   const terminal = new Terminal(TERM_OPTIONS);
+  terminal.loadAddon(new Unicode11Addon());
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  applyTerminalSettings(terminal, getSettings());
   return { terminal, fitAddon };
 }
 
@@ -202,6 +224,14 @@ function buildSidebar() {
 
     sidebar.appendChild(item);
   }
+
+  const settingsBtn = document.createElement("button");
+  settingsBtn.className = "sidebar-settings";
+  settingsBtn.type = "button";
+  settingsBtn.title = "Settings (Ctrl+,)";
+  settingsBtn.textContent = "⚙";
+  settingsBtn.addEventListener("click", toggleSettings);
+  sidebar.appendChild(settingsBtn);
 }
 
 async function registerGlobalListeners() {
@@ -228,6 +258,21 @@ async function registerGlobalListeners() {
 }
 
 async function init() {
+  await loadSettings();
+
+  // Keep every open terminal in sync with the settings, and let the whole UI
+  // use the chosen font family (sidebar, tabs, settings page).
+  subscribe((settings) => {
+    for (const [id, entry] of sessions) {
+      applyTerminalSettings(entry.terminal, settings);
+      syncSize(id, entry.fitAddon, entry.terminal);
+    }
+    document.documentElement.style.setProperty(
+      "--hivefield-font",
+      `"${settings.fontFamily}", monospace`
+    );
+  });
+
   await registerGlobalListeners();
 
   buildSidebar();
@@ -294,9 +339,12 @@ const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
 };
 
 function setupKeyboard() {
+  const settingsOpen = () => document.querySelector(".settings-backdrop") !== null;
+
   // Ctrl+Shift+T spawns an opencode tab, Ctrl+Shift+W closes the active panel.
   // Bubble phase is fine here: these combos are not printable terminal keys.
   window.addEventListener("keydown", (e) => {
+    if (settingsOpen()) return;
     if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
       e.preventDefault();
       addPanelWithMode("opencode");
@@ -304,6 +352,10 @@ function setupKeyboard() {
     if (e.ctrlKey && e.shiftKey && (e.key === "W" || e.key === "w")) {
       e.preventDefault();
       api.activePanel?.api.close();
+    }
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === ",") {
+      e.preventDefault();
+      toggleSettings();
     }
   });
 
@@ -315,6 +367,7 @@ function setupKeyboard() {
   window.addEventListener(
     "keydown",
     (e) => {
+      if (settingsOpen()) return;
       if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
         const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
         if (direction) {

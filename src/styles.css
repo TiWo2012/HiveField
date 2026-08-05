@@ -1,3 +1,7 @@
+:root {
+  --hivefield-font: "monospace", monospace;
+}
+
 body {
   overscroll-behavior: none;
 }
@@ -28,7 +32,7 @@ body {
   background: #181825;
   border-right: 1px solid #313244;
   color: #cdd6f4;
-  font-family: "monospace", monospace;
+  font-family: var(--hivefield-font);
   font-size: 13px;
   user-select: none;
 }
@@ -94,4 +98,212 @@ body {
 .terminal-panel .xterm {
   width: 100%;
   height: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+ * Settings page
+ * ------------------------------------------------------------------------- */
+
+.sidebar-settings {
+  margin-top: auto;
+  align-self: stretch;
+  border: 1px solid #313244;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sidebar-settings:hover {
+  background: #313244;
+  border-color: #45475a;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 24, 37, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.settings-modal {
+  width: min(560px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  color: #cdd6f4;
+  font-family: var(--hivefield-font);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #313244;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #cdd6f4;
+}
+
+.settings-close {
+  border: none;
+  background: none;
+  color: #6c7086;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.settings-close:hover {
+  color: #f38ba8;
+  background: #313244;
+}
+
+.settings-body {
+  padding: 8px 18px 14px;
+  overflow-y: auto;
+}
+
+.settings-section {
+  margin-top: 14px;
+}
+.settings-section:first-child {
+  margin-top: 6px;
+}
+
+.settings-section-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6c7086;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 14px;
+  padding: 6px 0;
+  border-bottom: 1px solid #242432;
+}
+.settings-row:last-of-type {
+  border-bottom: none;
+}
+
+.settings-label {
+  color: #a6adc8;
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+}
+
+.settings-hint {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: #6c7086;
+}
+
+.settings-text,
+.settings-number,
+.settings-select {
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  color: #cdd6f4;
+  padding: 4px 8px;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+}
+.settings-text {
+  width: 100%;
+}
+.settings-number {
+  width: 90px;
+}
+.settings-select {
+  width: auto;
+  min-width: 170px;
+}
+
+.settings-text:focus,
+.settings-number:focus,
+.settings-select:focus {
+  outline: none;
+  border-color: #89b4fa;
+}
+
+.settings-toggle {
+  width: 16px;
+  height: 16px;
+  accent-color: #89b4fa;
+}
+
+.settings-preview {
+  margin: 4px 0 8px;
+  padding: 10px 12px;
+  background: #181825;
+  border: 1px dashed #45475a;
+  border-radius: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #cdd6f4;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid #313244;
+}
+
+.settings-reset,
+.settings-done {
+  border: 1px solid #313244;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-reset {
+  background: transparent;
+  color: #f9e2af;
+}
+.settings-reset:hover {
+  background: #313244;
+}
+.settings-done {
+  background: #89b4fa;
+  color: #11111b;
+  border-color: #89b4fa;
+}
+.settings-done:hover {
+  background: #a6d0fd;
 }
