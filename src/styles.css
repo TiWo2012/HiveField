@@ -15,6 +15,75 @@ body {
   --dv-group-view-background-color: #1e1e2e;
 }
 
+/* ---------------------------------------------------------------------------
+ * Sidebar: draggable session sources
+ * ------------------------------------------------------------------------- */
+
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+  background: #181825;
+  border-right: 1px solid #313244;
+  color: #cdd6f4;
+  font-family: "monospace", monospace;
+  font-size: 13px;
+  user-select: none;
+}
+
+#sidebar .sidebar-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6c7086;
+  margin-bottom: 4px;
+}
+
+.drag-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  cursor: grab;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.12s ease;
+}
+
+.drag-item:hover {
+  background: #313244;
+  border-color: #45475a;
+}
+
+.drag-item:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+.drag-item .drag-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.drag-item[data-mode="opencode"] .drag-icon {
+  color: #a6e3a1;
+}
+
+.drag-item[data-mode="raw"] .drag-icon {
+  color: #94e2d5;
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal panels
+ * ------------------------------------------------------------------------- */
+
 .terminal-panel {
   width: 100%;
   height: 100%;

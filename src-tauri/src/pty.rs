@@ -138,7 +138,10 @@ impl Utf8StreamDecoder {
 
 /// Spawn a shell in a fresh PTY, store the session in Tauri state under
 /// `session_id`, and start a reader thread that forwards output to the frontend.
-pub fn spawn(app: &AppHandle, session_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// `mode` is `"opencode"` to auto-run `opencode` in the session, or `"raw"`
+/// for a plain shell.
+pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
     } else {
@@ -251,20 +254,23 @@ pub fn spawn(app: &AppHandle, session_id: u64) -> Result<(), Box<dyn std::error:
         }
     });
 
-    // Auto-run `opencode` in every new session shortly after the shell starts,
-    // so each tab opens straight into the agent. The shell stays alive
-    // underneath, so quitting opencode returns to the prompt. Writes go through
-    // the same sessions mutex as `pty_write`, so input cannot interleave.
-    let autorun_app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let state = autorun_app.state::<crate::PtyState>();
-        let mut guard = state.sessions.lock().unwrap();
-        if let Some(session) = guard.get_mut(&session_id) {
-            let _ = session.writer.write_all(b"opencode\r\n");
-            let _ = session.writer.flush();
-        }
-    });
+    // For `opencode` sessions, auto-run `opencode` shortly after the shell
+    // starts so each tab opens straight into the agent. The shell stays alive
+    // underneath, so quitting opencode returns to the prompt. Writes go
+    // through the same sessions mutex as `pty_write`, so input cannot
+    // interleave. `raw` sessions skip this entirely.
+    if mode == "opencode" {
+        let autorun_app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let state = autorun_app.state::<crate::PtyState>();
+            let mut guard = state.sessions.lock().unwrap();
+            if let Some(session) = guard.get_mut(&session_id) {
+                let _ = session.writer.write_all(b"opencode\r\n");
+                let _ = session.writer.flush();
+            }
+        });
+    }
 
     Ok(())
 }

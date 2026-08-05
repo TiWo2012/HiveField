@@ -14,14 +14,27 @@
         background: #1e1e2e;
         overflow: hidden;
       }
+      #app {
+        display: flex;
+        height: 100%;
+      }
+      #sidebar {
+        width: 180px;
+        flex: 0 0 auto;
+        height: 100%;
+      }
       #terminal {
-        width: 100%;
+        flex: 1 1 auto;
+        min-width: 0;
         height: 100%;
       }
     </style>
   </head>
   <body>
-    <div id="terminal"></div>
+    <div id="app">
+      <aside id="sidebar"></aside>
+      <div id="terminal"></div>
+    </div>
     <script type="module" src="/main.js"></script>
   </body>
 </html>

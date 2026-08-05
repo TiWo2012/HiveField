@@ -22,10 +22,19 @@ impl Default for PtyState {
 }
 
 /// IPC command: spawn a new PTY shell session, returns its session id.
+///
+/// `mode` controls what the session auto-runs:
+///   - `"opencode"` (default): the shell auto-runs `opencode`
+///   - `"raw"`: plain shell, no auto-run
 #[tauri::command]
-fn pty_spawn(app: tauri::AppHandle, state: State<'_, PtyState>) -> Result<u64, String> {
+fn pty_spawn(
+    app: tauri::AppHandle,
+    state: State<'_, PtyState>,
+    mode: Option<String>,
+) -> Result<u64, String> {
     let session_id = state.next_id.fetch_add(1, Ordering::Relaxed);
-    pty::spawn(&app, session_id).map_err(|e| e.to_string())?;
+    let mode = mode.unwrap_or_else(|| "opencode".to_string());
+    pty::spawn(&app, session_id, &mode).map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 
