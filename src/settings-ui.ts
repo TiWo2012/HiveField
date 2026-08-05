@@ -5,8 +5,8 @@
  * live to all open terminals. A preview line shows the current font.
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import {
-  NERD_FONT_PRESETS,
   getSettings,
   resetSettings,
   subscribe,
@@ -78,15 +78,33 @@ function controlRow(label: string, control: HTMLElement, hint?: string): HTMLEle
   return rowEl;
 }
 
-function textField(value: string, listId: string | undefined, onChange?: (v: string) => void): HTMLElement {
-  const input = el("input", "settings-text");
-  input.type = "text";
-  input.spellcheck = false;
-  input.autocomplete = "off";
-  input.value = value;
-  if (listId) input.setAttribute("list", listId);
-  input.addEventListener("input", () => onChange?.(input.value));
-  return input;
+function fontSelect(current: string, onChange?: (v: string) => void): HTMLElement {
+  const select = el("select", "settings-select");
+  const addOption = (value: string) => {
+    const optionEl = el("option");
+    optionEl.value = value;
+    optionEl.textContent = value;
+    select.appendChild(optionEl);
+  };
+
+  addOption(current);
+  select.value = current;
+  select.addEventListener("change", () => onChange?.(select.value));
+
+  invoke<string[]>("list_system_fonts")
+    .then((fonts) => {
+      // Replace the placeholder option with the full system list, keeping the
+      // current font visible (and without duplicates) when it isn't installed.
+      select.replaceChildren();
+      if (!fonts.includes(current)) addOption(current);
+      for (const font of fonts) addOption(font);
+      select.value = current;
+    })
+    .catch((err) => {
+      console.error("Failed to load system fonts:", err);
+    });
+
+  return select;
 }
 
 function numberField(value: number, min: number, max: number, step: number, onChange?: (v: number) => void): HTMLElement {
@@ -163,20 +181,11 @@ function buildOverlay(): HTMLElement {
 
   /* --- Font --- */
   const fontSection = section("Font");
-  const fontList = el("datalist", "settings-font-presets");
-  fontList.id = "settings-font-presets";
-  for (const name of NERD_FONT_PRESETS) {
-    const optionEl = el("option");
-    optionEl.value = name;
-    fontList.appendChild(optionEl);
-  }
-  modal.appendChild(fontList); // datalist must be attached to the document
-
   fontSection.appendChild(
     controlRow(
       "Font family",
-      textField(s.fontFamily, fontList.id, (fontFamily) => updateSettings({ fontFamily })),
-      "A Nerd Font installed on your system enables icon glyphs"
+      fontSelect(s.fontFamily, (fontFamily) => updateSettings({ fontFamily })),
+      "Any font installed on your system"
     )
   );
   fontSection.appendChild(
