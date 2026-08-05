@@ -1,3 +1,4 @@
+mod fonts;
 mod pty;
 mod settings;
 
@@ -86,7 +87,8 @@ pub fn run() {
             pty_resize,
             pty_kill,
             settings_get,
-            settings_set
+            settings_set,
+            fonts::list_system_fonts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
