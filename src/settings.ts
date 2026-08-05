@@ -35,25 +35,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cursorBlink: true,
 };
 
-/** Common Nerd Font family names offered as presets in the settings page. */
-export const NERD_FONT_PRESETS: string[] = [
-  "JetBrainsMono Nerd Font",
-  "JetBrainsMono Nerd Font Mono",
-  "FiraCode Nerd Font",
-  "FiraCode Nerd Font Mono",
-  "CaskaydiaCove Nerd Font",
-  "CaskaydiaCove Nerd Font Mono",
-  "Hack Nerd Font",
-  "Hack Nerd Font Mono",
-  "MesloLGM Nerd Font",
-  "MesloLGM Nerd Font Mono",
-  "Mononoki Nerd Font",
-  "Mononoki Nerd Font Mono",
-  "SauceCodePro Nerd Font",
-  "UbuntuMono Nerd Font",
-  "Terminess Nerd Font",
-];
-
 const STORAGE_KEY = "hivefield.settings";
 
 let current: AppSettings = { ...DEFAULT_SETTINGS };
