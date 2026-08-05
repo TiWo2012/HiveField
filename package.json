@@ -1,0 +1,19 @@
+{
+  "name": "hivefield-terminal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A basic terminal built with Tauri and xterm.js",
+  "scripts": {
+    "build": "bun build src/main.ts --outdir dist",
+    "dev": "bun run build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

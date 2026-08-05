@@ -1,0 +1,12 @@
+# Rust / Tauri
+target/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Node / frontend
+node_modules/
+dist/
+
+# Misc
+*.log
+.DS_Store
