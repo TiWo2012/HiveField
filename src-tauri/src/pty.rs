@@ -35,16 +35,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// A live PTY session: the master end of the pseudo-terminal plus the shell
 /// child process and a handle used to emit events to the frontend.
-pub struct PtySession {
+pub struct PtySession<R: tauri::Runtime = tauri::Wry> {
     session_id: u64,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
-    app: AppHandle,
+    app: AppHandle<R>,
     /// Set once the frontend has contacted the backend (first write/resize).
     /// Until then, shell output is buffered so the initial prompt is not lost
     /// while the webview is still registering its event listeners.
@@ -141,7 +141,11 @@ impl Utf8StreamDecoder {
 ///
 /// `mode` is `"opencode"` to auto-run `opencode` in the session, or `"raw"`
 /// for a plain shell.
-pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn spawn<R: Runtime>(
+    app: &AppHandle<R>,
+    session_id: u64,
+    mode: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
     } else {
@@ -192,7 +196,7 @@ pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn
         ready: ready.clone(),
         buffer: buffer.clone(),
     };
-    app.state::<crate::PtyState>()
+    app.state::<crate::PtyState<R>>()
         .sessions
         .lock()
         .unwrap()
@@ -231,7 +235,7 @@ pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn
         }
 
         let session = reader_app
-            .state::<crate::PtyState>()
+            .state::<crate::PtyState<R>>()
             .sessions
             .lock()
             .unwrap()
@@ -263,7 +267,7 @@ pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn
         let autorun_app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(500));
-            let state = autorun_app.state::<crate::PtyState>();
+            let state = autorun_app.state::<crate::PtyState<R>>();
             let mut guard = state.sessions.lock().unwrap();
             if let Some(session) = guard.get_mut(&session_id) {
                 let _ = session.writer.write_all(b"opencode\r\n");
@@ -276,7 +280,7 @@ pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn
 }
 
 /// Send input from the frontend into the session's PTY.
-pub fn write(state: &PtyState, session_id: u64, data: &str) -> io::Result<()> {
+pub fn write<R: Runtime>(state: &PtyState<R>, session_id: u64, data: &str) -> io::Result<()> {
     let mut guard = state.sessions.lock().unwrap();
     let session = guard.get_mut(&session_id).ok_or_else(|| {
         io::Error::new(
@@ -291,7 +295,7 @@ pub fn write(state: &PtyState, session_id: u64, data: &str) -> io::Result<()> {
 }
 
 /// Resize the session's PTY to match the frontend terminal viewport.
-pub fn resize(state: &PtyState, session_id: u64, cols: u16, rows: u16) -> io::Result<()> {
+pub fn resize<R: Runtime>(state: &PtyState<R>, session_id: u64, cols: u16, rows: u16) -> io::Result<()> {
     let mut guard = state.sessions.lock().unwrap();
     let session = guard.get_mut(&session_id).ok_or_else(|| {
         io::Error::new(
@@ -314,7 +318,7 @@ pub fn resize(state: &PtyState, session_id: u64, cols: u16, rows: u16) -> io::Re
 
 /// Kill the session's shell process and remove the session. Idempotent: a
 /// session that is already gone (or was never created) is not an error.
-pub fn kill(state: &PtyState, session_id: u64) -> io::Result<()> {
+pub fn kill<R: Runtime>(state: &PtyState<R>, session_id: u64) -> io::Result<()> {
     let mut guard = state.sessions.lock().unwrap();
     if let Some(mut session) = guard.remove(&session_id) {
         let _ = session.child.kill();
@@ -324,7 +328,7 @@ pub fn kill(state: &PtyState, session_id: u64) -> io::Result<()> {
 
 /// Mark the frontend as ready (first contact) and flush any output that was
 /// buffered before the webview finished registering its event listeners.
-fn mark_ready(session: &mut PtySession) {
+fn mark_ready<R: Runtime>(session: &mut PtySession<R>) {
     if !session.ready.swap(true, Ordering::Relaxed) {
         let drained: Vec<String> = session.buffer.lock().unwrap().drain(..).collect();
         for s in drained {

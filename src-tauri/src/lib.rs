@@ -7,12 +7,12 @@ use std::sync::Mutex;
 use tauri::State;
 
 /// Managed state holding all live PTY sessions, keyed by session id.
-pub struct PtyState {
-    pub sessions: Mutex<HashMap<u64, pty::PtySession>>,
+pub struct PtyState<R: tauri::Runtime = tauri::Wry> {
+    pub sessions: Mutex<HashMap<u64, pty::PtySession<R>>>,
     next_id: AtomicU64,
 }
 
-impl Default for PtyState {
+impl<R: tauri::Runtime> Default for PtyState<R> {
     fn default() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
