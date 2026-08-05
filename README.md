@@ -1,22 +1,30 @@
 # hiveField Terminal
 
-A basic desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
+A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 
 ## Features
 
-- Real shell session (your default `$SHELL`) running in a PTY
+- Real shell session (your default `$SHELL`) running in a PTY — one per tab/pane
+- **Tabs & split panes** via [dockview](https://dockview.dev):
+  - `Ctrl+Shift+T` spawns a new terminal tab
+  - Drag a tab **out of the tab bar** to split it into its own pane group
+  - Drag tabs between groups, drag splitter handles to resize
+  - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
+  - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
 - Full **Unicode / UTF-8** support (incremental UTF-8 decoding on the Rust side
   so multi-byte characters survive split reads; xterm.js Unicode 11 on the UI)
 - Copy/paste, cursor blink, scrollback, window resize → PTY resize
+- Catppuccin Mocha theme end-to-end
 - Cross-platform (Linux/macOS/Windows) via `portable-pty`
 
 ## Architecture
 
 ```
-┌──────────────────────────────┐        IPC events / commands        ┌───────────────────────┐
-│  Frontend  (xterm.js + TS)   │   pty://output / pty://exit         │  Backend  (Rust)      │
-│  dist/ bundled by bun        │ ◄────────────────────────────────►  │  portable-pty + shell │
-└──────────────────────────────┘   pty_write / pty_resize            └───────────────────────┘
+┌──────────────────────────────────┐        IPC events / commands         ┌──────────────────────────────┐
+│  Frontend  (dockview + xterm.js) │   pty://output / pty://exit          │  Backend  (Rust)             │
+│  one xterm per sessionId, tabs/  │ ◄────────────────────────────────►   │  session registry:          │
+│  splits managed by dockview      │   pty_spawn / pty_write /            │  HashMap<sessionId, Pty>    │
+└──────────────────────────────────┘   pty_resize / pty_kill              └──────────────────────────────┘
 ```
 
 ## Requirements
@@ -40,9 +48,14 @@ bun run tauri build
 
 ## IPC contract
 
-| Direction | Name            | Payload                          |
-|-----------|-----------------|----------------------------------|
-| Rust → JS | `pty://output`  | `{ data: string }` (UTF-8)       |
-| Rust → JS | `pty://exit`    | `{ code: number }`               |
-| JS → Rust | `pty_write`     | `{ data: string }`               |
-| JS → Rust | `pty_resize`    | `{ cols: number, rows: number }` |
+All commands/events are addressed by a `sessionId` (a number allocated by the
+backend for each spawned shell).
+
+| Direction | Name            | Payload                                       |
+|-----------|-----------------|-----------------------------------------------|
+| Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
+| Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
+| JS → Rust | `pty_spawn`     | no args → returns `sessionId`                 |
+| JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
+| JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
+| JS → Rust | `pty_kill`      | `{ sessionId }`                               |
