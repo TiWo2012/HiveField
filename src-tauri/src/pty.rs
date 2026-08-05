@@ -28,6 +28,10 @@
 //! `String::from_utf8_lossy` would corrupt characters (mojibake). Use an
 //! incremental decoder that buffers incomplete trailing bytes and only emits
 //! complete characters (see [`Utf8StreamDecoder`]).
+//!
+//! * The spawned shell is given a UTF-8 locale (`LC_ALL`/`LC_CTYPE`/`LANG` set
+//!   to `C.UTF-8`) when none is configured, so it emits full Unicode (emoji,
+//!   CJK, Nerd Font codepoints, etc.).
 
 use crate::PtyState;
 use std::io::{self, Read, Write};
@@ -159,6 +163,15 @@ pub fn spawn(app: &AppHandle, session_id: u64, mode: &str) -> Result<(), Box<dyn
 
     let mut cmd = CommandBuilder::new(shell);
     cmd.env("TERM", "xterm-256color");
+
+    // Ensure a UTF-8 locale is visible to the shell so it emits full Unicode
+    // (emoji, CJK, Nerd Font codepoints, etc.). Only set vars the user has not
+    // configured, so an explicit locale is never clobbered.
+    for var in ["LC_ALL", "LC_CTYPE", "LANG"] {
+        if std::env::var_os(var).is_none() {
+            cmd.env(var, "C.UTF-8");
+        }
+    }
 
     // Start the shell in the directory the app was launched from (the process
     // cwd), falling back to the user's home directory if that is gone or

@@ -1,4 +1,5 @@
 mod pty;
+mod settings;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,11 +62,32 @@ fn pty_kill(state: State<'_, PtyState>, session_id: u64) -> Result<(), String> {
     pty::kill(&state, session_id).map_err(|e| e.to_string())
 }
 
+/// IPC command: read all stored settings as a JSON object ({} if none yet).
+#[tauri::command]
+fn settings_get(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let store = settings::SettingsStore::load(&app)?;
+    Ok(store.read())
+}
+
+/// IPC command: persist the full settings object (opaque JSON blob).
+#[tauri::command]
+fn settings_set(app: tauri::AppHandle, settings: serde_json::Value) -> Result<(), String> {
+    let store = settings::SettingsStore::load(&app)?;
+    store.write(&settings)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(PtyState::default())
-        .invoke_handler(tauri::generate_handler![pty_spawn, pty_write, pty_resize, pty_kill])
+        .invoke_handler(tauri::generate_handler![
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill,
+            settings_get,
+            settings_set
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
