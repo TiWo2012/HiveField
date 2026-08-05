@@ -1,3 +1,4 @@
+mod dictation;
 mod fonts;
 mod pty;
 mod settings;
@@ -81,6 +82,7 @@ fn settings_set(app: tauri::AppHandle, settings: serde_json::Value) -> Result<()
 pub fn run() {
     tauri::Builder::default()
         .manage(PtyState::<tauri::Wry>::default())
+        .manage(dictation::DictationState::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -88,7 +90,10 @@ pub fn run() {
             pty_kill,
             settings_get,
             settings_set,
-            fonts::list_system_fonts
+            fonts::list_system_fonts,
+            dictation::dictation_start,
+            dictation::dictation_stop,
+            dictation::dictation_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

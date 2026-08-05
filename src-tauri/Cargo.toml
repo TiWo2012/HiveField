@@ -18,6 +18,12 @@ serde_json = "1"
 log = "0.4"
 portable-pty = "0.9"
 fontdb = "0.24.0"
+ureq = { version = "2", features = ["tls"] }
+cpal = "0.18.1"
+rubato = "4.0.0"
+whisper-rs = "0.16"
+vosk = "0.3.1"
+zip = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
