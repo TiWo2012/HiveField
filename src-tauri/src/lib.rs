@@ -79,7 +79,7 @@ fn settings_set(app: tauri::AppHandle, settings: serde_json::Value) -> Result<()
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(PtyState::default())
+        .manage(PtyState::<tauri::Wry>::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -90,4 +90,46 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::test::MockRuntime;
+
+    #[test]
+    fn default_state_starts_with_next_id_one() {
+        let state = PtyState::<MockRuntime>::default();
+        let first = state.next_id.fetch_add(1, Ordering::Relaxed);
+        let second = state.next_id.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+    }
+
+    #[test]
+    fn default_state_has_no_sessions() {
+        let state = PtyState::<MockRuntime>::default();
+        assert!(state.sessions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn next_id_is_unique_under_concurrency() {
+        let state = std::sync::Arc::new(PtyState::<MockRuntime>::default());
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let state = std::sync::Arc::clone(&state);
+            handles.push(std::thread::spawn(move || {
+                let mut ids = std::collections::HashSet::new();
+                for _ in 0..100 {
+                    ids.insert(state.next_id.fetch_add(1, Ordering::Relaxed));
+                }
+                ids
+            }));
+        }
+        let mut all = std::collections::HashSet::new();
+        for h in handles {
+            all.extend(h.join().unwrap());
+        }
+        assert_eq!(all.len(), 800, "fetch_add must hand out unique ids");
+    }
 }

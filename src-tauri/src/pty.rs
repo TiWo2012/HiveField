@@ -351,3 +351,141 @@ fn mark_ready<R: Runtime>(session: &mut PtySession<R>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PtyState;
+    use tauri::test::MockRuntime;
+
+    // ---- PTY session registry (error paths, no real PTY needed) ----
+
+    fn empty_state() -> PtyState<MockRuntime> {
+        PtyState::<MockRuntime>::default()
+    }
+
+    #[test]
+    fn write_to_unknown_session_returns_not_found() {
+        let state = empty_state();
+        let err = write(&state, 42, "hello").expect_err("write should fail");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("42"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn resize_unknown_session_returns_not_found() {
+        let state = empty_state();
+        let err = resize(&state, 42, 80, 24).expect_err("resize should fail");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn kill_unknown_session_is_idempotent() {
+        let state = empty_state();
+        assert!(kill(&state, 42).is_ok(), "first kill should be a no-op");
+        assert!(kill(&state, 42).is_ok(), "second kill should also be a no-op");
+    }
+
+    #[test]
+    fn session_map_starts_empty() {
+        assert!(empty_state().sessions.lock().unwrap().is_empty());
+    }
+
+    // ---- Utf8StreamDecoder ----
+
+    #[test]
+    fn decoder_passes_ascii_through() {
+        let mut d = Utf8StreamDecoder::new();
+        assert_eq!(d.push(b"hello world"), "hello world");
+    }
+
+    #[test]
+    fn decoder_empty_input_returns_empty() {
+        let mut d = Utf8StreamDecoder::new();
+        assert_eq!(d.push(b""), "");
+    }
+
+    #[test]
+    fn decoder_buffers_split_two_byte_sequence() {
+        let mut d = Utf8StreamDecoder::new();
+        // 'é' = 0xC3 0xA9
+        assert_eq!(d.push(b"caf"), "caf");
+        assert_eq!(d.push(&[0xC3]), "", "incomplete lead byte is buffered");
+        assert_eq!(d.push(&[0xA9]), "é");
+    }
+
+    #[test]
+    fn decoder_buffers_split_three_byte_sequence() {
+        let mut d = Utf8StreamDecoder::new();
+        // '中' = 0xE4 0xB8 0xAD
+        assert_eq!(d.push(&[0xE4]), "");
+        assert_eq!(d.push(&[0xB8]), "");
+        assert_eq!(d.push(&[0xAD]), "中");
+    }
+
+    #[test]
+    fn decoder_buffers_split_four_byte_emoji() {
+        let mut d = Utf8StreamDecoder::new();
+        // '😀' = 0xF0 0x9F 0x98 0x80
+        assert_eq!(d.push(&[0xF0]), "");
+        assert_eq!(d.push(&[0x9F, 0x98]), "");
+        assert_eq!(d.push(&[0x80]), "😀");
+    }
+
+    #[test]
+    fn decoder_replaces_invalid_bytes() {
+        let mut d = Utf8StreamDecoder::new();
+        assert_eq!(d.push(b"a\xFFb"), "a\u{FFFD}b");
+    }
+
+    #[test]
+    fn decoder_handles_invalid_continuation_after_pending_lead() {
+        let mut d = Utf8StreamDecoder::new();
+        assert_eq!(d.push(&[0xC3]), "");
+        // 0xFF is not a valid continuation for a 2-byte lead: both bytes
+        // decode to U+FFFD.
+        assert_eq!(d.push(&[0xFF]), "\u{FFFD}\u{FFFD}");
+    }
+
+    #[test]
+    fn decoder_handles_truncated_lead_followed_by_invalid_byte() {
+        let mut d = Utf8StreamDecoder::new();
+        // 0xF0 starts a 4-byte sequence; 0x41 ('A') is not a continuation.
+        assert_eq!(d.push(&[0xF0]), "");
+        assert_eq!(d.push(b"A"), "\u{FFFD}A");
+    }
+
+    #[test]
+    fn decoder_mixed_stream_with_splits() {
+        let mut d = Utf8StreamDecoder::new();
+        assert_eq!(d.push(b"h"), "h");
+        assert_eq!(d.push(&[0xF0]), "");
+        assert_eq!(d.push(&[0x9F, 0x98, 0x80]), "😀");
+        assert_eq!(d.push(b"!"), "!");
+        assert_eq!(d.push("世界".as_bytes()), "世界");
+    }
+
+    /// Feed bytes one at a time (the worst-case chunking) and reconstruct.
+    fn decode_bytewise(input: &[u8]) -> String {
+        let mut d = Utf8StreamDecoder::new();
+        let mut out = String::new();
+        for b in input {
+            out.push_str(&d.push(&[*b]));
+        }
+        out.push_str(&d.push(b""));
+        out
+    }
+
+    #[test]
+    fn decoder_bytewise_reconstructs_utf8() {
+        for case in ["hello", "café", "中文", "😀", "👨\u{200D}👩\u{200D}👧", "aé中😀"] {
+            assert_eq!(decode_bytewise(case.as_bytes()), case, "round-trip failed for {case:?}");
+        }
+    }
+
+    #[test]
+    fn decoder_bytewise_zwj_family_emoji() {
+        let fam = "👨\u{200D}👩\u{200D}👧";
+        assert_eq!(decode_bytewise(fam.as_bytes()), fam);
+    }
+}
