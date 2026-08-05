@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type FontWeightValue = "normal" | "bold";
 export type UnicodeVersion = "6" | "11";
+export type DictationEngine = "whisper" | "vosk" | "cloud";
 
 export interface AppSettings {
   fontFamily: string;
@@ -21,6 +22,7 @@ export interface AppSettings {
   unicodeVersion: UnicodeVersion;
   minimumContrastRatio: number;
   cursorBlink: boolean;
+  dictationEngine: DictationEngine;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   unicodeVersion: "11",
   minimumContrastRatio: 1,
   cursorBlink: true,
+  dictationEngine: "whisper",
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -74,6 +77,10 @@ function normalize(value: unknown): AppSettings {
     unicodeVersion: v.unicodeVersion === "6" ? "6" : "11",
     minimumContrastRatio: Math.max(1, Math.min(21, pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio))),
     cursorBlink: pickBool("cursorBlink", DEFAULT_SETTINGS.cursorBlink),
+    dictationEngine:
+      v.dictationEngine === "vosk" || v.dictationEngine === "cloud"
+        ? v.dictationEngine
+        : "whisper",
   };
 }
 

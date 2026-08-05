@@ -24,6 +24,7 @@ import {
   type AppSettings,
 } from "./settings";
 import { toggleSettings } from "./settings-ui";
+import { initDictation } from "./dictation";
 import "./styles.css";
 
 /** What a session auto-runs: the opencode agent, or a plain shell. */
@@ -326,6 +327,12 @@ async function init() {
   });
 
   setupKeyboard();
+
+  initDictation(() => {
+    const panel = api.activePanel;
+    if (!panel) return undefined;
+    return panelToSession.get(panel.id);
+  });
 
   addPanelWithMode("opencode");
 }

@@ -274,6 +274,25 @@ function buildOverlay(): HTMLElement {
   );
   body.appendChild(renderSection);
 
+  /* --- Dictation --- */
+  const dictationSection = section("Dictation");
+  dictationSection.appendChild(
+    controlRow(
+      "Engine",
+      selectField(
+        s.dictationEngine,
+        [
+          { value: "whisper", label: "Whisper (local)" },
+          { value: "vosk", label: "Vosk (local)" },
+          { value: "cloud", label: "Cloud API" },
+        ],
+        (dictationEngine) => updateSettings({ dictationEngine })
+      ),
+      "Hold Ctrl+Alt+D in the terminal to dictate; local engines download their model on first use"
+    )
+  );
+  body.appendChild(dictationSection);
+
   /* --- Preview --- */
   const previewSection = section("Preview");
   previewEl = el("div", "settings-preview");

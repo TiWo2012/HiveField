@@ -307,3 +307,52 @@ body {
 .settings-done:hover {
   background: #a6d0fd;
 }
+
+/* ---------------------------------------------------------------------------
+ * Dictation status badge
+ * ------------------------------------------------------------------------- */
+
+.dictation-badge {
+  display: none;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  background: #313244;
+  border: 1px solid #45475a;
+  color: #cdd6f4;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: var(--hivefield-font);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  user-select: none;
+  pointer-events: none;
+}
+
+.dictation-badge.visible {
+  display: block;
+}
+
+.dictation-badge.listening {
+  color: #a6e3a1;
+  border-color: #a6e3a1;
+  animation: dictation-pulse 1.4s ease-in-out infinite;
+}
+
+.dictation-badge.error {
+  color: #f38ba8;
+  border-color: #f38ba8;
+}
+
+@keyframes dictation-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scale(1.04);
+  }
+}
