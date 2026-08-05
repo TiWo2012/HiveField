@@ -7,8 +7,10 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - Real shell session (your default `$SHELL`) running in a PTY — one per tab/pane
 - **Opens in the directory it was launched from** (falls back to `$HOME` if the
   launch dir is gone/unreadable)
-- **Auto-runs `opencode`** in every new session, so each tab lands straight in
-  the agent (the shell stays alive underneath — quit opencode to get the prompt)
+- **Session sidebar**: drag an **opencode** or **raw term** entry from the left
+  sidebar into the terminal area — it opens there (split or as a tab), with a
+  fresh shell in the launch dir. `opencode` sessions auto-run the agent; `raw`
+  sessions are a plain shell.
 - **Tabs & split panes** via [dockview](https://dockview.dev):
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
@@ -59,7 +61,7 @@ backend for each spawned shell).
 |-----------|-----------------|-----------------------------------------------|
 | Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
 | Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
-| JS → Rust | `pty_spawn`     | no args → returns `sessionId`                 |
+| JS → Rust | `pty_spawn`     | `{ mode }` (`"opencode"` \| `"raw"`, default opencode) → returns `sessionId` |
 | JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
 | JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
 | JS → Rust | `pty_kill`      | `{ sessionId }`                               |
