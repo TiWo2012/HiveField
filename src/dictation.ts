@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getSettings } from "./settings";
 
 type DictationStatus =
   | "idle"
@@ -71,7 +72,8 @@ export function initDictation(getActiveSessionId: () => number | undefined): voi
       e.preventDefault();
       if (active) return;
       active = true;
-      invoke("dictation_start").catch((err) => {
+      const engine = getSettings().dictationEngine;
+      invoke("dictation_start", { engine }).catch((err) => {
         console.error("dictation_start failed", err);
         active = false;
       });
