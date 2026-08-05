@@ -24,7 +24,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  fontFamily: "monospace",
+  fontFamily: "Maple Mono",
   fontSize: 14,
   lineHeight: 1,
   letterSpacing: 0,
