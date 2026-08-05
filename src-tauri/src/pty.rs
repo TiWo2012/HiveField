@@ -156,12 +156,22 @@ pub fn spawn(app: &AppHandle, session_id: u64) -> Result<(), Box<dyn std::error:
 
     let mut cmd = CommandBuilder::new(shell);
     cmd.env("TERM", "xterm-256color");
-    let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    if let Ok(home) = std::env::var(home_var) {
-        let dir = std::path::Path::new(&home);
-        if std::fs::read_dir(dir).is_ok() {
-            cmd.cwd(dir);
-        }
+
+    // Start the shell in the directory the app was launched from (the process
+    // cwd), falling back to the user's home directory if that is gone or
+    // unreadable.
+    let start_dir = std::env::current_dir()
+        .ok()
+        .filter(|d| std::fs::read_dir(d).is_ok())
+        .or_else(|| {
+            let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+            std::env::var(home_var)
+                .ok()
+                .map(std::path::PathBuf::from)
+                .filter(|d| std::fs::read_dir(d).is_ok())
+        });
+    if let Some(dir) = start_dir {
+        cmd.cwd(dir);
     }
 
     let child = slave.spawn_command(cmd)?;
@@ -238,6 +248,21 @@ pub fn spawn(app: &AppHandle, session_id: u64) -> Result<(), Box<dyn std::error:
             None => {
                 // Session was killed/removed via `pty_kill`: no spurious exit.
             }
+        }
+    });
+
+    // Auto-run `opencode` in every new session shortly after the shell starts,
+    // so each tab opens straight into the agent. The shell stays alive
+    // underneath, so quitting opencode returns to the prompt. Writes go through
+    // the same sessions mutex as `pty_write`, so input cannot interleave.
+    let autorun_app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let state = autorun_app.state::<crate::PtyState>();
+        let mut guard = state.sessions.lock().unwrap();
+        if let Some(session) = guard.get_mut(&session_id) {
+            let _ = session.writer.write_all(b"opencode\r\n");
+            let _ = session.writer.flush();
         }
     });
 
