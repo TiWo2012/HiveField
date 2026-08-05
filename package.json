@@ -5,7 +5,7 @@
   "type": "module",
   "description": "A basic terminal built with Tauri and xterm.js",
   "scripts": {
-    "build": "bun build src/main.ts --outdir dist",
+    "build": "bun build src/main.ts --outdir dist && cp index.html dist/",
     "dev": "bun run build"
   },
   "dependencies": {

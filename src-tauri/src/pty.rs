@@ -29,6 +29,8 @@
 
 use crate::PtyState;
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -40,6 +42,12 @@ pub struct PtySession {
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
     app: AppHandle,
+    /// Set once the frontend has contacted the backend (first write/resize).
+    /// Until then, shell output is buffered so the initial prompt is not lost
+    /// while the webview is still registering its event listeners.
+    ready: Arc<AtomicBool>,
+    /// Output buffered before the frontend was ready.
+    buffer: Arc<Mutex<Vec<String>>>,
 }
 
 /// Payload for the `pty://output` event emitted to the frontend.
@@ -153,11 +161,15 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = master.try_clone_reader()?;
     let writer = master.take_writer()?;
 
+    let ready = Arc::new(AtomicBool::new(false));
+    let buffer = Arc::new(Mutex::new(Vec::new()));
     let session = PtySession {
         master,
         child,
         writer,
         app: app.clone(),
+        ready: ready.clone(),
+        buffer: buffer.clone(),
     };
     *app.state::<crate::PtyState>().0.lock().unwrap() = Some(session);
 
@@ -171,7 +183,16 @@ pub fn spawn(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(n) => {
                     let data = decoder.push(&buf[..n]);
                     if !data.is_empty() {
-                        let _ = reader_app.emit("pty://output", OutputPayload { data });
+                        // Emit once the frontend is ready; otherwise buffer.
+                        // The push + check + drain all happen under the buffer
+                        // lock so no output is lost when `ready` flips.
+                        let mut pending = buffer.lock().unwrap();
+                        pending.push(data);
+                        if ready.load(Ordering::Relaxed) {
+                            for s in pending.drain(..) {
+                                let _ = reader_app.emit("pty://output", OutputPayload { data: s });
+                            }
+                        }
                     }
                 }
                 Err(_) => break,
@@ -210,7 +231,9 @@ pub fn write(state: &PtyState, data: &str) -> io::Result<()> {
         .as_mut()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no pty session"))?;
     session.writer.write_all(data.as_bytes())?;
-    session.writer.flush()
+    session.writer.flush()?;
+    mark_ready(session);
+    Ok(())
 }
 
 /// Resize the PTY to match the frontend terminal viewport.
@@ -227,5 +250,18 @@ pub fn resize(state: &PtyState, cols: u16, rows: u16) -> io::Result<()> {
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(io::Error::other)
+        .map_err(io::Error::other)?;
+    mark_ready(session);
+    Ok(())
+}
+
+/// Mark the frontend as ready (first contact) and flush any output that was
+/// buffered before the webview finished registering its event listeners.
+fn mark_ready(session: &mut PtySession) {
+    if !session.ready.swap(true, Ordering::Relaxed) {
+        let drained: Vec<String> = session.buffer.lock().unwrap().drain(..).collect();
+        for s in drained {
+            let _ = session.app.emit("pty://output", OutputPayload { data: s });
+        }
+    }
 }
