@@ -136,6 +136,18 @@ function applyTerminalSettings(terminal: Terminal, settings: AppSettings): void 
   terminal.options.minimumContrastRatio = settings.minimumContrastRatio;
   terminal.options.cursorBlink = settings.cursorBlink;
   terminal.unicode.activeVersion = settings.unicodeVersion;
+  applyFontLigatures(terminal, settings.fontLigatures);
+}
+
+/**
+ * Toggle font ligatures. xterm's DOM renderer merges consecutive cells into
+ * spans, so the browser applies ligatures when the `calt` OpenType feature is
+ * enabled — this is what programming fonts (Fira Code, Maple Mono, JetBrains
+ * Mono, ...) use for sequences like `->`, `=>` and `!=`.
+ */
+function applyFontLigatures(terminal: Terminal, enabled: boolean): void {
+  if (!terminal.element) return; // not attached to the DOM yet
+  terminal.element.style.fontFeatureSettings = enabled ? '"calt" 1, "liga" 1, "clig" 1' : "normal";
 }
 
 function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon: SearchAddon } {
@@ -267,6 +279,9 @@ function createTerminalComponent(): IContentRenderer {
       fitAddon = created.fitAddon;
       searchAddon = created.searchAddon;
       terminal.open(element);
+      // terminal.element is only created by open(); re-apply settings so
+      // element-dependent options (font ligatures) take effect.
+      applyTerminalSettings(terminal, getSettings());
 
       // Buffer of the input line currently being typed, used to title the
       // pane once the line is submitted to the agent.
@@ -361,6 +376,85 @@ function activeSessionEntry(): SessionEntry | undefined {
   const sessionId = panelToSession.get(panel.id);
   if (sessionId === undefined) return undefined;
   return sessions.get(sessionId);
+}
+
+/**
+ * WebKitGTK workaround: dockview's own drop targets sometimes lose the final
+ * `drop` near the top/bottom edges of a pane (the preview overlay still shows
+ * while hovering — only the release is dropped on the floor). This catches the
+ * `drop` at the document level and, when dockview did not already open a
+ * session, computes the target pane and split direction from the pointer
+ * position and opens it here instead.
+ */
+function setupDropFallback() {
+  const terminalEl = document.getElementById("terminal")!;
+  // Same edge-zone ratio as the dropOverlayModel above (30%).
+  const EDGE = 0.3;
+  // dockview's outer-layout edge overlay activates within this many px.
+  const OUTER_EDGE_PX = 10;
+
+  const complete = (clientX: number, clientY: number, mode: Mode, before: number) => {
+    // dockview handles drops synchronously inside the same event dispatch, so
+    // when a session already opened by the time this runs, it handled the drop.
+    setTimeout(() => {
+      if (api.panels.length > before) return;
+
+      const rect = terminalEl.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+
+      const el = document.elementFromPoint(clientX, clientY);
+      const groupEl = el?.closest(".dv-groupview");
+      const group = groupEl
+        ? api.groups.find(
+            (g) => (g as unknown as { element: HTMLElement }).element === groupEl
+          )
+        : undefined;
+
+      let position: AddPanelPositionOptions | undefined;
+      if (group && groupEl) {
+        const contentEl = groupEl.querySelector<HTMLElement>(
+          ":scope > .dv-content-container"
+        );
+        if (contentEl) {
+          const cr = contentEl.getBoundingClientRect();
+          const xp = (clientX - cr.left) / cr.width;
+          const yp = (clientY - cr.top) / cr.height;
+          let direction: "above" | "below" | "left" | "right" | "within";
+          if (xp < EDGE) direction = "left";
+          else if (xp > 1 - EDGE) direction = "right";
+          else if (yp < EDGE) direction = "above";
+          else if (yp > 1 - EDGE) direction = "below";
+          else direction = "right"; // center -> split right (kitty-style)
+          position = { direction, referenceGroup: group };
+        }
+      } else {
+        // Outer layout edge — mirror dockview's root edge drop target.
+        let direction: "above" | "below" | "left" | "right" | undefined;
+        if (x < OUTER_EDGE_PX) direction = "left";
+        else if (x > rect.width - OUTER_EDGE_PX) direction = "right";
+        else if (y < OUTER_EDGE_PX) direction = "above";
+        else if (y > rect.height - OUTER_EDGE_PX) direction = "below";
+        if (direction) position = { direction };
+      }
+
+      if (position) addPanelWithMode(mode, position);
+    }, 0);
+  };
+
+  // Capture phase: this runs before dockview's own handlers and only acts if
+  // they ended up not opening a session.
+  document.addEventListener(
+    "drop",
+    (e) => {
+      const mode = readDragMode(e.dataTransfer);
+      if (!mode) return;
+      e.preventDefault(); // don't let the webview insert/paste the payload
+      complete(e.clientX, e.clientY, mode, api.panels.length);
+    },
+    true
+  );
 }
 
 function buildSidebar() {
@@ -501,6 +595,10 @@ async function init() {
     addPanelWithMode(mode, position);
   });
 
+  // WebKitGTK can drop the final `drop` near pane top/bottom edges; make sure a
+  // released session still opens even when dockview misses it.
+  setupDropFallback();
+
   api.onDidRemovePanel((panel: IDockviewPanel) => {
     const sessionId = panelToSession.get(panel.id);
     if (sessionId === undefined) return;
@@ -512,6 +610,9 @@ async function init() {
     sessions.delete(sessionId);
     panelToSession.delete(panel.id);
     pendingOutputs.delete(sessionId);
+    // If the searched terminal just went away, move the highlights onto
+    // whatever is active now (or clear them if nothing is).
+    if (isSearchOpen()) rerunSearch();
   });
 
   setupKeyboard();

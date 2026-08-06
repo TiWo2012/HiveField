@@ -235,6 +235,13 @@ function buildOverlay(): HTMLElement {
       )
     )
   );
+  fontSection.appendChild(
+    controlRow(
+      "Font ligatures",
+      toggleField(s.fontLigatures, (fontLigatures) => updateSettings({ fontLigatures })),
+      "Render programming ligatures (e.g. ->, =>, ==) when the font supports them"
+    )
+  );
   body.appendChild(fontSection);
 
   /* --- Unicode --- */

@@ -22,6 +22,7 @@ export interface AppSettings {
   unicodeVersion: UnicodeVersion;
   minimumContrastRatio: number;
   cursorBlink: boolean;
+  fontLigatures: boolean;
   dictationEngine: DictationEngine;
 }
 
@@ -35,6 +36,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   unicodeVersion: "11",
   minimumContrastRatio: 1,
   cursorBlink: true,
+  fontLigatures: true,
   dictationEngine: "whisper",
 };
 
@@ -77,6 +79,7 @@ function normalize(value: unknown): AppSettings {
     unicodeVersion: v.unicodeVersion === "6" ? "6" : "11",
     minimumContrastRatio: Math.max(1, Math.min(21, pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio))),
     cursorBlink: pickBool("cursorBlink", DEFAULT_SETTINGS.cursorBlink),
+    fontLigatures: pickBool("fontLigatures", DEFAULT_SETTINGS.fontLigatures),
     dictationEngine:
       v.dictationEngine === "vosk" || v.dictationEngine === "cloud"
         ? v.dictationEngine
