@@ -6,6 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   createDockview,
   positionToDirection,
@@ -1773,6 +1774,28 @@ function setupKeyboard() {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === ",") {
       e.preventDefault();
       toggleSettings();
+    }
+    // Ctrl+Shift+V pastes the system clipboard into the active terminal;
+    // Ctrl+Shift+C copies its selection. WebViews don't bind these combos
+    // natively (Ctrl+V/C are the browser defaults, and Ctrl+C is SIGINT in
+    // the shell), so they would otherwise fall through as no-ops.
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "V" || e.key === "v")) {
+      e.preventDefault();
+      const entry = activeSessionEntry();
+      if (entry) {
+        void readText()
+          .then((text) => entry.terminal.paste(text))
+          .catch((err) => console.error("clipboard read failed", err));
+      }
+    }
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "C" || e.key === "c")) {
+      const selection = activeSessionEntry()?.terminal.getSelection() ?? "";
+      if (selection) {
+        e.preventDefault();
+        void writeText(selection).catch((err) => console.error("clipboard write failed", err));
+      }
+      // Without a selection the key is left alone and falls through to the
+      // shell, matching other terminals.
     }
   });
 

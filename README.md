@@ -43,6 +43,11 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   - **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is
     never overwritten by program/OSC titles, and clearing it reverts to
     automatic titles
+- **Copy / paste**: `Ctrl+Shift+C` copies the active terminal's selection to
+  the system clipboard (falls through when nothing is selected, so it never
+  clobbers `Ctrl+C`'s SIGINT); `Ctrl+Shift+V` pastes the clipboard into the
+  active terminal (bracketed-paste aware). `Ctrl+V` / `Ctrl+C` keep their
+  native webview behavior.
 - **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
   open pane (jump straight to it) and common actions (new opencode/pi/raw tab
   or split, find, focus panes, rename, close, settings). Type to fuzzy-filter with
