@@ -92,14 +92,27 @@ function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | und
 
 /**
  * True while one of our sidebar sessions is being dragged over a drop
- * target. Requires a known session payload: dockview's own tab drags set
+ * target. The module-level flag is authoritative (payloads are unreadable
+ * during `dragover` on WebKitGTK); the dataTransfer checks are a fallback for
+ * platforms that do expose the payload. dockview's own tab drags set
  * `text/plain` to `""`, so this never collides with its internal DnD.
  */
 function isHiveFieldDrag(dt: DataTransfer | null | undefined): boolean {
+  if (sidebarDragActive) return true;
   if (!dt) return false;
   const types = Array.from(dt.types);
   if (types.includes(DND_MIME)) return true;
   return types.includes("text/plain") && readDragPayload(dt) !== undefined;
+}
+
+/**
+ * Resolve the session a drop carries: prefer the live dataTransfer payload
+ * (reliable in `drop` events), falling back to the payload captured at
+ * `dragstart` — but only while a sidebar drag is actually in flight, so a
+ * stale payload is never applied to an unrelated drop.
+ */
+function resolveDragPayload(dt: DataTransfer | null | undefined): SessionDrag | undefined {
+  return readDragPayload(dt) ?? (sidebarDragActive ? pendingSessionDrag : undefined);
 }
 
 /** Small floating label used as the custom drag image for sidebar entries. */
@@ -221,6 +234,21 @@ const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 let api: DockviewApi;
 let panelCounter = 0;
+
+/**
+ * True while one of our sidebar sessions is being dragged. WebKitGTK does not
+ * expose drag payloads through `dataTransfer.getData()` during `dragover`
+ * (only `drop` can read them), so dockview's acceptance gate cannot rely on
+ * the payload being readable. Set on `dragstart`, cleared on `dragend`.
+ */
+let sidebarDragActive = false;
+
+/**
+ * The payload of the in-flight sidebar drag, kept in memory so the drop
+ * handlers still resolve a session even when the webview strips our custom
+ * MIME types (and `text/plain`) from the transfer.
+ */
+let pendingSessionDrag: SessionDrag | undefined;
 
 function nextPanelId(): string {
   return `panel-${++panelCounter}`;
@@ -793,7 +821,20 @@ function setupDropFallback() {
         if (direction) position = { direction };
       }
 
-      if (position) addPanelWithMode(drag.mode, position, drag.cwd);
+      if (position) {
+        addPanelWithMode(drag.mode, position, drag.cwd);
+      } else {
+        // The pointer is inside the terminal but not over a group or an
+        // outer-edge zone (e.g. a gutter between groups). Default to
+        // splitting the active panel to the right so a released session
+        // never silently disappears.
+        const active = api.activePanel;
+        addPanelWithMode(
+          drag.mode,
+          active ? { direction: "right", referencePanel: active } : undefined,
+          drag.cwd
+        );
+      }
     }, 0);
   };
 
@@ -802,7 +843,7 @@ function setupDropFallback() {
   document.addEventListener(
     "drop",
     (e) => {
-      const drag = readDragPayload(e.dataTransfer);
+      const drag = resolveDragPayload(e.dataTransfer);
       if (!drag) return;
       e.preventDefault(); // don't let the webview insert/paste the payload
       complete(e.clientX, e.clientY, drag, api.panels.length);
@@ -839,10 +880,17 @@ function buildSidebar() {
     item.addEventListener("dragstart", (e) => {
       const dt = e.dataTransfer;
       if (!dt) return;
+      // Remember the drag in module state: WebKitGTK only surfaces the
+      // payload to `drop` handlers, never to `dragover`, and sometimes
+      // strips our custom MIME type entirely. The flag drives dockview's
+      // drop-overlay acceptance; the stored payload survives any MIME loss.
+      const drag: SessionDrag = { mode: source.mode };
+      sidebarDragActive = true;
+      pendingSessionDrag = drag;
       // Advertise the session under our own MIME type *and* as plain text:
       // some WebKitGTK builds only surface the text/plain target across a
       // drag. JSON carries the mode plus an optional worktree cwd.
-      const payload = serializeDrag({ mode: source.mode });
+      const payload = serializeDrag(drag);
       dt.setData(DND_MIME, payload);
       dt.setData("text/plain", payload);
       dt.effectAllowed = "copy";
@@ -852,6 +900,13 @@ function buildSidebar() {
       document.body.appendChild(ghost);
       dt.setDragImage(ghost, 8, 8);
       requestAnimationFrame(() => ghost.remove());
+    });
+
+    // `dragend` fires whether the drag was dropped or cancelled, so the
+    // sidebar-drag state never leaks into later, unrelated drags.
+    item.addEventListener("dragend", () => {
+      sidebarDragActive = false;
+      pendingSessionDrag = undefined;
     });
 
     sidebar.appendChild(item);
@@ -1106,7 +1161,7 @@ async function init() {
   // hit a thin edge or drag a tab out afterwards. Ctrl+Shift+T is still the
   // way to open a session as a tab.
   api.onDidDrop((event) => {
-    const drag = readDragPayload((event.nativeEvent as DragEvent).dataTransfer);
+    const drag = resolveDragPayload((event.nativeEvent as DragEvent).dataTransfer);
     if (!drag) return;
 
     const direction = positionToDirection(event.position);
