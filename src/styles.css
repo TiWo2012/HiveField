@@ -1,22 +1,104 @@
 :root {
   --hivefield-font: "monospace", monospace;
+  --hf-base: #1e1e2e;
+  --hf-mantle: #181825;
+  --hf-crust: #11111b;
+  --hf-surface0: #313244;
+  --hf-surface1: #45475a;
+  --hf-surface2: #45475a;
+  --hf-text: #cdd6f4;
+  --hf-subtext1: #bac2de;
+  --hf-subtext0: #a6adc8;
+  --hf-overlay0: #6c7086;
+  --hf-accent: #89b4fa;
+  --hf-accent-fg: #11111b;
+  --hf-green: #a6e3a1;
+  --hf-red: #f38ba8;
+  --hf-yellow: #f9e2af;
+  --hf-teal: #94e2d5;
+  /* Terminal background (opaque, or rgba when transparency is enabled). */
+  --hf-terminal-bg: #1e1e2e;
+  --hf-backdrop: rgba(24, 24, 37, 0.72);
+  --hf-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 body {
   overscroll-behavior: none;
 }
 
-.dockview-theme-catppuccin-mocha {
-  --dv-tabs-and-actions-container-background-color: #1e1e2e;
-  --dv-activegroup-visiblepanel-tab-background-color: #313244;
-  --dv-activegroup-hiddenpanel-tab-background-color: #313244;
-  --dv-inactivegroup-visiblepanel-tab-background-color: #1e1e2e;
-  --dv-inactivegroup-hiddenpanel-tab-background-color: #1e1e2e;
-  --dv-activegroup-visiblepanel-tab-color: #cdd6f4;
-  --dv-activegroup-hiddenpanel-tab-color: #cdd6f4;
-  --dv-inactivegroup-visiblepanel-tab-color: #a6adc8;
-  --dv-inactivegroup-hiddenpanel-tab-color: #a6adc8;
-  --dv-group-view-background-color: #1e1e2e;
+html,
+body {
+  background: var(--hf-base);
+}
+
+.dockview-theme-hivefield {
+  --dv-group-view-background-color: var(--hf-base);
+  --dv-tabs-and-actions-container-background-color: var(--hf-mantle);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--hf-base);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--hf-surface0);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--hf-mantle);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--hf-crust);
+  --dv-activegroup-visiblepanel-tab-color: var(--hf-text);
+  --dv-activegroup-hiddenpanel-tab-color: var(--hf-subtext1);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--hf-subtext0);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--hf-overlay0);
+  --dv-separator-border: var(--hf-surface2);
+  --dv-paneview-active-outline-color: var(--hf-accent);
+  --dv-active-sash-color: var(--hf-accent);
+  --dv-scrollbar-background-color: color-mix(in srgb, var(--hf-surface0) 80%, transparent);
+  --dv-icon-hover-background-color: color-mix(in srgb, var(--hf-surface1) 50%, transparent);
+}
+
+/* Active-tab underline accent (was the Catppuccin-specific ::after rule). */
+.dockview-theme-hivefield .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {
+  position: absolute;
+  left: 0px;
+  bottom: 0px;
+  content: "";
+  width: 100%;
+  height: 2px;
+  background-color: var(--hf-accent);
+  z-index: 999;
+}
+.dockview-theme-hivefield .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {
+  position: absolute;
+  left: 0px;
+  bottom: 0px;
+  content: "";
+  width: 100%;
+  height: 2px;
+  background-color: color-mix(in srgb, var(--hf-accent) 40%, transparent);
+  z-index: 999;
+}
+
+/* Tabs under the accent underline keep a natural hover feel. */
+.dockview-theme-hivefield .dv-tab:hover {
+  background-color: color-mix(in srgb, var(--hf-surface0) 55%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Transparency — enabled when the setting is below 1 (window is transparent,
+ * terminal and dockview content let the desktop show through with a blur).
+ * ------------------------------------------------------------------------- */
+
+:root[data-transparent="true"],
+:root[data-transparent="true"] body {
+  background: transparent;
+}
+
+:root[data-transparent="true"] .dv-dockview {
+  background: transparent;
+}
+
+/* Let the desktop show through behind translucent terminals and splits. */
+:root[data-transparent="true"] .dockview-theme-hivefield {
+  --dv-group-view-background-color: transparent;
+}
+
+:root[data-transparent="true"] .terminal-panel {
+  background: transparent;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
 }
 
 /* ---------------------------------------------------------------------------
@@ -29,9 +111,9 @@ body {
   gap: 8px;
   padding: 12px;
   box-sizing: border-box;
-  background: #181825;
-  border-right: 1px solid #313244;
-  color: #cdd6f4;
+  background: var(--hf-mantle);
+  border-right: 1px solid var(--hf-surface2);
+  color: var(--hf-text);
   font-family: var(--hivefield-font);
   font-size: 13px;
   user-select: none;
@@ -42,7 +124,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6c7086;
+  color: var(--hf-overlay0);
   margin-bottom: 4px;
 }
 
@@ -52,8 +134,8 @@ body {
   gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: #1e1e2e;
-  border: 1px solid #313244;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
   cursor: grab;
   transition:
     background 0.12s ease,
@@ -62,8 +144,8 @@ body {
 }
 
 .drag-item:hover {
-  background: #313244;
-  border-color: #45475a;
+  background: var(--hf-surface1);
+  border-color: var(--hf-surface2);
 }
 
 .drag-item:active {
@@ -77,11 +159,11 @@ body {
 }
 
 .drag-item[data-mode="opencode"] .drag-icon {
-  color: #a6e3a1;
+  color: var(--hf-green);
 }
 
 .drag-item[data-mode="raw"] .drag-icon {
-  color: #94e2d5;
+  color: var(--hf-teal);
 }
 
 /* Floating label shown as the drag image while dragging a sidebar entry. */
@@ -94,9 +176,9 @@ body {
   gap: 8px;
   padding: 6px 10px;
   border-radius: 6px;
-  background: #313244;
-  border: 1px solid #89b4fa;
-  color: #cdd6f4;
+  background: var(--hf-surface1);
+  border: 1px solid var(--hf-accent);
+  color: var(--hf-text);
   font-family: var(--hivefield-font);
   font-size: 12px;
   opacity: 0.92;
@@ -109,96 +191,6 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
- * Worktrees sidebar section
- * ------------------------------------------------------------------------- */
-
-.worktree-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 10px;
-  margin-bottom: 4px;
-}
-
-.worktree-heading .sidebar-title {
-  margin-bottom: 0;
-}
-
-.worktree-add {
-  border: 1px solid #313244;
-  background: #1e1e2e;
-  color: #a6e3a1;
-  border-radius: 6px;
-  width: 20px;
-  height: 20px;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-}
-.worktree-add:hover {
-  background: #313244;
-  border-color: #45475a;
-}
-
-.worktree-item .worktree-label {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
-.worktree-branch {
-  color: #a6e3a1;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.worktree-path {
-  color: #6c7086;
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.worktree-item.current {
-  border-color: #89b4fa;
-}
-.worktree-item.current .worktree-branch {
-  color: #89b4fa;
-}
-
-/* "worktree session" sidebar entry — click opens the name prompt. */
-.worktree-session {
-  cursor: pointer;
-}
-.worktree-session:hover {
-  cursor: pointer;
-}
-.worktree-session .drag-icon {
-  color: #a6e3a1;
-}
-
-.worktree-rm {
-  border: none;
-  background: none;
-  color: #6c7086;
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
-.worktree-rm:hover {
-  color: #f38ba8;
-  background: #313244;
-}
-
-/* ---------------------------------------------------------------------------
  * Toast
  * ------------------------------------------------------------------------- */
 
@@ -208,20 +200,15 @@ body {
   bottom: 24px;
   transform: translateX(-50%);
   z-index: 3000;
-  background: #313244;
-  border: 1px solid #45475a;
-  color: #cdd6f4;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
+  color: var(--hf-text);
   border-radius: 8px;
   padding: 8px 14px;
   font-family: var(--hivefield-font);
   font-size: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--hf-shadow);
   user-select: none;
-}
-
-.worktree-modal .settings-label {
-  display: block;
-  margin: 4px 0 6px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -232,12 +219,27 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #1e1e2e;
+  background: var(--hf-terminal-bg);
 }
 
 .terminal-panel .xterm {
   width: 100%;
   height: 100%;
+}
+
+/* Link hover tooltip (must live inside .xterm with the xterm-hover class). */
+.xterm-hover {
+  position: absolute;
+  z-index: 200;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
+  color: var(--hf-text);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: var(--hivefield-font);
+  font-size: 11px;
+  box-shadow: var(--hf-shadow);
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------------------
@@ -257,11 +259,11 @@ body {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  background: #1e1e2e;
-  border: 1px solid #45475a;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
   border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  color: #cdd6f4;
+  box-shadow: var(--hf-shadow);
+  color: var(--hf-text);
   font-family: var(--hivefield-font);
   font-size: 12px;
   user-select: none;
@@ -272,17 +274,17 @@ body {
 }
 
 .search-bar-icon {
-  color: #6c7086;
+  color: var(--hf-overlay0);
   font-size: 14px;
   line-height: 1;
 }
 
 .search-bar-input {
   width: 180px;
-  background: #181825;
-  border: 1px solid #313244;
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
   border-radius: 6px;
-  color: #cdd6f4;
+  color: var(--hf-text);
   padding: 4px 8px;
   font-family: var(--hivefield-font);
   font-size: 12px;
@@ -290,29 +292,29 @@ body {
 
 .search-bar-input:focus {
   outline: none;
-  border-color: #89b4fa;
+  border-color: var(--hf-accent);
 }
 
 .search-bar-input::placeholder {
-  color: #6c7086;
+  color: var(--hf-overlay0);
 }
 
 .search-bar-count {
   min-width: 44px;
   text-align: center;
-  color: #a6adc8;
+  color: var(--hf-subtext0);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
 .search-bar-count.no-match {
-  color: #f38ba8;
+  color: var(--hf-red);
 }
 
 .search-bar-btn {
-  border: 1px solid #313244;
-  background: #181825;
-  color: #cdd6f4;
+  border: 1px solid var(--hf-surface2);
+  background: var(--hf-mantle);
+  color: var(--hf-text);
   border-radius: 6px;
   padding: 3px 8px;
   font-size: 12px;
@@ -321,38 +323,38 @@ body {
 }
 
 .search-bar-btn:hover {
-  background: #313244;
-  border-color: #45475a;
+  background: var(--hf-surface1);
+  border-color: var(--hf-surface2);
 }
 
 .search-bar-btn.search-bar-case.active {
-  background: #89b4fa;
-  color: #11111b;
-  border-color: #89b4fa;
+  background: var(--hf-accent);
+  color: var(--hf-accent-fg);
+  border-color: var(--hf-accent);
 }
 
 .search-bar-btn.search-bar-close {
   border: none;
   background: none;
-  color: #6c7086;
+  color: var(--hf-overlay0);
   font-size: 14px;
   padding: 2px 6px;
 }
 .search-bar-btn.search-bar-close:hover {
-  color: #f38ba8;
-  background: #313244;
+  color: var(--hf-red);
+  background: var(--hf-surface1);
 }
 
 /* ---------------------------------------------------------------------------
- * Settings page
+ * Settings + prompt modals
  * ------------------------------------------------------------------------- */
 
 .sidebar-settings {
   margin-top: auto;
   align-self: stretch;
-  border: 1px solid #313244;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  border: 1px solid var(--hf-surface2);
+  background: var(--hf-surface0);
+  color: var(--hf-text);
   border-radius: 6px;
   padding: 7px 10px;
   font-size: 14px;
@@ -360,8 +362,8 @@ body {
   cursor: pointer;
 }
 .sidebar-settings:hover {
-  background: #313244;
-  border-color: #45475a;
+  background: var(--hf-surface1);
+  border-color: var(--hf-surface2);
 }
 
 .settings-backdrop {
@@ -371,7 +373,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(24, 24, 37, 0.72);
+  background: var(--hf-backdrop);
   backdrop-filter: blur(2px);
 }
 
@@ -380,11 +382,11 @@ body {
   max-height: 88vh;
   display: flex;
   flex-direction: column;
-  background: #1e1e2e;
-  border: 1px solid #45475a;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
   border-radius: 10px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  color: #cdd6f4;
+  color: var(--hf-text);
   font-family: var(--hivefield-font);
   font-size: 13px;
   overflow: hidden;
@@ -395,7 +397,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--hf-surface2);
 }
 
 .settings-title {
@@ -404,13 +406,13 @@ body {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #cdd6f4;
+  color: var(--hf-text);
 }
 
 .settings-close {
   border: none;
   background: none;
-  color: #6c7086;
+  color: var(--hf-overlay0);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
@@ -418,8 +420,8 @@ body {
   border-radius: 6px;
 }
 .settings-close:hover {
-  color: #f38ba8;
-  background: #313244;
+  color: var(--hf-red);
+  background: var(--hf-surface1);
 }
 
 .settings-body {
@@ -440,7 +442,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6c7086;
+  color: var(--hf-overlay0);
 }
 
 .settings-row {
@@ -449,14 +451,14 @@ body {
   align-items: center;
   gap: 2px 14px;
   padding: 6px 0;
-  border-bottom: 1px solid #242432;
+  border-bottom: 1px solid var(--hf-surface2);
 }
 .settings-row:last-of-type {
   border-bottom: none;
 }
 
 .settings-label {
-  color: #a6adc8;
+  color: var(--hf-subtext0);
 }
 
 .settings-control {
@@ -467,16 +469,16 @@ body {
 .settings-hint {
   grid-column: 1 / -1;
   font-size: 11px;
-  color: #6c7086;
+  color: var(--hf-overlay0);
 }
 
 .settings-text,
 .settings-number,
 .settings-select {
-  background: #181825;
-  border: 1px solid #313244;
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
   border-radius: 6px;
-  color: #cdd6f4;
+  color: var(--hf-text);
   padding: 4px 8px;
   font-family: var(--hivefield-font);
   font-size: 12px;
@@ -496,25 +498,25 @@ body {
 .settings-number:focus,
 .settings-select:focus {
   outline: none;
-  border-color: #89b4fa;
+  border-color: var(--hf-accent);
 }
 
 .settings-toggle {
   width: 16px;
   height: 16px;
-  accent-color: #89b4fa;
+  accent-color: var(--hf-accent);
 }
 
 .settings-preview {
   margin: 4px 0 8px;
   padding: 10px 12px;
-  background: #181825;
-  border: 1px dashed #45475a;
+  background: var(--hf-mantle);
+  border: 1px dashed var(--hf-surface2);
   border-radius: 8px;
   font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
-  color: #cdd6f4;
+  color: var(--hf-text);
 }
 
 .settings-footer {
@@ -523,12 +525,12 @@ body {
   justify-content: space-between;
   gap: 10px;
   padding: 12px 18px;
-  border-top: 1px solid #313244;
+  border-top: 1px solid var(--hf-surface2);
 }
 
 .settings-reset,
 .settings-done {
-  border: 1px solid #313244;
+  border: 1px solid var(--hf-surface2);
   border-radius: 6px;
   padding: 6px 12px;
   font-family: var(--hivefield-font);
@@ -537,18 +539,24 @@ body {
 }
 .settings-reset {
   background: transparent;
-  color: #f9e2af;
+  color: var(--hf-yellow);
 }
 .settings-reset:hover {
-  background: #313244;
+  background: var(--hf-surface1);
 }
 .settings-done {
-  background: #89b4fa;
-  color: #11111b;
-  border-color: #89b4fa;
+  background: var(--hf-accent);
+  color: var(--hf-accent-fg);
+  border-color: var(--hf-accent);
 }
 .settings-done:hover {
-  background: #a6d0fd;
+  filter: brightness(1.08);
+}
+
+/* Single-input prompt modals (session name, tab rename). */
+.prompt-modal .settings-label {
+  display: block;
+  margin: 4px 0 6px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -561,14 +569,14 @@ body {
   right: 16px;
   bottom: 16px;
   z-index: 2000;
-  background: #313244;
-  border: 1px solid #45475a;
-  color: #cdd6f4;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
+  color: var(--hf-text);
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 12px;
   font-family: var(--hivefield-font);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--hf-shadow);
   user-select: none;
   pointer-events: none;
 }
@@ -578,14 +586,14 @@ body {
 }
 
 .dictation-badge.listening {
-  color: #a6e3a1;
-  border-color: #a6e3a1;
+  color: var(--hf-green);
+  border-color: var(--hf-green);
   animation: dictation-pulse 1.4s ease-in-out infinite;
 }
 
 .dictation-badge.error {
-  color: #f38ba8;
-  border-color: #f38ba8;
+  color: var(--hf-red);
+  border-color: var(--hf-red);
 }
 
 @keyframes dictation-pulse {

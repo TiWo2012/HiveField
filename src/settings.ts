@@ -7,6 +7,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { DEFAULT_THEME_ID, getTheme } from "./themes";
 
 export type FontWeightValue = "normal" | "bold";
 export type UnicodeVersion = "6" | "11";
@@ -23,6 +24,10 @@ export interface AppSettings {
   minimumContrastRatio: number;
   cursorBlink: boolean;
   fontLigatures: boolean;
+  /** Terminal + UI color theme id (see themes.ts). */
+  theme: string;
+  /** Terminal background opacity: 1 = opaque, < 1 = translucent. */
+  backgroundOpacity: number;
   dictationEngine: DictationEngine;
   /** Base directory for auto-created worktree sessions (default /tmp). */
   worktreeBaseDir: string;
@@ -39,6 +44,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   minimumContrastRatio: 1,
   cursorBlink: true,
   fontLigatures: true,
+  theme: DEFAULT_THEME_ID,
+  backgroundOpacity: 1,
   dictationEngine: "whisper",
   worktreeBaseDir: "/tmp",
 };
@@ -83,6 +90,10 @@ function normalize(value: unknown): AppSettings {
     minimumContrastRatio: Math.max(1, Math.min(21, pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio))),
     cursorBlink: pickBool("cursorBlink", DEFAULT_SETTINGS.cursorBlink),
     fontLigatures: pickBool("fontLigatures", DEFAULT_SETTINGS.fontLigatures),
+    theme: getTheme(
+      typeof v.theme === "string" ? (v.theme as string) : undefined
+    ).id,
+    backgroundOpacity: Math.max(0.25, Math.min(1, pickNum("backgroundOpacity", DEFAULT_SETTINGS.backgroundOpacity))),
     dictationEngine:
       v.dictationEngine === "vosk" || v.dictationEngine === "cloud"
         ? v.dictationEngine

@@ -6,6 +6,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { THEMES } from "./themes";
 import {
   getSettings,
   resetSettings,
@@ -269,6 +270,30 @@ function buildOverlay(): HTMLElement {
     )
   );
   body.appendChild(unicodeSection);
+
+  /* --- Theme --- */
+  const themeSection = section("Theme");
+  themeSection.appendChild(
+    controlRow(
+      "Color theme",
+      selectField(
+        s.theme,
+        THEMES.map((t) => ({ value: t.id, label: t.name })),
+        (theme) => updateSettings({ theme })
+      ),
+      "Applies to the terminal palette and the whole window chrome"
+    )
+  );
+  themeSection.appendChild(
+    controlRow(
+      "Background opacity",
+      numberField(s.backgroundOpacity, 0.25, 1, 0.05, (backgroundOpacity) =>
+        updateSettings({ backgroundOpacity })
+      ),
+      "Below 1 the terminal background becomes translucent with a blur"
+    )
+  );
+  body.appendChild(themeSection);
 
   /* --- Rendering --- */
   const renderSection = section("Rendering");
