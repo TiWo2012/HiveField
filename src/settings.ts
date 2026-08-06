@@ -80,6 +80,13 @@ export interface AppSettings {
   worktreeBaseDir: string;
   /** Show a native desktop notification when an agent session finishes. */
   desktopNotifications: boolean;
+  /** Play an audible bell tone when a terminal receives the BEL character. */
+  terminalBellSound: boolean;
+  /**
+   * Show a system notification when a terminal rings while its session is
+   * not the one the user is looking at.
+   */
+  terminalBellNotify: boolean;
   /** Master switch for ntfy push notifications. */
   ntfyEnabled: boolean;
   /** ntfy server base URL (https://ntfy.sh or a self-hosted instance). */
@@ -119,6 +126,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   dictationEngine: "whisper",
   worktreeBaseDir: "/tmp",
   desktopNotifications: true,
+  terminalBellSound: true,
+  terminalBellNotify: true,
   ntfyEnabled: false,
   ntfyServer: "https://ntfy.sh",
   ntfyTopic: "",
@@ -220,6 +229,14 @@ function normalize(value: unknown): AppSettings {
     desktopNotifications: pickBool(
       "desktopNotifications",
       DEFAULT_SETTINGS.desktopNotifications
+    ),
+    terminalBellSound: pickBool(
+      "terminalBellSound",
+      DEFAULT_SETTINGS.terminalBellSound
+    ),
+    terminalBellNotify: pickBool(
+      "terminalBellNotify",
+      DEFAULT_SETTINGS.terminalBellNotify
     ),
     ntfyEnabled: pickBool("ntfyEnabled", DEFAULT_SETTINGS.ntfyEnabled),
     ntfyServer: pickStr("ntfyServer", DEFAULT_SETTINGS.ntfyServer),

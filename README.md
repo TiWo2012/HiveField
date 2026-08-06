@@ -119,6 +119,12 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   (or immediately when shell integration emits an OSC 133 `D` finish marker).
   Switching to the tab clears the indicator.
 - **Notifications**: when a background agent session finishes — or the window is unfocused — hiveField fires a **desktop notification** and/or an **ntfy push notification** (configurable in Settings): ntfy supports a custom server (default `https://ntfy.sh`), topic, and optional access-token auth (`Authorization: Bearer`, stored unencrypted in `settings.json`, as configured). A "Test" button in Settings verifies each channel.
+- **Terminal bell**: when a session prints the BEL character, hiveField plays a
+  synthesized bell tone (Web Audio, no audio files) and raises a **desktop
+  notification** naming the ringing tab — unless you're looking at that exact
+  pane, in which case the sound is enough. Both halves are togglable in
+  **Settings → Terminal bell**; notification bursts (e.g. `echo -e '\a\a\a'`)
+  are throttled to one per few seconds.
 - **Font-size zoom**: `Ctrl+=` / `Ctrl+-` adjust the font size of every
   terminal live (persisted in settings); `Ctrl+0` resets it.
 - **Configurable keybindings**: every keyboard shortcut (new tab, close

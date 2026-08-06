@@ -573,6 +573,28 @@ function buildGeneralTab(): HTMLElement {
   );
   body.appendChild(notifySection);
 
+  /* --- Terminal bell --- */
+  const bellSection = section("Terminal bell");
+  bellSection.appendChild(
+    controlRow(
+      "Play sound",
+      toggleField(s.terminalBellSound, (terminalBellSound) =>
+        updateSettings({ terminalBellSound })
+      ),
+      "Play a bell tone when a terminal receives the BEL character"
+    )
+  );
+  bellSection.appendChild(
+    controlRow(
+      "Notify",
+      toggleField(s.terminalBellNotify, (terminalBellNotify) =>
+        updateSettings({ terminalBellNotify })
+      ),
+      "Show a system notification when a terminal rings while its session is not the one you're looking at"
+    )
+  );
+  body.appendChild(bellSection);
+
   /* --- Preview --- */
   const previewSection = section("Preview");
   previewEl = el("div", "settings-preview");
