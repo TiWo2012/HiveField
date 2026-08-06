@@ -172,6 +172,17 @@ body {
   color: #89b4fa;
 }
 
+/* "worktree session" sidebar entry — click opens the name prompt. */
+.worktree-session {
+  cursor: pointer;
+}
+.worktree-session:hover {
+  cursor: pointer;
+}
+.worktree-session .drag-icon {
+  color: #a6e3a1;
+}
+
 .worktree-rm {
   border: none;
   background: none;

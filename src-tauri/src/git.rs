@@ -6,8 +6,10 @@
 //! not inside a git repository yields an empty worktree list rather than an
 //! error, so the UI can render nothing and no one has to special-case it.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -202,6 +204,144 @@ pub fn remove(dir: &Path, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A freshly auto-created throwaway worktree.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoWorktree {
+    /// Absolute path of the new checkout.
+    pub path: String,
+    /// Branch it was checked out on (sanitized name + timestamp suffix).
+    pub branch: String,
+}
+
+/// Create a throwaway worktree under `base_dir` on a fresh branch derived from
+/// `name`.
+///
+/// `name` is sanitized into a valid git branch name (lowercased, invalid
+/// characters collapsed to `-`, leading/trailing separators trimmed), then a
+/// timestamp suffix is appended so repeated sessions never collide. The
+/// checkout lands at `<base_dir>/<repo>-<sanitized>-<suffix>`; the returned
+/// path is what a session should be spawned with as its `cwd`. If the branch
+/// or directory already exists, a numeric counter is appended.
+pub fn auto_create(dir: &Path, name: &str, base_dir: &str) -> Result<AutoWorktree, String> {
+    let root = repo_root(dir).ok_or_else(|| "not inside a git repository".to_string())?;
+    let base = sanitize_branch_name(name);
+    let repo_name = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(sanitize_branch_name)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "repo".to_string());
+
+    let base_dir = expand_home(base_dir);
+    fs::create_dir_all(&base_dir).map_err(|e| {
+        format!(
+            "failed to create worktree base dir '{}': {e}",
+            base_dir.display()
+        )
+    })?;
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Find a branch + directory pair that does not collide yet. Branch names
+    // and paths live in different namespaces, so both must be checked.
+    let mut counter: u64 = 0;
+    let (branch, path) = loop {
+        let suffix = if counter == 0 {
+            ts.to_string()
+        } else {
+            format!("{ts}-{counter}")
+        };
+        let branch = format!("{base}-{suffix}");
+        let path = base_dir.join(format!("{repo_name}-{base}-{suffix}"));
+        let branch_taken = git_stdout(
+            &root,
+            &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+        )
+        .is_some();
+        if !branch_taken && !path.exists() {
+            break (branch, path);
+        }
+        counter += 1;
+    };
+
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["worktree", "add", "-b", &branch])
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("failed to run git worktree add: {e}"))?;
+    if !status.success() {
+        return Err(format!("git worktree add failed for branch '{branch}'"));
+    }
+    Ok(AutoWorktree {
+        path: path.to_string_lossy().into_owned(),
+        branch,
+    })
+}
+
+/// Turn an arbitrary session name into a valid, normalized git branch name.
+///
+/// Lowercases the input, collapses any run of characters that are not
+/// `[a-z0-9._-]` into a single `-`, trims leading/trailing separators and
+/// dots, and neutralizes `..`. Falls back to `"worktree"` when nothing usable
+/// remains.
+fn sanitize_branch_name(raw: &str) -> String {
+    let mut out = String::new();
+    let mut prev_sep = false;
+    for ch in raw.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            out.push(ch);
+            prev_sep = ch == '-' || ch == '.';
+        } else if !prev_sep {
+            // Runs of separators collapse into a single '-'; a leading run is
+            // dropped entirely.
+            if !out.is_empty() {
+                out.push('-');
+            }
+            prev_sep = true;
+        }
+    }
+    let mut out = out.trim_start_matches(['-', '.']).to_string();
+    while out.ends_with('-') || out.ends_with('.') {
+        out.pop();
+    }
+    // Git treats `..` as a range operator in some contexts — neutralize it.
+    let out = out.replace("..", "-");
+    if out.is_empty() {
+        "worktree".to_string()
+    } else {
+        out
+    }
+}
+
+/// Expand a leading `~` in a configured base dir to the user's home directory.
+fn expand_home(path: &str) -> PathBuf {
+    let trimmed = path.trim();
+    let home = || {
+        if cfg!(windows) {
+            std::env::var("USERPROFILE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."))
+        } else {
+            std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."))
+        }
+    };
+    if trimmed == "~" {
+        return home();
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return home().join(rest);
+    }
+    PathBuf::from(trimmed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +429,64 @@ prunable gitdir file
         mark_current(&mut wts, Path::new("/home/u/proj/hiveField"));
         assert!(wts[0].current, "first worktree is the launch-dir one");
         assert!(!wts[1].current);
+    }
+
+    // ---- sanitize_branch_name ----
+
+    #[test]
+    fn sanitize_replaces_separators_and_spaces() {
+        assert_eq!(sanitize_branch_name("My Feature!"), "my-feature");
+        assert_eq!(sanitize_branch_name("feature/x fix"), "feature-x-fix");
+    }
+
+    #[test]
+    fn sanitize_collapses_and_trims_separator_runs() {
+        assert_eq!(sanitize_branch_name("---  leading  ---"), "leading");
+        assert_eq!(sanitize_branch_name("trailing---..."), "trailing");
+        assert_eq!(sanitize_branch_name("a   b\tc"), "a-b-c");
+    }
+
+    #[test]
+    fn sanitize_keeps_valid_branch_chars() {
+        assert_eq!(sanitize_branch_name("FEATURE_x.y"), "feature_x.y");
+        assert_eq!(sanitize_branch_name("fix-123"), "fix-123");
+    }
+
+    #[test]
+    fn sanitize_neutralizes_dotdot_and_non_ascii() {
+        assert_eq!(sanitize_branch_name("a..b"), "a-b");
+        assert_eq!(sanitize_branch_name("Ünïcode"), "n-code");
+    }
+
+    #[test]
+    fn sanitize_falls_back_when_empty() {
+        assert_eq!(sanitize_branch_name(""), "worktree");
+        assert_eq!(sanitize_branch_name("   "), "worktree");
+        assert_eq!(sanitize_branch_name("---"), "worktree");
+        assert_eq!(sanitize_branch_name("..."), "worktree");
+    }
+
+    #[test]
+    fn sanitize_never_starts_or_ends_with_separator() {
+        for name in ["-x-", ".x.", "x-", "x.", ".x", "x---", "x..."] {
+            let out = sanitize_branch_name(name);
+            assert!(!out.starts_with(['-', '.']), "{name:?} -> {out:?}");
+            assert!(!out.ends_with(['-', '.']), "{name:?} -> {out:?}");
+            assert!(!out.is_empty(), "{name:?} must fall back, not stay empty");
+        }
+    }
+
+    // ---- auto_create naming (no git involved) ----
+
+    #[test]
+    fn auto_create_candidate_names_are_sanitized_and_suffixed() {
+        let base = sanitize_branch_name("My Feature");
+        assert_eq!(base, "my-feature");
+        // The branch is "<sanitized>-<ts>" and the dir embeds the repo name.
+        let repo = sanitize_branch_name("hiveField");
+        assert_eq!(repo, "hivefield");
+        let dir = format!("{repo}-{base}-12345");
+        assert_eq!(dir, "hivefield-my-feature-12345");
+        assert_eq!(format!("{base}-12345"), "my-feature-12345");
     }
 }

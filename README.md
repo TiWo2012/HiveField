@@ -27,6 +27,14 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   removes one (killing any sessions that were running inside it). Per-worktree
   layouts are restored independently because workspace state is keyed by
   directory.
+- **Worktree sessions**: the sidebar's **worktree session** entry asks for a
+  name, then auto-creates a throwaway worktree and opens the agent in it —
+  no manual `git worktree add` needed. The name is sanitized into a valid
+  branch (`My Feature!` → `my-feature`), given a timestamp suffix so repeats
+  never collide, and checked out under the **Worktree base dir** setting
+  (default `/tmp`) as `<repo>-<sanitized>-<ts>`. The tab is titled with the
+  name you typed. To throw one away, click ✕ next to it in the Worktrees
+  section.
 - **Tabs & split panes** via [dockview](https://dockview.dev):
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
@@ -103,6 +111,7 @@ backend for each spawned shell).
 | JS → Rust | `git_worktrees` | () → `{ root, worktrees }` — repo root (or `null`) and the parsed `git worktree list` (`path`, `branch`, `bare`, `detached`, `current`) |
 | JS → Rust | `git_worktree_create` | `{ branch, path? }` → absolute path of the new worktree (`path` defaults to a sibling `<repo>-<branch>` dir) |
 | JS → Rust | `git_worktree_remove` | `{ path }` — remove a worktree (errors surface git's message if it has changes) |
+| JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`) |
 
 The workspace persistence commands are keyed by the canonicalized launch
 directory (`cwd`), not by a session.

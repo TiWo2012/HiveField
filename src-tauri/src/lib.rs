@@ -144,6 +144,16 @@ fn git_worktree_remove(path: String) -> Result<(), String> {
     git::remove(&dir, &path)
 }
 
+/// IPC command: auto-create a throwaway worktree for a session. `name` is
+/// sanitized into a branch (with a timestamp suffix so repeats don't collide)
+/// and checked out under `base_dir` (the global "worktree base dir" setting,
+/// defaults to `/tmp`). Returns the new checkout's path and branch.
+#[tauri::command]
+fn git_worktree_auto_create(name: String, base_dir: String) -> Result<git::AutoWorktree, String> {
+    let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
+    git::auto_create(&dir, &name, &base_dir)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,6 +172,7 @@ pub fn run() {
             git_worktrees,
             git_worktree_create,
             git_worktree_remove,
+            git_worktree_auto_create,
             fonts::list_system_fonts,
             dictation::dictation_start,
             dictation::dictation_stop,

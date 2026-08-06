@@ -48,6 +48,12 @@ interface WorktreesInfo {
   worktrees: WorktreeInfo[];
 }
 
+/** Result of the `git_worktree_auto_create` IPC command. */
+interface AutoWorktree {
+  path: string;
+  branch: string;
+}
+
 /** A session start request carried across a drag or passed to a panel. */
 interface SessionDrag {
   mode: Mode;
@@ -421,9 +427,14 @@ function shortLabel(cwd: string): string {
   return last || cwd;
 }
 
-function addPanelWithMode(mode: Mode, position?: AddPanelPositionOptions, cwd?: string) {
+function addPanelWithMode(
+  mode: Mode,
+  position?: AddPanelPositionOptions,
+  cwd?: string,
+  titleOverride?: string
+) {
   const base = mode === "opencode" ? "opencode" : "shell";
-  const title = cwd ? `${base}@${shortLabel(cwd)}` : base;
+  const title = titleOverride ?? (cwd ? `${base}@${shortLabel(cwd)}` : base);
   const panel = api.addPanel({
     id: nextPanelId(),
     component: "terminal",
@@ -567,6 +578,22 @@ function buildSidebar() {
 
     sidebar.appendChild(item);
   }
+
+  // Worktree session: name it, get a throwaway worktree created in the
+  // configured base dir, and open the agent there. Click-only (a name is
+  // required first), so it is not draggable like the two mode entries above.
+  const wtSession = document.createElement("div");
+  wtSession.className = "drag-item worktree-session";
+  wtSession.dataset.mode = "opencode";
+  const wtIcon = document.createElement("span");
+  wtIcon.className = "drag-icon";
+  wtIcon.textContent = "⤴";
+  wtSession.appendChild(wtIcon);
+  wtSession.appendChild(document.createTextNode("worktree session"));
+  wtSession.title =
+    "Name a throwaway worktree in the base dir and open the agent there";
+  wtSession.addEventListener("click", openWorktreeSessionModal);
+  sidebar.appendChild(wtSession);
 
   // Worktrees section — populated asynchronously by refreshWorktrees() so a
   // non-git launch directory simply renders nothing here.
@@ -767,6 +794,92 @@ function openCreateWorktreeModal(): void {
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") createBtn.click();
+    if (e.key === "Escape") backdrop.remove();
+  });
+}
+
+/** Prompt for a session name, auto-create the worktree, and open the agent. */
+function openWorktreeSessionModal(): void {
+  document.querySelector(".settings-backdrop")?.remove();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "settings-backdrop";
+
+  const modal = document.createElement("div");
+  modal.className = "settings-modal worktree-modal";
+
+  const header = document.createElement("div");
+  header.className = "settings-header";
+  const title = document.createElement("h1");
+  title.className = "settings-title";
+  title.textContent = "Worktree session";
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "settings-close";
+  closeBtn.type = "button";
+  closeBtn.textContent = "×";
+  closeBtn.addEventListener("click", () => backdrop.remove());
+  header.append(title, closeBtn);
+  modal.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "settings-body";
+  const label = document.createElement("label");
+  label.className = "settings-label";
+  label.textContent = "Session name";
+  body.appendChild(label);
+  const input = document.createElement("input");
+  input.className = "settings-text";
+  input.placeholder = "e.g. fix-login";
+  input.autocomplete = "off";
+  body.appendChild(input);
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  const baseDir = getSettings().worktreeBaseDir.trim() || "/tmp";
+  hint.textContent = `Creates a worktree under ${baseDir} (change in Settings) and opens the agent there.`;
+  body.appendChild(hint);
+  modal.appendChild(body);
+
+  const footer = document.createElement("div");
+  footer.className = "settings-footer";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "settings-reset";
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => backdrop.remove());
+  const openBtn = document.createElement("button");
+  openBtn.className = "settings-done";
+  openBtn.type = "button";
+  openBtn.textContent = "Open";
+  openBtn.addEventListener("click", async () => {
+    const name = input.value.trim();
+    if (!name) return;
+    openBtn.disabled = true;
+    try {
+      const created = await invoke<AutoWorktree>("git_worktree_auto_create", {
+        name,
+        baseDir: getSettings().worktreeBaseDir.trim() || "/tmp",
+      });
+      backdrop.remove();
+      await refreshWorktrees();
+      addPanelWithMode("opencode", undefined, created.path, name);
+    } catch (err) {
+      console.error("failed to create worktree session", err);
+      showToast(`Could not create worktree session: ${err}`);
+      openBtn.disabled = false;
+    }
+  });
+  footer.append(cancelBtn, openBtn);
+  modal.appendChild(footer);
+
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  input.focus();
+
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") openBtn.click();
     if (e.key === "Escape") backdrop.remove();
   });
 }

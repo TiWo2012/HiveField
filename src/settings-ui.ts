@@ -121,6 +121,14 @@ function numberField(value: number, min: number, max: number, step: number, onCh
   return input;
 }
 
+function textField(value: string, onChange?: (v: string) => void): HTMLElement {
+  const input = el("input", "settings-text");
+  input.type = "text";
+  input.value = value;
+  input.addEventListener("change", () => onChange?.(input.value));
+  return input;
+}
+
 function selectField<T extends string>(
   value: T,
   options: ReadonlyArray<{ value: T; label: string }>,
@@ -280,6 +288,17 @@ function buildOverlay(): HTMLElement {
     )
   );
   body.appendChild(renderSection);
+
+  /* --- Worktrees --- */
+  const worktreeSection = section("Worktrees");
+  worktreeSection.appendChild(
+    controlRow(
+      "Worktree base dir",
+      textField(s.worktreeBaseDir, (worktreeBaseDir) => updateSettings({ worktreeBaseDir })),
+      "Where \"worktree session\" checkouts are created (e.g. /tmp)"
+    )
+  );
+  body.appendChild(worktreeSection);
 
   /* --- Dictation --- */
   const dictationSection = section("Dictation");

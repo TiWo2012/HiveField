@@ -24,6 +24,8 @@ export interface AppSettings {
   cursorBlink: boolean;
   fontLigatures: boolean;
   dictationEngine: DictationEngine;
+  /** Base directory for auto-created worktree sessions (default /tmp). */
+  worktreeBaseDir: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cursorBlink: true,
   fontLigatures: true,
   dictationEngine: "whisper",
+  worktreeBaseDir: "/tmp",
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -84,6 +87,7 @@ function normalize(value: unknown): AppSettings {
       v.dictationEngine === "vosk" || v.dictationEngine === "cloud"
         ? v.dictationEngine
         : "whisper",
+    worktreeBaseDir: pickStr("worktreeBaseDir", DEFAULT_SETTINGS.worktreeBaseDir),
   };
 }
 
