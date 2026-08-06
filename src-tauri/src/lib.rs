@@ -29,10 +29,12 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
 
 /// IPC command: spawn a new PTY shell session, returns its session id.
 ///
-/// `mode` controls what the session auto-runs:
-///   - `"opencode"` (default): the shell auto-runs `opencode`
-///   - `"pi"`: the shell auto-runs `pi` (the pi coding agent)
-///   - `"raw"`: plain shell, no auto-run
+/// `mode` controls what the session auto-runs. `"raw"` runs a plain shell;
+/// any other value is treated as a coding-agent id and auto-runs `<mode>` as
+/// the command (codex, copilot, claude, ...). `autorun` optionally pins the
+/// exact command when the CLI binary differs from the mode id (e.g. mode
+/// `cursor` -> `cursor-agent`); it is supplied by the frontend agent registry.
+/// Default mode (when omitted) is `"opencode"`.
 ///
 /// `cwd` optionally pins the directory the shell starts in (e.g. a git
 /// worktree path). When omitted the shell starts in the directory the app was
@@ -43,11 +45,12 @@ fn pty_spawn(
     state: State<'_, PtyState>,
     mode: Option<String>,
     cwd: Option<String>,
+    autorun: Option<String>,
 ) -> Result<u64, String> {
     let session_id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let mode = mode.unwrap_or_else(|| "opencode".to_string());
     let cwd = cwd.map(std::path::PathBuf::from);
-    pty::spawn(&app, session_id, &mode, cwd).map_err(|e| e.to_string())?;
+    pty::spawn(&app, session_id, &mode, cwd, autorun).map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 

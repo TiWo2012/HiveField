@@ -23,12 +23,15 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   *Note:* `Ctrl+0` now switches to workspace 10, so font-size reset no longer
   binds to it — keep zooming with `Ctrl+=` / `Ctrl+-` (size is also adjustable
   in Settings).
-- **Session sidebar**: drag an **opencode**, **pi agent**, or **raw term**
-  entry from the left sidebar into the terminal area — it opens there as a
-  **split** (drop near an edge to choose the split direction, drop in the
-  middle to split to the right). `opencode` and `pi` sessions auto-run the
-  agent; `raw` sessions are a plain shell. Use `Ctrl+Shift+T` to open a
-  session as a tab instead.
+- **Session sidebar**: drag an **agent** (opencode, pi, Codex, GitHub Copilot,
+  Claude Code, Gemini CLI, aider, Cursor, Amp, Qwen Code, Goose, Crush, Cody,
+  OpenHands, …) or a **raw term** entry from the left sidebar into the
+  terminal area — it opens there as a **split** (drop near an edge to choose
+  the split direction, drop in the middle to split to the right). Agent
+  sessions auto-run the agent CLI; `raw` sessions are a plain shell. Use
+  `Ctrl+Shift+T` to open a session as a tab instead. Adding a new agent is a
+  one-line change in the frontend registry (`AGENTS` in `src/main.ts`); the
+  backend auto-runs any non-`raw` mode as its command.
 - **Live sidebar info**: below the drag sources the sidebar shows a
   **Running** section — every open session with its mode icon, tab title,
   working directory, and a status glyph (active / ● producing output /
@@ -37,7 +40,7 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   **Workspace** section shows the launch directory, the git branch of the
   launch dir, the number of repo worktrees, and the open session count.
   Keyboard-shortcut reminders sit at the bottom.
-- **Isolated sessions**: every agent session (`opencode` / `pi`) automatically
+- **Isolated sessions**: every agent session (any non-`raw` mode) automatically
   gets its own throwaway git worktree (branch + directory minted from a
   codename, checked out under the **Worktree base dir** setting, default
   `/tmp`), so parallel agents never share a checkout. Closing the tab
@@ -61,15 +64,16 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   active terminal (bracketed-paste aware). `Ctrl+V` / `Ctrl+C` keep their
   native webview behavior.
 - **Right-click context menu**: right-click a terminal pane for a styled,
-  keyboard-navigable menu — new opencode/pi/raw tabs, a nested **New split**
-  submenu with all four split directions (relative to the right-clicked
-  pane), **Copy** (only when there is a selection) / **Paste**, plus **Find**,
-  **Rename tab**, and **Close panel**. Right-clicking a tab (or a split
-  gutter) offers split / rename / close for that tab. `↑`/`↓` navigate,
-  `→`/`Enter` open/activate, `←`/`Esc` go back.
+  keyboard-navigable menu — a **New session** submenu with every agent (and a
+  raw term), a nested **New split** submenu with all four split directions
+  (relative to the right-clicked pane), **Copy** (only when there is a
+  selection) / **Paste**, plus **Find**, **Rename tab**, and **Close panel**.
+  Right-clicking a tab (or a split gutter) offers split / rename / close for
+  that tab. `↑`/`↓` navigate, `→`/`Enter` open/activate, `←`/`Esc` go back.
 - **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
-  open pane (jump straight to it) and common actions (new opencode/pi/raw tab
-  or split, find, focus panes, rename, close, settings). Type to fuzzy-filter with
+  open pane (jump straight to it) and common actions (new agent/raw tab or
+  split for every supported agent, find, focus panes, rename, close, settings).
+  Type to fuzzy-filter with
   live match highlighting, `↑`/`↓` (or `Ctrl+P` / `Ctrl+N`, or `Ctrl+K` /
   `Ctrl+J`) to move, `Enter` to jump/run, `Esc` to close.
 - **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
@@ -89,7 +93,7 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   prints output gets a `●` prefix, flipping to `✓` once the output goes quiet
   (or immediately when shell integration emits an OSC 133 `D` finish marker).
   Switching to the tab clears the indicator.
-- **Notifications**: when a background agent session (opencode / pi) finishes — or the window is unfocused — hiveField fires a **desktop notification** and/or an **ntfy push notification** (configurable in Settings): ntfy supports a custom server (default `https://ntfy.sh`), topic, and optional access-token auth (`Authorization: Bearer`, stored unencrypted in `settings.json`, as configured). A "Test" button in Settings verifies each channel.
+- **Notifications**: when a background agent session finishes — or the window is unfocused — hiveField fires a **desktop notification** and/or an **ntfy push notification** (configurable in Settings): ntfy supports a custom server (default `https://ntfy.sh`), topic, and optional access-token auth (`Authorization: Bearer`, stored unencrypted in `settings.json`, as configured). A "Test" button in Settings verifies each channel.
 - **Font-size zoom**: `Ctrl+=` / `Ctrl+-` adjust the font size of every
   terminal live (persisted in settings); `Ctrl+0` resets it.
 - **Themes**: a color theme setting drives both the terminal palette and the
@@ -149,7 +153,7 @@ backend for each spawned shell).
 |-----------|-----------------|-----------------------------------------------|
 | Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
 | Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
-| JS → Rust | `pty_spawn`     | `{ mode, cwd? }` (`"opencode"` \| `"pi"` \| `"raw"`, default opencode; `cwd` optionally pins the start directory, e.g. a worktree) → returns `sessionId` |
+| JS → Rust | `pty_spawn`     | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"` (default opencode); `cwd` optionally pins the start directory (e.g. a worktree); `autorun` optionally overrides the command when the CLI binary differs from the mode id (e.g. `cursor` → `cursor-agent`) → returns `sessionId` |
 | JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
 | JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
 | JS → Rust | `pty_kill`      | `{ sessionId }`                               |

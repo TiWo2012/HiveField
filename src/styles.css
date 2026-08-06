@@ -117,6 +117,9 @@ body {
   font-family: var(--hivefield-font);
   font-size: 13px;
   user-select: none;
+  /* Many agent sources now live here: scroll rather than clip. */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 #sidebar .sidebar-title {
@@ -156,6 +159,8 @@ body {
 .drag-item .drag-icon {
   font-size: 14px;
   line-height: 1;
+  /* Default accent for agents without a dedicated rule below. */
+  color: var(--hf-accent);
 }
 
 .drag-item[data-mode="opencode"] .drag-icon {

@@ -144,8 +144,13 @@ impl Utf8StreamDecoder {
 /// Spawn a shell in a fresh PTY, store the session in Tauri state under
 /// `session_id`, and start a reader thread that forwards output to the frontend.
 ///
-/// `mode` is `"opencode"` to auto-run `opencode` in the session, `"pi"` to
-/// auto-run `pi` (the pi coding agent), or `"raw"` for a plain shell.
+/// `mode` is the session type: any coding-agent id (`opencode`, `pi`, `codex`,
+/// `copilot`, `claude`, ...) auto-runs that agent in the session, and
+/// `"raw"` gives a plain shell with no auto-run. `autorun_override` optionally
+/// pins the exact command to run when the CLI binary differs from the mode id
+/// (e.g. mode `cursor` -> `cursor-agent`); the frontend agent registry passes
+/// it. New agents work without a Rust change: any non-`"raw"` mode auto-runs
+/// the mode itself as the command.
 ///
 /// `start_dir` is the directory the shell should launch in. When `None`, the
 /// directory the app was launched from is used (falling back to `$HOME`); when
@@ -157,6 +162,7 @@ pub fn spawn<R: Runtime>(
     session_id: u64,
     mode: &str,
     start_dir: Option<PathBuf>,
+    autorun_override: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
@@ -269,30 +275,52 @@ pub fn spawn<R: Runtime>(
         }
     });
 
-    // For agent sessions (`opencode` / `pi`), auto-run the agent shortly after
-    // the shell starts so each tab opens straight into the agent. The shell
-    // stays alive underneath, so quitting the agent returns to the prompt.
-    // Writes go through the same sessions mutex as `pty_write`, so input cannot
-    // interleave. `raw` sessions skip this entirely.
-    let autorun: Option<&'static [u8]> = match mode {
-        "opencode" => Some(b"opencode\r\n"),
-        "pi" => Some(b"pi\r\n"),
-        _ => None,
-    };
-    if let Some(cmd) = autorun {
+    // For agent sessions, auto-run the agent shortly after the shell starts so
+    // each tab opens straight into the agent. The shell stays alive underneath,
+    // so quitting the agent returns to the prompt. Writes go through the same
+    // sessions mutex as `pty_write`, so input cannot interleave. `raw` sessions
+    // skip this entirely.
+    if let Some(cmd) = autorun_command(mode, autorun_override.as_deref()) {
+        let bytes = format!("{cmd}\r\n").into_bytes();
         let autorun_app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(500));
             let state = autorun_app.state::<crate::PtyState<R>>();
             let mut guard = state.sessions.lock().unwrap();
             if let Some(session) = guard.get_mut(&session_id) {
-                let _ = session.writer.write_all(cmd);
+                let _ = session.writer.write_all(&bytes);
                 let _ = session.writer.flush();
             }
         });
     }
 
     Ok(())
+}
+
+/// Map a session mode to the command auto-run in its shell.
+///
+/// `"raw"` runs nothing (a plain shell). Every other mode auto-runs the mode
+/// itself as the command (`codex`, `copilot`, `claude`, ...), so new agents
+/// work without a Rust change. `autorun` overrides the command when the CLI
+/// binary differs from the mode id (e.g. mode `cursor` -> `cursor-agent`); the
+/// frontend agent registry passes it.
+///
+/// Only a bare command word is accepted — no whitespace or shell metacharacters
+/// — so nothing can smuggle extra arguments or shell syntax through the PTY.
+fn autorun_command(mode: &str, autorun: Option<&str>) -> Option<String> {
+    if mode == "raw" {
+        return None;
+    }
+    let cmd = autorun.unwrap_or(mode).trim();
+    if !cmd.is_empty()
+        && cmd
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        Some(cmd.to_string())
+    } else {
+        None
+    }
 }
 
 /// Resolve the directory a session's shell should start in.
@@ -419,6 +447,44 @@ mod tests {
     #[test]
     fn session_map_starts_empty() {
         assert!(empty_state().sessions.lock().unwrap().is_empty());
+    }
+
+    // ---- autorun_command ----
+
+    #[test]
+    fn autorun_command_runs_any_agent_mode() {
+        for mode in ["opencode", "pi", "codex", "copilot", "claude", "gemini"] {
+            assert_eq!(autorun_command(mode, None).as_deref(), Some(mode), "{mode}");
+        }
+    }
+
+    #[test]
+    fn autorun_command_never_runs_for_raw() {
+        assert_eq!(autorun_command("raw", None), None);
+        assert_eq!(autorun_command("raw", Some("codex")), None);
+    }
+
+    #[test]
+    fn autorun_command_honors_override() {
+        // Mode id differs from the CLI binary (e.g. cursor -> cursor-agent).
+        assert_eq!(
+            autorun_command("cursor", Some("cursor-agent")).as_deref(),
+            Some("cursor-agent")
+        );
+        assert_eq!(
+            autorun_command("qwen", Some("qwen-code")).as_deref(),
+            Some("qwen-code")
+        );
+    }
+
+    #[test]
+    fn autorun_command_rejects_shell_syntax() {
+        assert_eq!(autorun_command("codex", Some("codex; rm -rf /")), None);
+        assert_eq!(autorun_command("codex", Some("codex --dangerous")), None);
+        assert_eq!(autorun_command("a", Some("$(evil)")), None);
+        assert_eq!(autorun_command("", None), None);
+        assert_eq!(autorun_command(" ", None), None);
+        assert_eq!(autorun_command("pi", Some("")), None);
     }
 
     // ---- Utf8StreamDecoder ----

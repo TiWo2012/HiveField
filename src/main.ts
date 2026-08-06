@@ -49,8 +49,83 @@ import {
 import { copyText, readClipboardText } from "./clipboard";
 import "./styles.css";
 
-/** What a session auto-runs: a coding agent (opencode / pi), or a plain shell. */
-type Mode = "opencode" | "pi" | "raw";
+/** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */
+type Mode = string;
+
+/** A coding-agent CLI this terminal can launch as a session. */
+interface AgentDef {
+  /** Stable mode id (also the default launch command). */
+  id: string;
+  /** Human-readable label for the sidebar / menus / notifications. */
+  label: string;
+  /** Icon glyph for the sidebar, tabs, context menu and palette. */
+  icon: string;
+  /** The exact command to auto-run when it differs from `id`. */
+  command?: string;
+}
+
+/**
+ * The major coding-agent CLIs, in sidebar order. Sessions auto-run the agent
+ * in an isolated worktree; add a new agent by appending to this list (and a
+ * `command` when the CLI binary differs from the id).
+ */
+const AGENTS: readonly AgentDef[] = [
+  { id: "opencode", label: "opencode", icon: "✦" },
+  { id: "pi", label: "pi agent", icon: "π" },
+  { id: "codex", label: "Codex", icon: "◈" },
+  { id: "copilot", label: "Copilot", icon: "◎" },
+  { id: "claude", label: "Claude Code", icon: "✳" },
+  { id: "gemini", label: "Gemini CLI", icon: "✧" },
+  { id: "aider", label: "Aider", icon: "⚒" },
+  { id: "cursor", label: "Cursor Agent", icon: "▸", command: "cursor-agent" },
+  { id: "amp", label: "Amp", icon: "⚡" },
+  { id: "qwen", label: "Qwen Code", icon: "❖", command: "qwen-code" },
+  { id: "goose", label: "Goose", icon: "❉" },
+  { id: "crush", label: "Crush", icon: "✿" },
+  { id: "cody", label: "Cody", icon: "⬡" },
+  { id: "openhands", label: "OpenHands", icon: "☛" },
+];
+
+/** The plain-shell mode: never auto-runs an agent. */
+const RAW_MODE: Mode = "raw";
+
+/** Default session mode when none is requested (the first agent). */
+const DEFAULT_MODE: Mode = AGENTS[0].id;
+
+/** Every session mode the sidebar / menus can start. */
+const KNOWN_MODES: readonly Mode[] = [...AGENTS.map((a) => a.id), RAW_MODE];
+
+/** Modes that auto-run a coding agent (vs. a plain shell). */
+const AGENT_MODES: readonly Mode[] = AGENTS.map((a) => a.id);
+
+/** All session modes offered in the sidebar / menus (agents + raw term). */
+const SESSION_MODES: ReadonlyArray<{ mode: Mode; label: string; icon: string }> = [
+  ...AGENTS.map((a) => ({ mode: a.id, label: a.label, icon: a.icon })),
+  { mode: RAW_MODE, label: "raw term", icon: "$" },
+];
+
+/** Registry lookup for an agent by mode id; undefined for raw/unknown. */
+function agentForMode(mode: Mode): AgentDef | undefined {
+  return AGENTS.find((a) => a.id === mode);
+}
+
+/** The command a mode auto-runs in the shell, or undefined for raw. */
+function modeCommand(mode: Mode): string | undefined {
+  const agent = agentForMode(mode);
+  return agent ? (agent.command ?? agent.id) : undefined;
+}
+
+/** Display label for a mode (the agent label, or "raw term"). */
+function modeLabel(mode: Mode): string {
+  if (mode === RAW_MODE) return "raw term";
+  return agentForMode(mode)?.label ?? mode;
+}
+
+/** Icon glyph for a mode. */
+function modeIcon(mode: Mode): string {
+  if (mode === RAW_MODE) return "$";
+  return agentForMode(mode)?.icon ?? "✦";
+}
 
 /** Result of the `git_worktree_auto_create` IPC command. */
 interface AutoWorktree {
@@ -67,12 +142,6 @@ interface SessionDrag {
 
 /** Custom MIME type used to drag sidebar entries into the dockview layout. */
 const DND_MIME = "application/x-hivefield-session";
-
-/** Session modes the sidebar can start. */
-const KNOWN_MODES: readonly Mode[] = ["opencode", "pi", "raw"];
-
-/** Modes that auto-run a coding agent (vs. a plain shell). */
-const AGENT_MODES: readonly Mode[] = ["opencode", "pi"];
 
 /** Whether `mode` auto-runs a coding agent (and gets an isolated worktree). */
 function isAgentMode(mode: Mode): boolean {
@@ -262,7 +331,7 @@ function generateSessionName(): string {
 }
 
 interface SessionEntry {
-  /** What this session auto-runs: a coding agent ("opencode"/"pi") or "raw" shell. */
+  /** What this session auto-runs: a coding agent (e.g. "codex") or "raw" shell. */
   mode: Mode;
   terminal: Terminal;
   fitAddon: FitAddon;
@@ -606,7 +675,7 @@ function clearNotify(panelId: string): void {
 /**
  * Report a finished agent session to the user: a native desktop notification
  * and/or an ntfy push, per the settings. Only fires for agent sessions
- * (opencode / pi), once per completion episode, and skips when the user is
+ * (any non-raw mode), once per completion episode, and skips when the user is
  * actively watching the panel (window focused + panel active).
  */
 function notifyAgentDone(panelId: string, entry: SessionEntry): void {
@@ -618,7 +687,7 @@ function notifyAgentDone(panelId: string, entry: SessionEntry): void {
   st.notified = true;
 
   const settings = getSettings();
-  const label = entry.mode === "pi" ? "pi agent" : "opencode";
+  const label = modeLabel(entry.mode);
   const title = st.baseTitle || entry.panel?.title || label;
   const body = `${label} session “${title}” finished`;
 
@@ -651,7 +720,7 @@ function armNotify(panelId: string, entry: SessionEntry): void {
 }
 
 /* ---------------------------------------------------------------------------
- * Auto-worktrees: every agent session (opencode / pi) gets its own throwaway
+ * Auto-worktrees: every agent session (any non-raw mode) gets its own throwaway
  * worktree so parallel agents never share a checkout. Raw sessions and
  * non-git launch directories keep the launch-dir behavior.
  * ------------------------------------------------------------------------- */
@@ -797,7 +866,10 @@ function createTerminalComponent(): IContentRenderer {
   return {
     element,
     init({ api: panelApi, containerApi, params }: GroupPanelPartInitParameters) {
-      const mode = (params.mode as Mode) ?? "opencode";
+      const mode: Mode =
+        typeof params.mode === "string" && KNOWN_MODES.includes(params.mode)
+          ? params.mode
+          : DEFAULT_MODE;
       const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
       const requestedName =
         typeof params.name === "string" ? params.name : undefined;
@@ -871,9 +943,13 @@ function createTerminalComponent(): IContentRenderer {
         .then(async (resolved) => {
           let id: number;
           try {
+            // Auto-run the agent (except raw). Pass the exact command only
+            // when the CLI binary differs from the mode id.
+            const command = modeCommand(mode);
             id = await invoke<number>("pty_spawn", {
               mode,
               ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
+              ...(command !== undefined && command !== mode ? { autorun: command } : {}),
             });
           } catch (err) {
             console.error("failed to spawn session", err);
@@ -1198,7 +1274,9 @@ function refreshSidebarRunning(): void {
   for (const panel of [...panels].reverse()) {
     const params = panel.api.getParameters() as Record<string, unknown>;
     const mode: Mode =
-      params.mode === "pi" ? "pi" : params.mode === "raw" ? "raw" : "opencode";
+      typeof params.mode === "string" && KNOWN_MODES.includes(params.mode)
+        ? params.mode
+        : DEFAULT_MODE;
     const sessionId = panelToSession.get(panel.id);
     const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
     const cwd =
@@ -1338,11 +1416,7 @@ function buildSidebar() {
   title.textContent = "New session";
   sidebar.appendChild(title);
 
-  const sources: Array<{ mode: Mode; label: string; icon: string }> = [
-    { mode: "opencode", label: "opencode", icon: "✦" },
-    { mode: "pi", label: "pi agent", icon: "π" },
-    { mode: "raw", label: "raw term", icon: "$" },
-  ];
+  const sources = SESSION_MODES;
 
   for (const source of sources) {
     const item = document.createElement("div");
@@ -1716,19 +1790,12 @@ const SPLIT_DIRECTIONS: Array<{
   { dir: "below", label: "Down", icon: "↓" },
 ];
 
-/** Session modes offered by the context menu. */
-const MENU_MODES: Array<{ mode: Mode; label: string; icon: string }> = [
-  { mode: "opencode", label: "opencode", icon: "✦" },
-  { mode: "pi", label: "pi agent", icon: "π" },
-  { mode: "raw", label: "raw term", icon: "$" },
-];
-
 /**
  * The "New split" submenu: one entry per session mode, each with the four
  * split directions. The new session opens adjacent to `referencePanel`.
  */
 function newSplitMenuItems(referencePanel: IDockviewPanel): ContextMenuItem[] {
-  return MENU_MODES.map(({ mode, label, icon }) => ({
+  return SESSION_MODES.map(({ mode, label, icon }) => ({
     label,
     icon,
     submenu: SPLIT_DIRECTIONS.map(({ dir, label: dLabel, icon: dIcon }) => ({
@@ -1769,12 +1836,17 @@ function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
   const hasSelection = entry?.terminal.hasSelection() ?? false;
 
   return [
-    ...MENU_MODES.map(({ mode, label, icon }) => ({
-      label: `New ${label} tab`,
-      icon,
-      run: () => addPanelWithMode(mode),
-    })),
-    { separator: true },
+    {
+      // One submenu for every session mode (all agents + raw term), so the
+      // menu stays compact now that many agents are supported.
+      label: "New session",
+      icon: "✦",
+      submenu: SESSION_MODES.map(({ mode, label, icon }) => ({
+        label,
+        icon,
+        run: () => addPanelWithMode(mode),
+      })),
+    },
     { label: "New split", icon: "▣", submenu: newSplitMenuItems(panel) },
     { separator: true },
     {
@@ -2127,7 +2199,7 @@ async function init() {
       if (m) panelCounter = Math.max(panelCounter, parseInt(m[1], 10));
     }
   } else {
-    addPanelWithMode("opencode");
+    addPanelWithMode(DEFAULT_MODE);
   }
 
   // Persist subsequent layout changes for this launch directory.
@@ -2153,19 +2225,15 @@ const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
  * fresh every time the palette opens so the list reflects the live layout.
  */
 
-/** Sidebar / palette icon for a session mode. */
-function modeIcon(mode: Mode): string {
-  if (mode === "pi") return "π";
-  return mode === "opencode" ? "✦" : "$";
-}
-
 function buildPaletteItems(): PaletteItem[] {
   const items: PaletteItem[] = [];
 
   for (const panel of api.panels) {
     const params = panel.api.getParameters() as Record<string, unknown>;
     const mode: Mode =
-      params.mode === "pi" ? "pi" : params.mode === "raw" ? "raw" : "opencode";
+      typeof params.mode === "string" && KNOWN_MODES.includes(params.mode)
+        ? params.mode
+        : DEFAULT_MODE;
     const sessionId = panelToSession.get(panel.id);
     const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
     const cwd =
@@ -2197,37 +2265,19 @@ function buildPaletteItems(): PaletteItem[] {
     icon?: string;
     run: () => void;
   }> = [
-    {
-      label: "New opencode tab",
-      detail: "Ctrl+Shift+T",
-      icon: "✦",
-      run: () => addPanelWithMode("opencode"),
-    },
-    {
-      label: "New pi agent tab",
-      icon: "π",
-      run: () => addPanelWithMode("pi"),
-    },
-    {
-      label: "New raw term tab",
-      icon: "$",
-      run: () => addPanelWithMode("raw"),
-    },
-    {
-      label: "New opencode split",
-      icon: "✦",
-      run: () => addPanelWithMode("opencode", { direction: "right" }),
-    },
-    {
-      label: "New pi agent split",
-      icon: "π",
-      run: () => addPanelWithMode("pi", { direction: "right" }),
-    },
-    {
-      label: "New raw term split",
-      icon: "$",
-      run: () => addPanelWithMode("raw", { direction: "right" }),
-    },
+    // One "new tab" and one "new split" action per session mode; the fuzzy
+    // finder keeps 30 actions navigable (type "cop" to jump to Copilot).
+    ...SESSION_MODES.map(({ mode, label, icon }) => ({
+      label: `New ${label} tab`,
+      detail: mode === DEFAULT_MODE ? "Ctrl+Shift+T" : undefined,
+      icon,
+      run: () => addPanelWithMode(mode),
+    })),
+    ...SESSION_MODES.map(({ mode, label, icon }) => ({
+      label: `New ${label} split`,
+      icon,
+      run: () => addPanelWithMode(mode, { direction: "right" }),
+    })),
     {
       label: "Find in terminal",
       detail: "Ctrl+Shift+F",
@@ -2313,13 +2363,14 @@ function setupKeyboard() {
   const uiOpen = () =>
     settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
 
-  // Ctrl+Shift+T spawns an opencode tab, Ctrl+Shift+W closes the active panel.
+  // Ctrl+Shift+T spawns a default-agent (opencode) tab, Ctrl+Shift+W closes
+  // the active panel.
   // Bubble phase is fine here: these combos are not printable terminal keys.
   window.addEventListener("keydown", (e) => {
     if (uiOpen()) return;
     if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
       e.preventDefault();
-      addPanelWithMode("opencode");
+      addPanelWithMode(DEFAULT_MODE);
     }
     if (e.ctrlKey && e.shiftKey && (e.key === "W" || e.key === "w")) {
       e.preventDefault();
