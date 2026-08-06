@@ -30,6 +30,13 @@ import {
 
 const PREVIEW_TEXT = "AaBb 日本語 中文 🎉 → ①②③ NFO nf ";
 
+/** A microphone listed by the backend's `dictation_devices` command. */
+interface DictationDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
 let overlay: HTMLElement | null = null;
 let previewEl: HTMLElement | null = null;
 let unsubscribe: (() => void) | null = null;
@@ -169,6 +176,46 @@ function selectField<T extends string>(
   }
   select.value = value;
   select.addEventListener("change", () => onChange?.(select.value as T));
+  return select;
+}
+
+/**
+ * Microphone dropdown for dictation. The empty value is "system default"; the
+ * list of devices is loaded from the backend. A saved id whose device was
+ * unplugged is kept in the list (labelled unavailable) so the stored setting
+ * isn't silently lost.
+ */
+function micSelect(current: string, onChange?: (v: string) => void): HTMLElement {
+  const select = el("select", "settings-select");
+  const addOption = (value: string, label: string) => {
+    const optionEl = el("option");
+    optionEl.value = value;
+    optionEl.textContent = label;
+    select.appendChild(optionEl);
+  };
+
+  addOption("", "System default");
+  select.value = current;
+  select.addEventListener("change", () => onChange?.(select.value));
+
+  invoke<DictationDevice[]>("dictation_devices")
+    .then((devices) => {
+      const ids = new Set(devices.map((d) => d.id));
+      if (current !== "" && !ids.has(current)) {
+        addOption(current, "Unavailable (unplugged)");
+      }
+      for (const device of devices) {
+        addOption(
+          device.id,
+          device.isDefault ? `${device.name} (default)` : device.name
+        );
+      }
+      select.value = current;
+    })
+    .catch((err) => {
+      console.error("Failed to load microphones:", err);
+    });
+
   return select;
 }
 
@@ -473,6 +520,13 @@ function buildGeneralTab(): HTMLElement {
         (dictationEngine) => updateSettings({ dictationEngine })
       ),
       "Hold the Dictate key (rebindable in the Keybinds tab) in the terminal to dictate; local engines download their model on first use"
+    )
+  );
+  dictationSection.appendChild(
+    controlRow(
+      "Microphone",
+      micSelect(s.dictationMic, (dictationMic) => updateSettings({ dictationMic })),
+      "Which microphone to capture from; System default follows the OS default input device"
     )
   );
   body.appendChild(dictationSection);

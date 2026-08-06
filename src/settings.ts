@@ -76,6 +76,12 @@ export interface AppSettings {
   /** Terminal background opacity: 1 = opaque, < 1 = translucent. */
   backgroundOpacity: number;
   dictationEngine: DictationEngine;
+  /**
+   * Stable device id of the microphone used for dictation, as reported by the
+   * `dictation_devices` IPC command. Empty string means the system default
+   * input device.
+   */
+  dictationMic: string;
   /** Base directory for auto-created worktree sessions (default /tmp). */
   worktreeBaseDir: string;
   /** Show a native desktop notification when an agent session finishes. */
@@ -124,6 +130,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_ID,
   backgroundOpacity: 1,
   dictationEngine: "whisper",
+  dictationMic: "",
   worktreeBaseDir: "/tmp",
   desktopNotifications: true,
   terminalBellSound: true,
@@ -225,6 +232,7 @@ function normalize(value: unknown): AppSettings {
       v.dictationEngine === "vosk" || v.dictationEngine === "cloud"
         ? v.dictationEngine
         : "whisper",
+    dictationMic: pickStr("dictationMic", DEFAULT_SETTINGS.dictationMic),
     worktreeBaseDir: pickStr("worktreeBaseDir", DEFAULT_SETTINGS.worktreeBaseDir),
     desktopNotifications: pickBool(
       "desktopNotifications",

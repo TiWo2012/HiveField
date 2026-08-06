@@ -77,7 +77,8 @@ export function initDictation(getActiveSessionId: () => number | undefined): voi
       if (active) return;
       active = true;
       const engine = getSettings().dictationEngine;
-      invoke("dictation_start", { engine }).catch((err) => {
+      const device = getSettings().dictationMic;
+      invoke("dictation_start", { engine, device }).catch((err) => {
         console.error("dictation_start failed", err);
         active = false;
       });

@@ -1,8 +1,11 @@
 //! Voice dictation backend: microphone capture (cpal) + transcription via one of
 //! three engines (local Whisper, local Vosk, or an OpenAI-compatible cloud API).
 //!
-//! Exposes three IPC commands to the frontend:
-//!   - `dictation_start(app, state, engine)` — begin mic capture for the given engine.
+//! Exposes four IPC commands to the frontend:
+//!   - `dictation_devices()` — list the microphones available for capture.
+//!   - `dictation_start(app, state, engine, device)` — begin mic capture for
+//!     the given engine on the given device (id from `dictation_devices`;
+//!     omitted or empty = the system default input device).
 //!   - `dictation_stop(app, state)` — stop capture, transcribe, emit the result.
 //!   - `dictation_status(state)` — return the current `DictationStatus`.
 //!
@@ -12,6 +15,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -87,6 +91,61 @@ impl DictationStatus {
     }
 }
 
+/// A microphone offered to the user in the dictation settings.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DictationDevice {
+    /// Stable device id, persistable in settings; matches `dictation_start`'s
+    /// `device` argument.
+    pub id: String,
+    /// Human-readable name shown in the settings dropdown.
+    pub name: String,
+    /// True when this is the host's default input device.
+    pub is_default: bool,
+}
+
+/// IPC: list the microphones available for dictation, default first.
+///
+/// Device ids are stable across reboots so a saved preference keeps working;
+/// the frontend stores the selected id in settings and passes it back to
+/// `dictation_start`.
+#[tauri::command]
+pub fn dictation_devices() -> Vec<DictationDevice> {
+    let host = cpal::default_host();
+    let Ok(devices) = host.input_devices() else {
+        return Vec::new();
+    };
+    let default_id = host
+        .default_input_device()
+        .and_then(|d| d.id().ok())
+        .map(|id| id.to_string());
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for device in devices {
+        let Ok(id) = device.id() else { continue };
+        let id = id.to_string();
+        if !seen.insert(id.clone()) {
+            continue; // some hosts list the same device more than once
+        }
+        let name = device
+            .description()
+            .map(|d| d.name().to_string())
+            .unwrap_or_else(|_| id.clone());
+        out.push(DictationDevice {
+            is_default: default_id.as_deref() == Some(id.as_str()),
+            id,
+            name,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.is_default
+            .cmp(&a.is_default)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    out
+}
+
 /// Managed state shared across all dictation commands.
 pub struct DictationState {
     pub inner: Mutex<DictationInner>,
@@ -135,14 +194,18 @@ fn parse_engine(engine: Option<String>) -> String {
 
 /// IPC: begin microphone capture for the given transcription engine.
 ///
-/// Lazily downloads / extracts the local model (Whisper / Vosk), loads the
-/// Whisper context exactly once, then starts capturing at 16 kHz if the device
-/// supports it. Downloads run on a background thread guarded by `model_busy`.
+/// `device` is the stable id of the microphone to capture from (see
+/// `dictation_devices`); when omitted or empty the host's default input device
+/// is used. Lazily downloads / extracts the local model (Whisper / Vosk), loads
+/// the Whisper context exactly once, then starts capturing at 16 kHz if the
+/// device supports it. Downloads run on a background thread guarded by
+/// `model_busy`.
 #[tauri::command]
 pub fn dictation_start(
     app: AppHandle,
     state: State<'_, DictationState>,
     engine: Option<String>,
+    device: Option<String>,
 ) -> Result<(), String> {
     let engine = parse_engine(engine);
     let models_dir = models_dir(&app)?;
@@ -221,7 +284,13 @@ pub fn dictation_start(
         }
     }
 
-    let capture = start_capture()?;
+    let capture = match start_capture(device.as_deref()) {
+        Ok(capture) => capture,
+        Err(e) => {
+            set_status(&app, &DictationStatus::error(&e));
+            return Err(e);
+        }
+    };
     {
         let mut inner = state.inner.lock().map_err(poisoned)?;
         inner.capture = Some(capture);
@@ -533,15 +602,33 @@ fn download_vosk_model(app: &AppHandle, models_dir: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// Start capturing from the default input device.
+/// Resolve the input device to capture from: `device_id` when it is present and
+/// still available, otherwise the host's default input device. A saved id that
+/// no longer resolves (unplugged / renamed) is an error rather than a silent
+/// fallback, so the user notices the wrong mic isn't being used.
+fn resolve_input_device(device_id: Option<&str>) -> Result<cpal::Device, String> {
+    let host = cpal::default_host();
+    if let Some(id) = device_id {
+        let id = id.trim();
+        if !id.is_empty() {
+            if let Ok(parsed) = cpal::DeviceId::from_str(id) {
+                if let Some(device) = host.device_by_id(&parsed) {
+                    return Ok(device);
+                }
+            }
+            return Err(format!("selected microphone is no longer available: {id}"));
+        }
+    }
+    host.default_input_device()
+        .ok_or_else(|| "no default input device available".to_string())
+}
+
+/// Start capturing from the selected input device (`None` = system default).
 ///
 /// Prefers a mono f32 stream at 16 kHz (so no resampling is needed downstream),
 /// falling back to the device's default rate / format.
-fn start_capture() -> Result<ActiveCapture, String> {
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "no default input device available".to_string())?;
+fn start_capture(device_id: Option<&str>) -> Result<ActiveCapture, String> {
+    let device = resolve_input_device(device_id)?;
     let default = device
         .default_input_config()
         .map_err(|e| format!("failed to read default input config: {e}"))?;

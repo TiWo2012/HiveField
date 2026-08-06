@@ -275,6 +275,7 @@ pub fn run() {
             dir_exists,
             open_url,
             fonts::list_system_fonts,
+            dictation::dictation_devices,
             dictation::dictation_start,
             dictation::dictation_stop,
             dictation::dictation_status,
