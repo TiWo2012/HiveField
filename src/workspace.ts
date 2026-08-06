@@ -22,6 +22,12 @@ const SAVE_DEBOUNCE_MS = 500;
 /** The launch directory (cwd) every slot of this session is scoped to. */
 let cwd: string | undefined;
 
+/**
+ * Epoch ms when this launch resolved the workspace; stamped into every
+ * persisted document so the recent-projects splash can sort by recency.
+ */
+const openedAt = Date.now();
+
 /** Currently active slot (1-based). */
 let currentSlot = 1;
 
@@ -113,7 +119,11 @@ function parseDoc(raw: unknown): { current: number; slots: Map<number, SlotData>
 /** Persist the whole workspace document (current slot + all slot data). */
 async function persist(): Promise<void> {
   if (cwd === undefined) return;
-  const doc: Record<string, unknown> = { current: currentSlot, slots: {} };
+  const doc: Record<string, unknown> = {
+    current: currentSlot,
+    lastOpened: openedAt,
+    slots: {},
+  };
   const entries = doc.slots as Record<string, unknown>;
   for (const [slot, data] of slots) {
     const entry: Record<string, unknown> = {};
@@ -161,6 +171,15 @@ export function getWorkspaceSlots(): WorkspaceSlot[] {
 /** The currently active workspace slot (1-based). */
 export function getCurrentSlot(): number {
   return currentSlot;
+}
+
+/**
+ * The canonical launch directory, once resolved (undefined before the
+ * workspace is loaded). Exposed for the splash screen's "current directory"
+ * card and recent-projects filtering.
+ */
+export function getWorkspaceCwd(): string | undefined {
+  return cwd;
 }
 
 /** Short label for a slot: its user name, or a generic fallback. */

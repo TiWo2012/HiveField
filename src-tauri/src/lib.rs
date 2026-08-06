@@ -119,6 +119,51 @@ fn workspace_set(
     store.set(&cwd, &layout)
 }
 
+/// One entry in the recent-projects list shown on the welcome/splash screen.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectInfo {
+    cwd: String,
+    /// Epoch ms when the project was last opened (0 when unknown).
+    last_opened: u64,
+    /// Whether the directory still exists on disk.
+    exists: bool,
+}
+
+/// IPC command: list recent projects — directories with a saved workspace —
+/// most recently opened first. Missing directories are still listed (the UI
+/// greys them out) so the user can forget them.
+#[tauri::command]
+fn projects_list(app: tauri::AppHandle) -> Vec<ProjectInfo> {
+    let store = match workspace::WorkspaceStore::load(&app) {
+        Ok(store) => store,
+        Err(_) => return Vec::new(),
+    };
+    let mut projects: Vec<ProjectInfo> = store
+        .list()
+        .into_iter()
+        .map(|(cwd, doc)| ProjectInfo {
+            exists: std::path::Path::new(&cwd).is_dir(),
+            last_opened: workspace::last_opened(&doc),
+            cwd,
+        })
+        .collect();
+    projects.sort_by(|a, b| {
+        b.last_opened
+            .cmp(&a.last_opened)
+            .then_with(|| a.cwd.cmp(&b.cwd))
+    });
+    projects
+}
+
+/// IPC command: record that a project was just opened from the splash screen
+/// (updates its `lastOpened` stamp without touching the saved layout).
+#[tauri::command]
+fn project_touch(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
+    let store = workspace::WorkspaceStore::load(&app)?;
+    store.touch(&cwd)
+}
+
 /// IPC command: list the git worktrees of the repo containing the launch
 /// directory. `root` is `null` when the launch dir is not inside a git repo,
 /// in which case `worktrees` is empty.
@@ -221,6 +266,8 @@ pub fn run() {
             workspace_cwd,
             workspace_get,
             workspace_set,
+            projects_list,
+            project_touch,
             git_worktrees,
             git_worktree_create,
             git_worktree_remove,

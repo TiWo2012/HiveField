@@ -65,11 +65,52 @@ impl WorkspaceStore {
         self.write(&map)
     }
 
+    /// List every stored workspace as `(cwd, document)` pairs. Order follows
+    /// the store's internal map (sorted by path); callers sort by recency.
+    pub fn list(&self) -> Vec<(String, Value)> {
+        match self.read() {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Stamp `lastOpened` (epoch ms) on a workspace document without touching
+    /// its layout, creating a bare entry when the cwd has never been saved.
+    /// Used by the recent-projects splash when a project is opened from it.
+    pub fn touch(&self, cwd: &str) -> Result<(), String> {
+        let mut map = self.read();
+        if !map.is_object() {
+            map = serde_json::json!({});
+        }
+        let entries = map.as_object_mut().expect("workspace map is an object");
+        let doc = entries
+            .entry(cwd.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if let Value::Object(obj) = doc {
+            obj.insert("lastOpened".to_string(), Value::from(now_ms()));
+        }
+        self.write(&map)
+    }
+
     /// Persist the workspace map to disk.
     fn write(&self, map: &Value) -> Result<(), String> {
         let text = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
         fs::write(&self.path, text).map_err(|e| format!("failed to write workspaces: {e}"))
     }
+}
+
+/// Epoch milliseconds since the Unix epoch (used for `lastOpened` stamps).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Extract the frontend's `lastOpened` stamp (epoch ms) from a workspace
+/// document; 0 when absent (e.g. older bare-layout documents).
+pub fn last_opened(doc: &Value) -> u64 {
+    doc.get("lastOpened").and_then(Value::as_u64).unwrap_or(0)
 }
 
 /// Resolve the canonical absolute path of the process's current working
@@ -153,5 +194,39 @@ mod tests {
         std::fs::write(dir.path().join("workspaces.json"), "{ this is not json !!!")
             .expect("write corrupt file");
         assert_eq!(store.read(), json!({}));
+    }
+
+    #[test]
+    fn list_returns_every_stored_cwd() {
+        let (store, _dir) = temp_store();
+        store.set("/project/a", &json!({ "layout": 1 })).expect("set A");
+        store.set("/project/b", &json!({ "layout": 2 })).expect("set B");
+        let mut cwds: Vec<String> = store.list().into_iter().map(|(c, _)| c).collect();
+        cwds.sort();
+        assert_eq!(cwds, vec!["/project/a", "/project/b"]);
+    }
+
+    #[test]
+    fn touch_stamps_last_opened_and_preserves_layout() {
+        let (store, _dir) = temp_store();
+        let layout = json!({ "current": 2, "slots": { "1": { "layout": { "grid": {} } } } });
+        store.set("/project/a", &layout).expect("set");
+        store.touch("/project/a").expect("touch");
+        let doc = store.get("/project/a");
+        assert!(
+            last_opened(&doc) > 0,
+            "touch must stamp a lastOpened timestamp"
+        );
+        assert_eq!(doc.get("current"), Some(&json!(2)), "layout must survive touch");
+        // Touching an unknown cwd creates a bare entry.
+        store.touch("/project/new").expect("touch new");
+        assert!(last_opened(&store.get("/project/new")) > 0);
+    }
+
+    #[test]
+    fn last_opened_is_zero_for_bare_layouts() {
+        let (store, _dir) = temp_store();
+        store.set("/project/a", &json!({ "grid": {}, "panels": {} })).expect("set");
+        assert_eq!(last_opened(&store.get("/project/a")), 0);
     }
 }

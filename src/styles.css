@@ -1242,3 +1242,254 @@ body {
     transform: scale(1.04);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Splash / welcome screen — shown on launch when no workspace restores.
+ * Anchored inside #terminal, above the (empty) dockview grid.
+ * ------------------------------------------------------------------------- */
+
+#terminal {
+  position: relative;
+}
+
+#splash {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 48px 24px;
+  background: var(--hf-base);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  user-select: none;
+}
+
+:root[data-transparent="true"] #splash {
+  background: var(--hf-backdrop);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.splash-inner {
+  width: min(620px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.splash-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.splash-logo {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--hf-accent) 18%, var(--hf-mantle));
+  color: var(--hf-accent);
+  font-size: 24px;
+}
+
+.splash-brand h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.splash-brand p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--hf-subtext0);
+}
+
+.splash-section h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hf-overlay0);
+}
+
+.splash-hint {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--hf-subtext0);
+}
+
+.splash-cwd,
+.splash-project {
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 10px;
+}
+
+.splash-cwd {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+}
+
+.project-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.project-path {
+  font-size: 12px;
+  color: var(--hf-subtext0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.splash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.splash-action {
+  padding: 7px 14px;
+  border: 1px solid var(--hf-surface1);
+  border-radius: 8px;
+  background: var(--hf-surface0);
+  color: var(--hf-text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.splash-action:hover {
+  background: var(--hf-surface1);
+  border-color: var(--hf-overlay0);
+}
+
+.splash-action.primary {
+  background: var(--hf-accent);
+  border-color: var(--hf-accent);
+  color: var(--hf-accent-fg);
+  font-weight: 700;
+}
+
+.splash-action.primary:hover {
+  filter: brightness(1.08);
+  background: var(--hf-accent);
+}
+
+.splash-recents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.splash-project {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.splash-project:hover,
+.splash-project:focus-visible {
+  background: var(--hf-surface0);
+  border-color: var(--hf-overlay0);
+  outline: none;
+}
+
+.splash-project .project-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+  color: var(--hf-accent);
+}
+
+.splash-project .project-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.splash-project .project-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.splash-project .project-path {
+  font-size: 11px;
+}
+
+.splash-project.missing {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.splash-project.missing .project-icon {
+  color: var(--hf-red);
+}
+
+.project-forget {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hf-overlay0);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.project-forget:hover {
+  background: var(--hf-red);
+  color: var(--hf-accent-fg);
+}
+
+.splash-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hf-subtext0);
+}
+
+.splash-skip {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hf-subtext1);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--hf-overlay0);
+}
+
+.splash-skip:hover {
+  color: var(--hf-accent);
+  text-decoration-color: var(--hf-accent);
+}

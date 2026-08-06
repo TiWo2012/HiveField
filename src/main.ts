@@ -44,11 +44,13 @@ import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
 import {
   bindWorkspaceSave,
   getCurrentSlot,
+  getWorkspaceCwd,
   getWorkspaceSlots,
   renameWorkspace,
   restoreWorkspace,
   switchWorkspace,
 } from "./workspace";
+import { mountSplash } from "./splash";
 import { initFileDrop, registerTerminalRoot } from "./file-drop";
 import {
   closeContextMenu,
@@ -2163,7 +2165,32 @@ async function init() {
       if (m) panelCounter = Math.max(panelCounter, parseInt(m[1], 10));
     }
   } else {
-    addPanelWithMode(DEFAULT_MODE);
+    // No saved workspace for this directory: show the welcome screen instead
+    // of auto-opening a session. It lists recent projects (directories with a
+    // saved workspace) plus quick-start buttons for the current directory.
+    const splash = mountSplash(document.getElementById("terminal")!, {
+      cwd: getWorkspaceCwd(),
+      quickAgents: [
+        ...AGENTS.slice(0, 3).map((a) => ({
+          mode: a.id,
+          label: a.label,
+          icon: a.icon,
+        })),
+        { mode: RAW_MODE, label: "raw term", icon: "$" },
+      ],
+      onOpenProject: (path) => {
+        // Open the default agent in the chosen directory and mark it recent.
+        addPanelWithMode(DEFAULT_MODE, undefined, path);
+        void invoke("project_touch", { cwd: path }).catch(() => {});
+      },
+      onNewSession: (mode) => addPanelWithMode(mode),
+      onSkip: () => addPanelWithMode(DEFAULT_MODE),
+      onForgetProject: (path) => {
+        void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
+      },
+    });
+    // Any panel appearing (sidebar drop, palette action, …) dismisses it.
+    api.onDidAddPanel(() => splash.hide());
   }
 
   // Persist subsequent layout changes for this launch directory.
