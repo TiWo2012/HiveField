@@ -61,6 +61,11 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - **Hyperlinks**: URLs in output are underlined and **Ctrl+click** (or
   Cmd+click) opens them in your system browser (`http`, `https`, `mailto`).
   Hover shows a hint tooltip.
+- **Drag & drop files**: drop files or folders from your file manager onto a
+  terminal — the pane under the pointer lights up with a *release to insert
+  path* hint, and on drop their paths are shell-quoted (single quotes with
+  `'\''` escaping) and written at the shell's cursor. Drops that miss every
+  pane go to the active session instead.
 - **Tab activity / completion indicator**: a background tab whose session
   prints output gets a `●` prefix, flipping to `✓` once the output goes quiet
   (or immediately when shell integration emits an OSC 133 `D` finish marker).

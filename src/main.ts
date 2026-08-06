@@ -32,6 +32,7 @@ import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
 import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
 import { bindWorkspaceSave, restoreWorkspace } from "./workspace";
+import { initFileDrop, registerTerminalRoot } from "./file-drop";
 import "./styles.css";
 
 /** What a session auto-runs: a coding agent (opencode / pi), or a plain shell. */
@@ -697,6 +698,9 @@ function createTerminalComponent(): IContentRenderer {
       // terminal.element is only created by open(); re-apply settings so
       // element-dependent options (font ligatures) take effect.
       applyTerminalSettings(terminal, getSettings());
+
+      // OS file drops over this pane write the quoted path(s) into its PTY.
+      registerTerminalRoot(element, () => sessionId);
 
       // Buffer of the input line currently being typed, used to title the
       // pane once the line is submitted to the agent.
@@ -1568,6 +1572,14 @@ async function init() {
     getItems: buildPaletteItems,
     onClose: () => activeSessionEntry()?.terminal.focus(),
   });
+
+  // OS file drops: insert shell-quoted paths into the pane under the pointer,
+  // falling back to the active session when the drop misses every pane.
+  initFileDrop(() => {
+    const panel = api.activePanel;
+    if (!panel) return undefined;
+    return panelToSession.get(panel.id);
+  }).catch((err) => console.error("failed to init file drop", err));
 
   // If the user switches panels while searching, move the highlights to the
   // newly active terminal instead of leaving them stale on the old one, and

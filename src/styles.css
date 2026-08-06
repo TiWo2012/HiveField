@@ -440,6 +440,30 @@ body {
   height: 100%;
 }
 
+/* OS file-drag hover: highlight the pane the paths would land in. */
+.terminal-panel.file-drop-target {
+  outline: 2px solid var(--hf-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--hf-accent) 10%, var(--hf-terminal-bg));
+}
+
+/* "Release to insert path" hint shown over the drop target. */
+.file-drop-hint {
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 300;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--hf-accent);
+  color: var(--hf-accent-fg);
+  font-family: var(--hivefield-font);
+  font-size: 11px;
+  box-shadow: var(--hf-shadow);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
 /* Link hover tooltip (must live inside .xterm with the xterm-hover class). */
 .xterm-hover {
   position: absolute;
