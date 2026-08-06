@@ -476,9 +476,48 @@ function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon
   return { terminal, fitAddon, searchAddon };
 }
 
+/**
+ * True when the terminal's viewport is fully scrolled down (following the
+ * cursor). `viewportY` is the buffer line at the top of the viewport and
+ * `baseY` the first line of the bottom page, so they coincide exactly when
+ * there is no scrollback left below the viewport.
+ */
+function isAtBottom(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  return buffer.viewportY >= buffer.baseY;
+}
+
+/**
+ * Write data to a terminal, keeping the viewport pinned to the bottom when it
+ * was already there.
+ *
+ * Guards against an xterm quirk where the internal "user is scrolling" flag
+ * gets stuck: scrolling up once, and then having the terminal resized (which
+ * reflows the scrollback), can leave the flag set while the viewport is
+ * visually back at the bottom. From then on every new output line grows the
+ * buffer but not the viewport offset, so the display silently drifts up into
+ * scrollback while the cursor keeps advancing below the fold. Re-asserting
+ * the bottom position after the chunk is parsed is a no-op when the viewport
+ * really is at the bottom, but it clears the stuck flag so subsequent output
+ * keeps following.
+ */
+function writeToTerminal(terminal: Terminal, data: string): void {
+  // xterm parses writes asynchronously (its internal write buffer drains on a
+  // later tick), so the follow-up must run once this chunk has been parsed.
+  const follow = isAtBottom(terminal);
+  terminal.write(data, () => {
+    if (follow) terminal.scrollToBottom();
+  });
+}
+
 function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
   try {
+    // Resizing reflows the scrollback; like writes, it can leave the viewport
+    // (and xterm's scroll-tracking flag) off the bottom. Snap back when the
+    // user was following output.
+    const follow = isAtBottom(terminal);
     fitAddon.fit();
+    if (follow) terminal.scrollToBottom();
     invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
   } catch {
     // ignore until the backend is ready
@@ -857,7 +896,7 @@ function createTerminalComponent(): IContentRenderer {
 
           const pending = pendingOutputs.get(id);
           if (pending) {
-            for (const chunk of pending) terminal?.write(chunk);
+            for (const chunk of pending) terminal && writeToTerminal(terminal, chunk);
             pendingOutputs.delete(id);
           }
 
@@ -1862,7 +1901,7 @@ async function registerGlobalListeners() {
       // Shell-integration markers drive the tab completion indicator; any
       // remaining text is written to the terminal.
       const { markers, text } = analyzeOutput(data);
-      if (text) entry.terminal.write(text);
+      if (text) writeToTerminal(entry.terminal, text);
       const panel = entry.panel;
       if (panel && panelStatus.has(panel.id)) {
         // Agent-done notifications run for every panel (active or not): a
@@ -1910,7 +1949,7 @@ async function registerGlobalListeners() {
     pendingOutputs.delete(sessionId);
     const entry = sessions.get(sessionId);
     if (entry) {
-      entry.terminal.write(`\r\n[process exited with code ${code}]\r\n`);
+      writeToTerminal(entry.terminal, `\r\n[process exited with code ${code}]\r\n`);
     }
   });
 }
