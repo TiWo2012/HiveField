@@ -27,6 +27,7 @@ import {
 import { toggleSettings } from "./settings-ui";
 import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, rerunSearch } from "./search";
+import { bindWorkspaceSave, restoreWorkspace } from "./workspace";
 import "./styles.css";
 
 /** What a session auto-runs: the opencode agent, or a plain shell. */
@@ -161,11 +162,11 @@ function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
 const MAX_PANE_TITLE_LEN = 60;
 
 /**
- * Turn a submitted input line into a tab title: strip control characters,
- * collapse whitespace, and truncate.
+ * Normalize a raw pane title: strip control characters, collapse whitespace,
+ * trim, and truncate.
  */
-function inputLineToTitle(line: string): string {
-  let title = line
+function sanitizeTitle(raw: string): string {
+  let title = raw
     .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -173,6 +174,13 @@ function inputLineToTitle(line: string): string {
     title = `${title.slice(0, MAX_PANE_TITLE_LEN - 1)}…`;
   }
   return title;
+}
+
+/**
+ * Turn a submitted input line into a tab title.
+ */
+function inputLineToTitle(line: string): string {
+  return sanitizeTitle(line);
 }
 
 /** Escape-sequence state needed to tell typed chars from CSI/SS3/OSC sequences. */
@@ -264,6 +272,19 @@ function createTerminalComponent(): IContentRenderer {
       // pane once the line is submitted to the agent.
       let inputState: InputLineState = { line: "", escape: 0 };
 
+      // Once a program reports an OSC 0/2 title it owns this pane's tab, so
+      // input-line titles no longer override it.
+      let oscTitleSeen = false;
+
+      // xterm parses OSC 0/1/2 and exposes the parsed title here; let the
+      // running program's title win over the derived input-line one.
+      terminal.onTitleChange((title) => {
+        const sanitized = sanitizeTitle(title);
+        if (!sanitized) return;
+        oscTitleSeen = true;
+        panelApi.setTitle(sanitized);
+      });
+
       // Register input forwarding immediately so no early keystrokes are lost;
       // it no-ops until the session id is known.
       terminal.onData((data) => {
@@ -271,7 +292,7 @@ function createTerminalComponent(): IContentRenderer {
           // Track the line being typed; when it is submitted (Enter) it
           // becomes this pane's title before being forwarded to the agent.
           inputState = trackInputLine(inputState, data, (line) => {
-            if (mode === "opencode") {
+            if (mode === "opencode" && !oscTitleSeen) {
               const title = inputLineToTitle(line);
               if (title) panelApi.setTitle(title);
             }
@@ -513,7 +534,21 @@ async function init() {
     if (isSearchOpen()) rerunSearch();
   });
 
-  addPanelWithMode("opencode");
+  // Restore the saved per-cwd layout (no-op when nothing was saved). Restored
+  // panels carry serialized ids like `panel-1`, so bump the counter past them
+  // before any new panel is added to avoid duplicate ids.
+  const restored = await restoreWorkspace(api);
+  if (restored) {
+    for (const panel of api.panels) {
+      const m = /^panel-(\d+)$/.exec(panel.id);
+      if (m) panelCounter = Math.max(panelCounter, parseInt(m[1], 10));
+    }
+  } else {
+    addPanelWithMode("opencode");
+  }
+
+  // Persist subsequent layout changes for this launch directory.
+  bindWorkspaceSave(api);
 }
 
 /** Ctrl+H/J/K/L move focus between panes (vim-style). */
