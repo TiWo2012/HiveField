@@ -2,6 +2,7 @@ mod dictation;
 mod fonts;
 mod pty;
 mod settings;
+mod workspace;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -78,6 +79,34 @@ fn settings_set(app: tauri::AppHandle, settings: serde_json::Value) -> Result<()
     store.write(&settings)
 }
 
+/// IPC command: resolve the canonical absolute path of the process's working
+/// directory, falling back to the home directory when the cwd is gone or
+/// unreadable.
+#[tauri::command]
+fn workspace_cwd() -> Result<String, String> {
+    workspace::resolve_cwd()
+}
+
+/// IPC command: read the stored layout for a launch directory (`cwd`), or
+/// `null` when none has been saved.
+#[tauri::command]
+fn workspace_get(app: tauri::AppHandle, cwd: String) -> Result<serde_json::Value, String> {
+    let store = workspace::WorkspaceStore::load(&app)?;
+    Ok(store.get(&cwd))
+}
+
+/// IPC command: persist a layout for a launch directory (`cwd`); a `null`
+/// layout clears that directory's saved workspace.
+#[tauri::command]
+fn workspace_set(
+    app: tauri::AppHandle,
+    cwd: String,
+    layout: serde_json::Value,
+) -> Result<(), String> {
+    let store = workspace::WorkspaceStore::load(&app)?;
+    store.set(&cwd, &layout)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -90,6 +119,9 @@ pub fn run() {
             pty_kill,
             settings_get,
             settings_set,
+            workspace_cwd,
+            workspace_get,
+            workspace_set,
             fonts::list_system_fonts,
             dictation::dictation_start,
             dictation::dictation_stop,
