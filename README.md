@@ -11,13 +11,16 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   open and their modes) is saved per launch directory and restored the next time
   you start hiveField from that directory. A fully-wiped layout falls back to a
   fresh opencode session
-- **Splash screen with recent projects**: when the launch directory has no saved
-  workspace, a welcome screen shows instead of auto-opening a session — the
-  current directory with quick-start session buttons (respecting the visible
-  agents setting), plus a **Recent projects** list of every directory with a
-  saved workspace, sorted by most recently opened. Click a project to open the
-  default agent there (its recency stamp updates), ✕ forgets it, and any new
-  session (drop, palette, …) dismisses the splash.
+- **Splash screen before auto-resume**: every launch opens a welcome screen
+  before anything restores — a **Continue latest** button (resumes the launch
+  directory's saved layout), the current directory with quick-start session
+  buttons (respecting the visible agents setting), plus a **Recent projects**
+  list of every directory with a saved workspace, sorted by most recently
+  opened. Click a project to open the default agent there (its recency stamp
+  updates), ✕ forgets it, dropping a folder anywhere dismisses the splash and
+  continues (the folder lands in the resumed shell, or becomes the session's
+  directory when nothing is saved here), and any new session (drop, palette,
+  …) dismisses the splash too.
 - **Ten workspace slots (`Ctrl+1`…`Ctrl+9`, `Ctrl+0`)**: keep up to ten
   independent tab/split layouts per launch directory. Press **`Ctrl+1`…`Ctrl+9`
   / `Ctrl+0`** to jump to workspace slots 1…10 — the current layout is saved

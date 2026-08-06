@@ -1,14 +1,17 @@
 /**
- * Welcome / splash screen shown on launch when no saved workspace restores.
+ * Welcome / splash screen shown on every launch *before* the workspace
+ * auto-resumes. The deferred resume is offered as a "Continue latest" button;
+ * the current launch directory gets quick-start session buttons, and a
+ * "recent projects" list draws from directories that have a saved workspace
+ * (backed by the `projects_list` / `project_touch` IPC commands).
  *
- * Offers the current launch directory with quick-start session buttons, plus
- * a "recent projects" list drawn from directories that have a saved workspace
- * (backed by the `projects_list` / `project_touch` IPC commands). Opening a
- * project or starting a session dismisses it; any panel appearing (drop,
- * palette action, …) hides it too.
+ * Opening a project, starting a session, clicking Continue, or dropping a
+ * folder onto the splash dismisses it; any panel appearing (drop, palette
+ * action, …) hides it too.
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 /** A recent project as reported by the backend. */
 interface RecentProject {
@@ -29,10 +32,16 @@ export interface SplashAgent {
 export interface SplashOptions {
   /** Canonical launch directory (may be undefined while resolving). */
   cwd?: string;
+  /** Whether the launch directory has a saved workspace to resume. */
+  hasSavedWorkspace: boolean;
   /** Session quick-start buttons (first one is the primary action). */
   quickAgents: SplashAgent[];
+  /** Resume the launch directory's latest session (deferred auto-resume). */
+  onContinue: () => void;
   /** Open a session pinned to `cwd` (default agent mode). */
   onOpenProject: (cwd: string) => void;
+  /** A folder/file was dropped on the splash: dismiss it and continue. */
+  onDropPath: (path: string) => void;
   /** Start a session in the launch directory with the given mode. */
   onNewSession: (mode: string) => void;
   /** Dismiss the splash and open a fresh session in the launch directory. */
@@ -104,6 +113,38 @@ export function mountSplash(container: HTMLElement, opts: SplashOptions): Splash
   brand.append(logo, brandText);
   inner.appendChild(brand);
 
+  // Primary action: resume the launch directory's latest session. This is the
+  // deferred "auto-resume" — nothing is restored until the user acts.
+  const resumeSection = document.createElement("section");
+  resumeSection.className = "splash-section";
+  const resumeHeading = document.createElement("h2");
+  resumeHeading.textContent = "Continue";
+  resumeSection.appendChild(resumeHeading);
+  const resumeBtn = document.createElement("button");
+  resumeBtn.type = "button";
+  resumeBtn.className = "splash-resume";
+  const resumeLabel = document.createElement("span");
+  resumeLabel.className = "resume-label";
+  resumeLabel.textContent = opts.hasSavedWorkspace
+    ? "Continue latest session"
+    : "Start a session here";
+  const resumeArrow = document.createElement("span");
+  resumeArrow.className = "resume-arrow";
+  resumeArrow.textContent = "→";
+  resumeBtn.append(resumeLabel, resumeArrow);
+  resumeBtn.addEventListener("click", () => {
+    opts.onContinue();
+    hide();
+  });
+  const resumeHint = document.createElement("p");
+  resumeHint.className = "splash-resume-hint";
+  const resumePath = opts.cwd ?? "this directory";
+  resumeHint.textContent = opts.hasSavedWorkspace
+    ? `Resumes the last layout for ${resumePath}.`
+    : `No saved session for ${resumePath} yet — starts fresh.`;
+  resumeSection.append(resumeHeading, resumeBtn, resumeHint);
+  inner.appendChild(resumeSection);
+
   // Current directory card with quick-start sessions.
   const cwdSection = document.createElement("section");
   cwdSection.className = "splash-section";
@@ -162,11 +203,59 @@ export function mountSplash(container: HTMLElement, opts: SplashOptions): Splash
   inner.appendChild(skip);
 
   let hidden = false;
+  let dropHint: HTMLDivElement | null = null;
+  let unlistenDrop: (() => void) | undefined;
   const hide = () => {
     if (hidden) return;
     hidden = true;
     root.remove();
+    dropHint?.remove();
+    dropHint = null;
+    unlistenDrop?.();
   };
+
+  // OS file/folder drops dismiss the splash and continue: the drop is handed
+  // to main (which resumes the saved workspace and lands the path in the
+  // shell), and the splash is removed. Listens only while mounted; the global
+  // file-drop handler stays inert because no sessions exist yet.
+  getCurrentWebview()
+    .onDragDropEvent((event) => {
+      const { type } = event.payload;
+      if (type === "enter" || type === "over") {
+        root.classList.add("dragover");
+        if (!dropHint) {
+          dropHint = document.createElement("div");
+          dropHint.className = "splash-drop-hint";
+          dropHint.textContent = "Drop to continue";
+          root.appendChild(dropHint);
+        }
+        return;
+      }
+      if (type === "leave") {
+        root.classList.remove("dragover");
+        dropHint?.remove();
+        dropHint = null;
+        return;
+      }
+      // type === "drop"
+      root.classList.remove("dragover");
+      dropHint?.remove();
+      dropHint = null;
+      const { paths } = event.payload;
+      if (paths.length === 0) return; // non-file drag (text/URL from another app)
+      opts.onDropPath(paths[0]);
+      hide();
+    })
+    .then((unlisten) => {
+      // The splash may have been dismissed before the listener finished
+      // registering; unlisten immediately in that case.
+      if (hidden) unlisten();
+      else unlistenDrop = unlisten;
+    })
+    .catch(() => {
+      // Drag-drop interception unavailable: the splash still works, drops
+      // just don't dismiss it.
+    });
 
   /** Render a single recent-project row (or nothing when filtered out). */
   function renderProject(project: RecentProject): HTMLElement | undefined {
@@ -240,10 +329,9 @@ export function mountSplash(container: HTMLElement, opts: SplashOptions): Splash
   }
 
   container.appendChild(root);
-  // Keyboard users can start a session immediately; the first quick-start
-  // button is the primary action.
-  const primary = root.querySelector<HTMLButtonElement>(".splash-action.primary");
-  primary?.focus();
+  // Keyboard users can continue immediately: the resume button is the
+  // primary (focused) action, and Enter activates it.
+  root.querySelector<HTMLButtonElement>(".splash-resume")?.focus();
   void refresh();
 
   return { hide };

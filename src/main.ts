@@ -46,12 +46,13 @@ import {
   getCurrentSlot,
   getWorkspaceCwd,
   getWorkspaceSlots,
+  loadWorkspaces,
   renameWorkspace,
   restoreWorkspace,
   switchWorkspace,
 } from "./workspace";
-import { mountSplash } from "./splash";
-import { initFileDrop, registerTerminalRoot } from "./file-drop";
+import { mountSplash, type SplashHandle } from "./splash";
+import { initFileDrop, registerTerminalRoot, shellQuote } from "./file-drop";
 import {
   closeContextMenu,
   isContextMenuOpen,
@@ -2486,38 +2487,109 @@ async function init() {
     if (panel) void renamePanel(panel);
   });
 
-  // Restore the saved per-cwd layout (no-op when nothing was saved). Restored
-  // panels carry serialized ids like `panel-1`, so bump the counter past them
-  // before any new panel is added to avoid duplicate ids.
-  const restored = await restoreWorkspace(api);
-  if (restored) {
-    for (const panel of api.panels) {
-      const m = /^panel-(\d+)$/.exec(panel.id);
-      if (m) panelCounter = Math.max(panelCounter, parseInt(m[1], 10));
+  // Resolve the launch directory and its saved layouts up front so the splash
+  // can label the resume action (idempotent; restoreWorkspace re-reads too).
+  await loadWorkspaces();
+  const hasSavedWorkspace = getWorkspaceSlots().some((slot) => slot.hasLayout);
+
+  /**
+   * Restore the saved layout for the launch directory. Restored panels carry
+   * serialized ids like `panel-1`, so bump the panel counter past them before
+   * any new panel is added (avoids duplicate ids).
+   */
+  async function resumeSavedWorkspace(): Promise<boolean> {
+    const restored = await restoreWorkspace(api);
+    if (restored) {
+      for (const panel of api.panels) {
+        const m = /^panel-(\d+)$/.exec(panel.id);
+        if (m) panelCounter = Math.max(panelCounter, parseInt(m[1], 10));
+      }
     }
-  } else {
-    // No saved workspace for this directory: show the welcome screen instead
-    // of auto-opening a session. It lists recent projects (directories with a
-    // saved workspace) plus quick-start buttons for the current directory.
-    const splash = mountSplash(document.getElementById("terminal")!, {
-      cwd: getWorkspaceCwd(),
-      // The first few visible agents (respecting the settings filter) plus
-      // the raw shell, matching the sidebar's session sources.
-      quickAgents: sessionModes().slice(0, 4),
-      onOpenProject: (path) => {
-        // Open the default agent in the chosen directory and mark it recent.
-        addPanelWithMode(DEFAULT_MODE, undefined, path);
-        void invoke("project_touch", { cwd: path }).catch(() => {});
-      },
-      onNewSession: (mode) => addPanelWithMode(mode),
-      onSkip: () => addPanelWithMode(DEFAULT_MODE),
-      onForgetProject: (path) => {
-        void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
-      },
-    });
-    // Any panel appearing (sidebar drop, palette action, …) dismisses it.
-    api.onDidAddPanel(() => splash.hide());
+    return restored;
   }
+
+  /**
+   * Write `data` into the active session's PTY once it exists (sessions spawn
+   * asynchronously after their panel is created). Retries for a couple of
+   * seconds, then gives up — the drop is best-effort, like normal file drops.
+   */
+  function writeIntoActiveSession(data: string): void {
+    let attempts = 0;
+    const tryWrite = () => {
+      const panel = api.activePanel;
+      const sessionId = panel ? panelToSession.get(panel.id) : undefined;
+      if (sessionId !== undefined) {
+        invoke("pty_write", { sessionId, data }).catch((err) =>
+          console.error("failed to write dropped path", err)
+        );
+        return;
+      }
+      if (++attempts < 40) setTimeout(tryWrite, 50);
+    };
+    tryWrite();
+  }
+
+  let splash!: SplashHandle;
+
+  /**
+   * Dismiss the splash and continue: restore the launch directory's saved
+   * layout (the deferred auto-resume). `dropPath`, when a folder/file was
+   * dropped on the splash, still lands in the shell once a session is up;
+   * with nothing to restore, a dropped *folder* becomes the new session's
+   * directory instead.
+   */
+  async function continueFromSplash(dropPath?: string): Promise<void> {
+    splash.hide();
+    const restored = await resumeSavedWorkspace();
+    if (dropPath) {
+      if (restored) {
+        // The drop happened while the splash deferred the resume — land the
+        // path in the restored shell, like a normal file drop would.
+        writeIntoActiveSession(shellQuote(dropPath));
+      } else {
+        const isDir = await invoke<boolean>("dir_exists", { path: dropPath }).catch(
+          () => false
+        );
+        if (isDir) {
+          // Nothing saved here: open the dropped folder as the session's dir.
+          addPanelWithMode(DEFAULT_MODE, undefined, dropPath);
+          void invoke("project_touch", { cwd: dropPath }).catch(() => {});
+        } else {
+          addPanelWithMode(DEFAULT_MODE);
+          writeIntoActiveSession(shellQuote(dropPath));
+        }
+      }
+    } else if (!restored) {
+      addPanelWithMode(DEFAULT_MODE);
+    }
+  }
+
+  // Always show the welcome screen *before* auto-resuming. It offers
+  // "Continue latest" (restores the launch directory's saved layout), the
+  // current directory's quick-start sessions, and the recent-projects list;
+  // any of those — or an OS folder drop — dismisses it and continues.
+  splash = mountSplash(document.getElementById("terminal")!, {
+    cwd: getWorkspaceCwd(),
+    hasSavedWorkspace,
+    // The first few visible agents (respecting the settings filter) plus
+    // the raw shell, matching the sidebar's session sources.
+    quickAgents: sessionModes().slice(0, 4),
+    onContinue: () => void continueFromSplash(),
+    onOpenProject: (path) => {
+      // Open the default agent in the chosen directory and mark it recent.
+      addPanelWithMode(DEFAULT_MODE, undefined, path);
+      void invoke("project_touch", { cwd: path }).catch(() => {});
+    },
+    onNewSession: (mode) => addPanelWithMode(mode),
+    onSkip: () => addPanelWithMode(DEFAULT_MODE),
+    onForgetProject: (path) => {
+      void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
+    },
+    onDropPath: (path) => void continueFromSplash(path),
+  });
+  // Any panel appearing (sidebar drop, palette action, keyboard shortcut, …)
+  // dismisses the splash.
+  api.onDidAddPanel(() => splash.hide());
 
   // Persist subsequent layout changes for this launch directory.
   bindWorkspaceSave(api);

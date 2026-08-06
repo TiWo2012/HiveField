@@ -44,7 +44,7 @@ const HINT_TEXT = "Release to insert path";
  * everything else is wrapped in single quotes with embedded quotes escaped the
  * POSIX way (`'\''`). Relative paths that look like options are quoted too.
  */
-function shellQuote(path: string): string {
+export function shellQuote(path: string): string {
   if (/^[A-Za-z0-9_\-./+@%,:=]+$/.test(path) && !path.startsWith("-")) {
     return path;
   }
