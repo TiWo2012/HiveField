@@ -1,5 +1,6 @@
 import { SearchAddon } from "@xterm/addon-search";
 import type { Terminal } from "@xterm/xterm";
+import { matchesKeybind } from "./keybinds";
 
 /**
  * A terminal that can be searched. Every session terminal loads a SearchAddon
@@ -16,6 +17,8 @@ export interface SearchContext {
   container: HTMLElement;
   /** Resolve the terminal the search applies to — normally the active panel. */
   getActive: () => SearchableTerminal | undefined;
+  /** Resolve the current "find" keybinding (Settings → Keybinds). */
+  toggleKeybind?: () => string;
 }
 
 /**
@@ -212,13 +215,12 @@ export function initSearch(ctx: SearchContext): void {
     }
   });
 
-  // Ctrl+Shift+F toggles the bar; Esc closes it. Capture phase so xterm never
-  // sees these keys while the bar is up.
+  // The configured find binding toggles the bar; Esc closes it. Capture phase
+  // so xterm never sees these keys while the bar is up.
   window.addEventListener(
     "keydown",
     (e) => {
-      const isFind =
-        e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "F" || e.key === "f");
+      const isFind = matchesKeybind(ctx.toggleKeybind?.() ?? "Ctrl+Shift+F", e);
       if (isFind) {
         e.preventDefault();
         e.stopPropagation();

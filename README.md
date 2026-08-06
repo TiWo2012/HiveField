@@ -115,6 +115,12 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - **Notifications**: when a background agent session finishes — or the window is unfocused — hiveField fires a **desktop notification** and/or an **ntfy push notification** (configurable in Settings): ntfy supports a custom server (default `https://ntfy.sh`), topic, and optional access-token auth (`Authorization: Bearer`, stored unencrypted in `settings.json`, as configured). A "Test" button in Settings verifies each channel.
 - **Font-size zoom**: `Ctrl+=` / `Ctrl+-` adjust the font size of every
   terminal live (persisted in settings); `Ctrl+0` resets it.
+- **Configurable keybindings**: every keyboard shortcut (new tab, close
+  panel, rename, copy/paste, find, command palette, settings, pane focus,
+  workspace switching, font zoom, dictation) is rebindable in **Settings →
+  Keybinds** — click a binding and press the new keys, `Backspace` unbinds it,
+  `Esc` cancels. Changes apply instantly and persist; the sidebar shortcuts,
+  palette details and context-menu hints follow the configured bindings.
 - **Themes**: a color theme setting drives both the terminal palette and the
   window chrome (sidebar, tabs, modals, search bar). Includes Catppuccin
   Mocha/Latte, Nord, Dracula, Monokai, One Dark, Gruvbox, Solarized Light,

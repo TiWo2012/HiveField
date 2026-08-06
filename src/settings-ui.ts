@@ -1,8 +1,12 @@
 /**
- * Settings page — a modal overlay for font / Unicode / rendering options.
+ * Settings page — a modal overlay with two tabs:
  *
- * Every control writes straight into the settings store, so changes apply
- * live to all open terminals. A preview line shows the current font.
+ *  - **General**: font / Unicode / rendering / agents / worktrees / dictation /
+ *    notifications options. Every control writes straight into the settings
+ *    store, so changes apply live to all open terminals.
+ *  - **Keybinds**: every configurable keyboard shortcut, click-to-record.
+ *
+ * A preview line shows the current font.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -13,14 +17,24 @@ import {
   resetSettings,
   subscribe,
   updateSettings,
-  type AppSettings,
 } from "./settings";
+import {
+  DEFAULT_KEYBINDS,
+  KEYBIND_ACTIONS,
+  formatKeybind,
+  keyNeedsModifier,
+  keybindEqual,
+  parseKeybind,
+  type KeybindAction,
+} from "./keybinds";
 
 const PREVIEW_TEXT = "AaBb 日本語 中文 🎉 → ①②③ NFO nf ";
 
 let overlay: HTMLElement | null = null;
 let previewEl: HTMLElement | null = null;
 let unsubscribe: (() => void) | null = null;
+/** Refresh the Keybinds tab rows whenever settings change (see openSettings). */
+let renderKeybindRows: (() => void) | null = null;
 
 export function openSettings(): void {
   if (!overlay) {
@@ -30,6 +44,7 @@ export function openSettings(): void {
         previewEl.style.fontFamily = `"${s.fontFamily}", monospace`;
         previewEl.style.fontSize = `${s.fontSize}px`;
       }
+      renderKeybindRows?.();
     });
     document.addEventListener("keydown", onKeydown);
   }
@@ -204,30 +219,11 @@ function section(title: string): HTMLElement {
   return sectionEl;
 }
 
-/* ---- Build the modal ---- */
+/* ---- General tab ---- */
 
-function buildOverlay(): HTMLElement {
+function buildGeneralTab(): HTMLElement {
   const s = getSettings();
-
-  const backdrop = el("div", "settings-backdrop");
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target === backdrop) closeSettings();
-  });
-
-  const modal = el("div", "settings-modal");
-
-  const header = el("div", "settings-header");
-  const title = el("h1", "settings-title");
-  title.textContent = "Settings";
-  const closeBtn = el("button", "settings-close");
-  closeBtn.type = "button";
-  closeBtn.textContent = "×";
-  closeBtn.title = "Close (Esc)";
-  closeBtn.addEventListener("click", closeSettings);
-  header.append(title, closeBtn);
-  modal.appendChild(header);
-
-  const body = el("div", "settings-body");
+  const body = el("div", "settings-tab-panel");
 
   /* --- Font --- */
   const fontSection = section("Font");
@@ -392,7 +388,7 @@ function buildOverlay(): HTMLElement {
         ],
         (dictationEngine) => updateSettings({ dictationEngine })
       ),
-      "Hold Ctrl+Alt+D in the terminal to dictate; local engines download their model on first use"
+      "Hold the Dictate key (rebindable in the Keybinds tab) in the terminal to dictate; local engines download their model on first use"
     )
   );
   body.appendChild(dictationSection);
@@ -500,6 +496,226 @@ function buildOverlay(): HTMLElement {
   previewSection.appendChild(previewEl);
   body.appendChild(previewSection);
 
+  return body;
+}
+
+/* ---- Keybinds tab ---- */
+
+function buildKeybindsTab(): HTMLElement {
+  const panel = el("div", "settings-tab-panel");
+
+  const hint = el("div", "settings-hint");
+  hint.textContent =
+    "Click a binding and press the new keys. Backspace unbinds it, Esc cancels. Plain letters/digits/symbols need a modifier (Ctrl/Alt/Meta) so they don't swallow terminal typing.";
+  panel.appendChild(hint);
+
+  const list = el("div", "settings-keybinds");
+  panel.appendChild(list);
+
+  const message = el("div", "settings-keybind-message");
+  panel.appendChild(message);
+
+  const footer = el("div", "settings-keybind-footer");
+  const resetBtn = el("button", "settings-reset");
+  resetBtn.type = "button";
+  resetBtn.textContent = "Reset keybinds to defaults";
+  resetBtn.addEventListener("click", () => {
+    void updateSettings({ keybinds: { ...DEFAULT_KEYBINDS } });
+  });
+  footer.appendChild(resetBtn);
+  panel.appendChild(footer);
+
+  let recording: KeybindAction | null = null;
+  let recordingBtn: HTMLButtonElement | null = null;
+
+  const showMessage = (text: string) => {
+    message.textContent = text;
+    message.classList.add("error");
+  };
+  const clearMessage = () => {
+    message.textContent = "";
+    message.classList.remove("error");
+  };
+
+  const stopRecording = (): void => {
+    recording = null;
+    recordingBtn = null;
+    renderKeybindRows?.();
+  };
+
+  const render = (): void => {
+    const kb = getSettings().keybinds;
+
+    // Group every action by its current binding to flag duplicates.
+    const byBinding = new Map<string, KeybindAction[]>();
+    for (const def of KEYBIND_ACTIONS) {
+      const binding = kb[def.id];
+      if (!binding) continue;
+      const bucket = byBinding.get(binding) ?? [];
+      bucket.push(def.id);
+      byBinding.set(binding, bucket);
+    }
+    const conflicting = new Set<KeybindAction>();
+    for (const bucket of byBinding.values()) {
+      if (bucket.length > 1) for (const id of bucket) conflicting.add(id);
+    }
+
+    list.replaceChildren();
+    let lastGroup = "";
+    for (const def of KEYBIND_ACTIONS) {
+      if (def.group !== lastGroup) {
+        lastGroup = def.group;
+        const groupTitle = el("div", "settings-keybind-group");
+        groupTitle.textContent = def.group;
+        list.appendChild(groupTitle);
+      }
+      const row = el("div", "settings-row keybind-row");
+      const label = el("span", "settings-label");
+      label.textContent = def.label;
+      row.appendChild(label);
+
+      const btn = el("button", "settings-keybind-key");
+      btn.type = "button";
+      btn.dataset.action = def.id;
+      const binding = kb[def.id];
+      btn.textContent = binding || "unbound";
+      if (!binding) btn.classList.add("unbound");
+      if (conflicting.has(def.id)) btn.classList.add("conflict");
+      if (recording === def.id) {
+        btn.classList.add("recording");
+        btn.textContent = "Press keys…";
+        recordingBtn = btn;
+      }
+      btn.title = conflicting.has(def.id)
+        ? "Bound to more than one action — the others won't fire"
+        : binding
+          ? `Click to rebind (currently ${binding})`
+          : "Click to bind";
+      btn.addEventListener("click", () => {
+        recording = def.id;
+        render();
+      });
+      row.appendChild(btn);
+      list.appendChild(row);
+    }
+  };
+  renderKeybindRows = render;
+
+  // Capture recorded keys. Registered once (the overlay persists across
+  // open/close); only acts while a row is recording. Capture phase +
+  // stopImmediatePropagation so the combo never reaches the app's own global
+  // shortcuts, xterm, or the modal's Esc-to-close handler.
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (recording === null) return;
+      // The modal may have been closed mid-recording (e.g. via × or the
+      // backdrop); drop the stale recording state so it doesn't linger.
+      if (!overlay?.isConnected) {
+        recording = null;
+        recordingBtn = null;
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        stopRecording();
+        return;
+      }
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const kb = getSettings().keybinds;
+        void updateSettings({ keybinds: { ...kb, [recording]: "" } });
+        stopRecording();
+        return;
+      }
+      const formatted = formatKeybind(e);
+      if (!formatted) return; // modifier-only keydown; keep waiting
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      const parsed = parseKeybind(formatted);
+      if (!parsed) return;
+      if (
+        keyNeedsModifier(parsed.key) &&
+        !parsed.ctrl &&
+        !parsed.alt &&
+        !parsed.meta
+      ) {
+        showMessage(
+          `"${formatted}" needs a modifier (Ctrl/Alt/Meta) so it doesn't swallow terminal typing.`
+        );
+        return;
+      }
+      const kb = getSettings().keybinds;
+      const clash = KEYBIND_ACTIONS.find(
+        (a) => a.id !== recording && kb[a.id] && keybindEqual(kb[a.id], formatted)
+      );
+      if (clash) {
+        showMessage(`"${formatted}" is already bound to "${clash.label}".`);
+        return;
+      }
+      clearMessage();
+      void updateSettings({ keybinds: { ...kb, [recording]: formatted } });
+      stopRecording();
+    },
+    true
+  );
+
+  render();
+  return panel;
+}
+
+/* ---- Build the modal ---- */
+
+function buildOverlay(): HTMLElement {
+  const backdrop = el("div", "settings-backdrop");
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) closeSettings();
+  });
+
+  const modal = el("div", "settings-modal");
+
+  const header = el("div", "settings-header");
+  const title = el("h1", "settings-title");
+  title.textContent = "Settings";
+  const closeBtn = el("button", "settings-close");
+  closeBtn.type = "button";
+  closeBtn.textContent = "×";
+  closeBtn.title = "Close (Esc)";
+  closeBtn.addEventListener("click", closeSettings);
+  header.append(title, closeBtn);
+  modal.appendChild(header);
+
+  // Tab bar: General | Keybinds.
+  const body = el("div", "settings-body");
+  const tabbar = el("div", "settings-tabs");
+  const tabButtons: HTMLButtonElement[] = [];
+  const panels: Record<string, HTMLElement> = {};
+  const activateTab = (id: string) => {
+    for (const btn of tabButtons) {
+      btn.classList.toggle("active", btn.dataset.tab === id);
+    }
+    for (const [panelId, panelEl] of Object.entries(panels)) {
+      panelEl.classList.toggle("active", panelId === id);
+    }
+  };
+  const addTab = (id: string, label: string, panel: HTMLElement) => {
+    const btn = el("button", "settings-tab");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.dataset.tab = id;
+    btn.addEventListener("click", () => activateTab(id));
+    tabButtons.push(btn);
+    tabbar.appendChild(btn);
+    panels[id] = panel;
+    body.appendChild(panel);
+  };
+  modal.appendChild(tabbar);
+  addTab("general", "General", buildGeneralTab());
+  addTab("keybinds", "Keybinds", buildKeybindsTab());
+  activateTab("general");
   modal.appendChild(body);
 
   const footer = el("div", "settings-footer");

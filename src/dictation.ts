@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getSettings } from "./settings";
+import { matchesKeybind } from "./keybinds";
 
 type DictationStatus =
   | "idle"
@@ -56,7 +57,7 @@ export function initDictation(getActiveSessionId: () => number | undefined): voi
   document.body.appendChild(badge);
 
   const isDictationKey = (e: KeyboardEvent): boolean =>
-    e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === "d";
+    matchesKeybind(getSettings().keybinds.dictate, e);
 
   const stop = (): void => {
     if (!active) return;
@@ -68,6 +69,9 @@ export function initDictation(getActiveSessionId: () => number | undefined): voi
     "keydown",
     (e) => {
       if (e.repeat) return;
+      // While the settings modal is open the keys belong to it (e.g. recording
+      // a new binding); never start dictation from there.
+      if (document.querySelector(".settings-backdrop")) return;
       if (!isDictationKey(e)) return;
       e.preventDefault();
       if (active) return;

@@ -9,6 +9,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS, AGENT_MODES } from "./agents";
 import { DEFAULT_THEME_ID, getTheme } from "./themes";
+import {
+  DEFAULT_KEYBINDS,
+  KEYBIND_ACTIONS,
+  parseKeybind,
+  type KeybindAction,
+} from "./keybinds";
 
 export type FontWeightValue = "normal" | "bold";
 export type UnicodeVersion = "6" | "11";
@@ -47,6 +53,12 @@ export interface AppSettings {
    * palette). Empty array hides every agent (the raw shell is always shown).
    */
   visibleAgents: string[];
+  /**
+   * Keyboard shortcuts, keyed by action id (see keybinds.ts). An empty string
+   * means the action is unbound. Missing/invalid entries fall back to the
+   * action's default.
+   */
+  keybinds: Record<KeybindAction, string>;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -70,6 +82,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ntfyTopic: "",
   ntfyToken: "",
   visibleAgents: AGENTS.map((a) => a.id),
+  keybinds: { ...DEFAULT_KEYBINDS },
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -109,6 +122,21 @@ function normalize(value: unknown): AppSettings {
       (x): x is string => typeof x === "string" && AGENT_MODES.includes(x)
     );
   };
+  const pickKeybinds = (value: unknown): Record<KeybindAction, string> => {
+    const out: Record<KeybindAction, string> = { ...DEFAULT_KEYBINDS };
+    if (value && typeof value === "object") {
+      const src = value as Record<string, unknown>;
+      for (const def of KEYBIND_ACTIONS) {
+        const raw = src[def.id];
+        if (typeof raw !== "string") continue;
+        const trimmed = raw.trim();
+        // Empty string is a valid "unbound" value; anything else must parse.
+        if (trimmed === "") out[def.id] = "";
+        else if (parseKeybind(trimmed)) out[def.id] = trimmed;
+      }
+    }
+    return out;
+  };
 
   return {
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
@@ -139,6 +167,7 @@ function normalize(value: unknown): AppSettings {
     ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),
     ntfyToken: pickStr("ntfyToken", DEFAULT_SETTINGS.ntfyToken),
     visibleAgents: pickAgents("visibleAgents", DEFAULT_SETTINGS.visibleAgents),
+    keybinds: pickKeybinds(v.keybinds),
   };
 }
 

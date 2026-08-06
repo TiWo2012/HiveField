@@ -1,6 +1,7 @@
 import { fuzzyMatch, type FuzzyResult } from "./fuzzy";
 import { closeSearch, isSearchOpen } from "./search";
 import { closeContextMenu } from "./context-menu";
+import { matchesKeybind } from "./keybinds";
 
 /**
  * Command palette: a fuzzy finder over open panes and app actions.
@@ -36,15 +37,13 @@ export interface PaletteContext {
   getItems: () => PaletteItem[];
   /** Called after the palette closes (to restore focus to the terminal). */
   onClose?: () => void;
+  /** Resolve the current palette-toggle keybinding (Settings → Keybinds). */
+  toggleKeybind?: () => string;
 }
 
-/** Keyboard shortcut that toggles the palette (Ctrl+Shift+P). */
+/** Keyboard shortcut that toggles the palette (configurable, default Ctrl+Shift+P). */
 const TOGGLE_KEY = (e: KeyboardEvent): boolean =>
-  e.ctrlKey &&
-  e.shiftKey &&
-  !e.altKey &&
-  !e.metaKey &&
-  (e.key === "P" || e.key === "p");
+  matchesKeybind(context?.toggleKeybind?.() ?? "Ctrl+Shift+P", e);
 
 let context: PaletteContext | null = null;
 

@@ -20,7 +20,6 @@ import {
 import "dockview/dist/styles/dockview.css";
 import { getTheme } from "./themes";
 import {
-  DEFAULT_SETTINGS,
   getSettings,
   loadSettings,
   subscribe,
@@ -60,6 +59,7 @@ import {
   type ContextMenuItem,
 } from "./context-menu";
 import { copyText, readClipboardText } from "./clipboard";
+import { matchesKeybind, type KeybindAction } from "./keybinds";
 import "./styles.css";
 
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */
@@ -1700,22 +1700,34 @@ function buildSidebar() {
   sidebarWorkspaceEl = wsBody;
   sidebar.appendChild(wsSection);
 
-  // Handy shortcut reminders.
+  // Handy shortcut reminders (live: they follow the configured keybinds).
   const shortcuts = document.createElement("div");
   shortcuts.className = "sidebar-shortcuts";
-  for (const [keys, label] of [
-    ["Ctrl+Shift+T", "new tab"],
-    ["Ctrl+Shift+P", "palette"],
-    ["Ctrl+Shift+F", "find"],
-    ["Ctrl+1-0", "workspaces"],
-  ] as const) {
-    const row = document.createElement("div");
-    const kbd = document.createElement("kbd");
-    kbd.textContent = keys;
-    row.appendChild(kbd);
-    row.appendChild(document.createTextNode(` ${label}`));
-    shortcuts.appendChild(row);
-  }
+  const shortcutRows: Array<{ kbd: HTMLElement; label: string }> = [];
+  const renderShortcuts = () => {
+    const kb = getSettings().keybinds;
+    const entries: Array<[string, string]> = [
+      [kb.newTab, "new tab"],
+      [kb.palette, "palette"],
+      [kb.find, "find"],
+      [`${kb.workspace1}…${kb.workspace10}`, "workspaces"],
+    ];
+    entries.forEach(([keys, label], i) => {
+      if (!shortcutRows[i]) {
+        const row = document.createElement("div");
+        const k = document.createElement("kbd");
+        k.textContent = keys;
+        row.appendChild(k);
+        row.appendChild(document.createTextNode(` ${label}`));
+        shortcuts.appendChild(row);
+        shortcutRows.push({ kbd: k, label });
+      } else {
+        shortcutRows[i].kbd.textContent = keys;
+      }
+    });
+  };
+  renderShortcuts();
+  subscribe(() => renderShortcuts());
   sidebar.appendChild(shortcuts);
 
   const settingsBtn = document.createElement("button");
@@ -1871,7 +1883,7 @@ async function renameWorkspacePrompt(slot: number): Promise<void> {
     title: `Rename workspace ${slot}`,
     label: "Workspace name",
     placeholder: "e.g. docs, backend, agents",
-    hint: "Leave empty to clear the name. Ctrl+1…Ctrl+0 switches workspaces.",
+    hint: `Leave empty to clear the name. ${getSettings().keybinds.workspace1}…${getSettings().keybinds.workspace10} switches workspaces.`,
     value: ws?.name ?? "",
     confirmText: "Save",
   });
@@ -2118,20 +2130,20 @@ function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
     {
       label: "Find",
       icon: "⌕",
-      shortcut: "Ctrl+Shift+F",
+      shortcut: getSettings().keybinds.find,
       run: () => openSearch(),
     },
     {
       label: "Rename tab",
       icon: "✎",
-      shortcut: "Ctrl+Shift+R",
+      shortcut: getSettings().keybinds.renameTab,
       run: () => void renamePanel(panel),
     },
     { separator: true },
     {
       label: "Close panel",
       icon: "✕",
-      shortcut: "Ctrl+Shift+W",
+      shortcut: getSettings().keybinds.closePanel,
       danger: true,
       run: () => panel.api.close(),
     },
@@ -2146,13 +2158,13 @@ function buildTabContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
     {
       label: "Rename tab",
       icon: "✎",
-      shortcut: "Ctrl+Shift+R",
+      shortcut: getSettings().keybinds.renameTab,
       run: () => void renamePanel(panel),
     },
     {
       label: "Close tab",
       icon: "✕",
-      shortcut: "Ctrl+Shift+W",
+      shortcut: getSettings().keybinds.closePanel,
       danger: true,
       run: () => panel.api.close(),
     },
@@ -2451,12 +2463,14 @@ async function init() {
   initSearch({
     container: document.getElementById("terminal")!,
     getActive: () => activeSessionEntry(),
+    toggleKeybind: () => getSettings().keybinds.find,
   });
 
   // Command palette (Ctrl+Shift+P): fuzzy finder over panes and actions.
   initPalette({
     getItems: buildPaletteItems,
     onClose: () => activeSessionEntry()?.terminal.focus(),
+    toggleKeybind: () => getSettings().keybinds.palette,
   });
 
   // OS file drops: insert shell-quoted paths into the pane under the pointer,
@@ -2600,14 +2614,6 @@ async function init() {
   renderWorkspaceStrip();
 }
 
-/** Ctrl+H/J/K/L move focus between panes (vim-style). */
-const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
-  h: "left",
-  j: "down",
-  k: "up",
-  l: "right",
-};
-
 /**
  * Build the command palette's item list: every open pane (with its rendered
  * title, mode icon, and cwd detail) followed by the available actions. Called
@@ -2615,6 +2621,7 @@ const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
  */
 
 function buildPaletteItems(): PaletteItem[] {
+  const kb = () => getSettings().keybinds;
   const items: PaletteItem[] = [];
 
   for (const panel of api.panels) {
@@ -2658,7 +2665,7 @@ function buildPaletteItems(): PaletteItem[] {
     // finder keeps 30 actions navigable (type "cop" to jump to Copilot).
     ...sessionModes().map(({ mode, label, icon }) => ({
       label: `New ${label} tab`,
-      detail: mode === DEFAULT_MODE ? "Ctrl+Shift+T" : undefined,
+      detail: mode === DEFAULT_MODE ? kb().newTab : undefined,
       icon,
       run: () => addPanelWithMode(mode),
     })),
@@ -2669,33 +2676,33 @@ function buildPaletteItems(): PaletteItem[] {
     })),
     {
       label: "Find in terminal",
-      detail: "Ctrl+Shift+F",
+      detail: kb().find,
       icon: "⌕",
       run: () => openSearch(),
     },
     {
       label: "Focus pane left",
-      detail: "Ctrl+H",
+      detail: kb().focusLeft,
       run: () => movePaneFocus("left"),
     },
     {
       label: "Focus pane right",
-      detail: "Ctrl+L",
+      detail: kb().focusRight,
       run: () => movePaneFocus("right"),
     },
     {
       label: "Focus pane up",
-      detail: "Ctrl+K",
+      detail: kb().focusUp,
       run: () => movePaneFocus("up"),
     },
     {
       label: "Focus pane down",
-      detail: "Ctrl+J",
+      detail: kb().focusDown,
       run: () => movePaneFocus("down"),
     },
     {
       label: "Rename active tab",
-      detail: "Ctrl+Shift+R",
+      detail: kb().renameTab,
       run: () => {
         const panel = api.activePanel;
         if (panel) void renamePanel(panel);
@@ -2703,12 +2710,12 @@ function buildPaletteItems(): PaletteItem[] {
     },
     {
       label: "Close active panel",
-      detail: "Ctrl+Shift+W",
+      detail: kb().closePanel,
       run: () => api.activePanel?.api.close(),
     },
     {
       label: "Settings",
-      detail: "Ctrl+,",
+      detail: kb().settings,
       icon: "⚙",
       run: () => toggleSettings(),
     },
@@ -2728,7 +2735,7 @@ function buildPaletteItems(): PaletteItem[] {
       detail: isCurrent
         ? "current"
         : ws.hasLayout
-          ? `Ctrl+${ws.slot === 10 ? "0" : ws.slot}`
+          ? kb()[`workspace${ws.slot}` as KeybindAction]
           : "empty",
       icon: "▦",
       group: "Workspaces",
@@ -2752,34 +2759,36 @@ function setupKeyboard() {
   const uiOpen = () =>
     settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
 
-  // Ctrl+Shift+T spawns a default-agent (opencode) tab, Ctrl+Shift+W closes
-  // the active panel.
-  // Bubble phase is fine here: these combos are not printable terminal keys.
+  // All app shortcuts dispatch from the configured keybinds (Settings →
+  // Keybinds). Bubble phase is fine for these combos: they are not printable
+  // terminal keys by default, and even a rebound printable combo is caught
+  // here because xterm only sees events that reach its own element.
   window.addEventListener("keydown", (e) => {
     if (uiOpen()) return;
-    if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+    const kb = getSettings().keybinds;
+    if (matchesKeybind(kb.newTab, e)) {
       e.preventDefault();
       addPanelWithMode(DEFAULT_MODE);
     }
-    if (e.ctrlKey && e.shiftKey && (e.key === "W" || e.key === "w")) {
+    if (matchesKeybind(kb.closePanel, e)) {
       e.preventDefault();
       api.activePanel?.api.close();
     }
-    // Ctrl+Shift+R renames the active tab.
-    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "R" || e.key === "r")) {
+    // Rename the active tab.
+    if (matchesKeybind(kb.renameTab, e)) {
       e.preventDefault();
       const panel = api.activePanel;
       if (panel) void renamePanel(panel);
     }
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === ",") {
+    if (matchesKeybind(kb.settings, e)) {
       e.preventDefault();
       toggleSettings();
     }
-    // Ctrl+Shift+V pastes the system clipboard into the active terminal;
-    // Ctrl+Shift+C copies its selection. WebViews don't bind these combos
-    // natively (Ctrl+V/C are the browser defaults, and Ctrl+C is SIGINT in
-    // the shell), so they would otherwise fall through as no-ops.
-    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "V" || e.key === "v")) {
+    // Paste the system clipboard into the active terminal / copy its
+    // selection. WebViews don't bind these combos natively (Ctrl+V/C are the
+    // browser defaults, and Ctrl+C is SIGINT in the shell), so they would
+    // otherwise fall through as no-ops.
+    if (matchesKeybind(kb.paste, e)) {
       e.preventDefault();
       const entry = activeSessionEntry();
       if (entry) {
@@ -2788,20 +2797,22 @@ function setupKeyboard() {
           .catch((err) => console.error("clipboard read failed", err));
       }
     }
-    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "C" || e.key === "c")) {
+    if (matchesKeybind(kb.copy, e)) {
       const selection = activeSessionEntry()?.terminal.getSelection() ?? "";
       if (selection) {
         e.preventDefault();
-        void writeText(selection).catch((err) => console.error("clipboard write failed", err));
+        void writeText(selection).catch((err) =>
+          console.error("clipboard write failed", err)
+        );
       }
       // Without a selection the key is left alone and falls through to the
       // shell, matching other terminals.
     }
   });
 
-  // Ctrl+H/J/K/L vim-style pane movement, Ctrl+1…Ctrl+0 workspace switching,
-  // plus font-size zoom (Ctrl+= / -). Registered in the CAPTURE phase so the
-  // keys are intercepted before xterm sees them (otherwise Ctrl+H is
+  // Vim-style pane movement (focus left/down/up/right), workspace switching
+  // (1…10) and font-size zoom. Registered in the CAPTURE phase so the keys
+  // are intercepted before xterm sees them (otherwise a rebound Ctrl+H is
   // backspace, Ctrl+J newline, Ctrl+K kill-line, Ctrl+L clear-screen). If
   // there is no adjacent pane in that direction the key falls through to the
   // terminal.
@@ -2809,51 +2820,53 @@ function setupKeyboard() {
     "keydown",
     (e) => {
       if (uiOpen()) return;
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
-        // Ctrl+1…Ctrl+9 / Ctrl+0 jump to workspace slots 1…10. Switching to
-        // an empty slot starts a fresh workspace there.
-        const workspaceSlot =
-          e.key >= "1" && e.key <= "9"
-            ? parseInt(e.key, 10)
-            : e.key === "0"
-              ? 10
-              : undefined;
-        if (workspaceSlot !== undefined) {
+      const kb = getSettings().keybinds;
+      // Workspace slots 1…10 (rebindable). Switching to an empty slot starts
+      // a fresh workspace there.
+      for (let slot = 1; slot <= 10; slot++) {
+        if (matchesKeybind(kb[`workspace${slot}` as KeybindAction], e)) {
           e.preventDefault();
           e.stopPropagation();
-          switchToWorkspace(workspaceSlot);
+          switchToWorkspace(slot);
           return;
         }
-        // Font-size zoom.
-        const zoomBy = (delta: number) => {
-          const s = getSettings();
-          const next =
-            delta === 0
-              ? DEFAULT_SETTINGS.fontSize
-              : Math.max(6, Math.min(48, s.fontSize + delta));
-          void updateSettings({ fontSize: next });
-        };
-        if (e.key === "=") {
+      }
+      // Font-size zoom.
+      if (matchesKeybind(kb.zoomIn, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        void zoomBy(1);
+        return;
+      }
+      if (matchesKeybind(kb.zoomOut, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        void zoomBy(-1);
+        return;
+      }
+      // Pane movement: only intercept when there actually is an adjacent pane.
+      for (const [id, direction] of [
+        ["focusLeft", "left"],
+        ["focusDown", "down"],
+        ["focusUp", "up"],
+        ["focusRight", "right"],
+      ] as const) {
+        if (matchesKeybind(kb[id], e) && movePaneFocus(direction)) {
           e.preventDefault();
           e.stopPropagation();
-          zoomBy(1);
           return;
-        }
-        if (e.key === "-") {
-          e.preventDefault();
-          e.stopPropagation();
-          zoomBy(-1);
-          return;
-        }
-        const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
-        if (direction && movePaneFocus(direction)) {
-          e.preventDefault();
-          e.stopPropagation();
         }
       }
     },
     true
   );
+}
+
+/** Bump the global terminal font size by `delta` (persisted in settings). */
+function zoomBy(delta: number): void {
+  const s = getSettings();
+  const next = Math.max(6, Math.min(48, s.fontSize + delta));
+  void updateSettings({ fontSize: next });
 }
 
 init().catch((err) => console.error("failed to initialize terminal layout", err));
