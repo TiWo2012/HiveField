@@ -1,5 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,6 +26,7 @@ import {
 } from "./settings";
 import { toggleSettings } from "./settings-ui";
 import { initDictation } from "./dictation";
+import { initSearch, isSearchOpen, rerunSearch } from "./search";
 import "./styles.css";
 
 /** What a session auto-runs: the opencode agent, or a plain shell. */
@@ -32,6 +34,46 @@ type Mode = "opencode" | "raw";
 
 /** Custom MIME type used to drag sidebar entries into the dockview layout. */
 const DND_MIME = "application/x-hivefield-mode";
+
+/** Session modes the sidebar can start. */
+const KNOWN_MODES: readonly Mode[] = ["opencode", "raw"];
+
+/**
+ * Read the requested session mode from a drag payload. Tolerates platforms
+ * (WebKitGTK / Tauri on Linux) that only preserve the `text/plain` target
+ * across a drag instead of our custom MIME type.
+ */
+function readDragMode(dt: DataTransfer | null | undefined): Mode | undefined {
+  if (!dt) return undefined;
+  const payload = dt.getData(DND_MIME) || dt.getData("text/plain");
+  return (KNOWN_MODES as readonly string[]).includes(payload)
+    ? (payload as Mode)
+    : undefined;
+}
+
+/**
+ * True while one of our sidebar sessions is being dragged over a drop
+ * target. Requires a known mode value: dockview's own tab drags set
+ * `text/plain` to `""`, so this never collides with its internal DnD.
+ */
+function isHiveFieldDrag(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false;
+  const types = Array.from(dt.types);
+  if (types.includes(DND_MIME)) return true;
+  return types.includes("text/plain") && readDragMode(dt) !== undefined;
+}
+
+/** Small floating label used as the custom drag image for sidebar entries. */
+function buildDragGhost(source: { icon: string; label: string }): HTMLElement {
+  const ghost = document.createElement("div");
+  ghost.className = "drag-ghost";
+  const icon = document.createElement("span");
+  icon.className = "drag-ghost-icon";
+  icon.textContent = source.icon;
+  ghost.appendChild(icon);
+  ghost.appendChild(document.createTextNode(source.label));
+  return ghost;
+}
 
 const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
   theme: {
@@ -64,6 +106,7 @@ const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
 interface SessionEntry {
   terminal: Terminal;
   fitAddon: FitAddon;
+  searchAddon: SearchAddon;
   panel?: IDockviewPanel;
 }
 
@@ -94,13 +137,15 @@ function applyTerminalSettings(terminal: Terminal, settings: AppSettings): void 
   terminal.unicode.activeVersion = settings.unicodeVersion;
 }
 
-function createTerminal(): { terminal: Terminal; fitAddon: FitAddon } {
+function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon: SearchAddon } {
   const terminal = new Terminal(TERM_OPTIONS);
   terminal.loadAddon(new Unicode11Addon());
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  const searchAddon = new SearchAddon({ highlightLimit: 2000 });
+  terminal.loadAddon(searchAddon);
   applyTerminalSettings(terminal, getSettings());
-  return { terminal, fitAddon };
+  return { terminal, fitAddon, searchAddon };
 }
 
 function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
@@ -112,6 +157,83 @@ function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
   }
 }
 
+/** Maximum length of a pane title derived from a submitted input line. */
+const MAX_PANE_TITLE_LEN = 60;
+
+/**
+ * Turn a submitted input line into a tab title: strip control characters,
+ * collapse whitespace, and truncate.
+ */
+function inputLineToTitle(line: string): string {
+  let title = line
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (title.length > MAX_PANE_TITLE_LEN) {
+    title = `${title.slice(0, MAX_PANE_TITLE_LEN - 1)}…`;
+  }
+  return title;
+}
+
+/** Escape-sequence state needed to tell typed chars from CSI/SS3/OSC sequences. */
+interface InputLineState {
+  line: string;
+  /** 0 = normal, 1 = just saw ESC, 2 = inside a CSI/SS3/OSC sequence. */
+  escape: 0 | 1 | 2;
+}
+
+/**
+ * Update the pending input line from incoming keystrokes. `onSubmit` fires
+ * with the buffered line when it is submitted (Enter), then the buffer resets.
+ */
+function trackInputLine(
+  state: InputLineState,
+  data: string,
+  onSubmit: (line: string) => void
+): InputLineState {
+  const chars = Array.from(data);
+  let { line, escape } = state;
+
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    const code = ch.codePointAt(0)!;
+
+    if (escape === 1) {
+      // Just saw ESC: only CSI/OSC/SS3/DCS/APC/PM introducers continue.
+      escape = [0x5b, 0x5d, 0x50, 0x5e, 0x5f, 0x4f].includes(code) ? 2 : 0;
+      continue;
+    }
+    if (escape === 2) {
+      // Inside a sequence: a final byte (0x40-0x7e) or BEL ends it.
+      if (code === 0x07 || (code >= 0x40 && code <= 0x7e)) escape = 0;
+      else if (code === 0x1b) escape = 1; // possible ST (ESC \)
+      continue;
+    }
+
+    if (ch === "\x1b") {
+      escape = 1;
+    } else if (ch === "\r" || ch === "\n") {
+      onSubmit(line);
+      line = "";
+    } else if (ch === "\x7f" || ch === "\x08") {
+      // Backspace: drop the last code point (surrogate-safe).
+      line = Array.from(line).slice(0, -1).join("");
+    } else if (ch === "\x15") {
+      // Ctrl+U: clear the whole line.
+      line = "";
+    } else if (ch === "\x17") {
+      // Ctrl+W: delete the last word.
+      line = line.replace(/\s*\S+\s*$/, "");
+    } else if (ch < " ") {
+      // Other control characters: not part of the input line.
+    } else {
+      line += ch;
+    }
+  }
+
+  return { line, escape };
+}
+
 function createTerminalComponent(): IContentRenderer {
   const element = document.createElement("div");
   element.classList.add("terminal-panel");
@@ -120,6 +242,7 @@ function createTerminalComponent(): IContentRenderer {
   let sessionId: number | undefined;
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
+  let searchAddon: SearchAddon | null = null;
 
   function sync() {
     if (sessionId === undefined || !terminal || !fitAddon) return;
@@ -134,12 +257,25 @@ function createTerminalComponent(): IContentRenderer {
       const created = createTerminal();
       terminal = created.terminal;
       fitAddon = created.fitAddon;
+      searchAddon = created.searchAddon;
       terminal.open(element);
+
+      // Buffer of the input line currently being typed, used to title the
+      // pane once the line is submitted to the agent.
+      let inputState: InputLineState = { line: "", escape: 0 };
 
       // Register input forwarding immediately so no early keystrokes are lost;
       // it no-ops until the session id is known.
       terminal.onData((data) => {
         if (sessionId !== undefined) {
+          // Track the line being typed; when it is submitted (Enter) it
+          // becomes this pane's title before being forwarded to the agent.
+          inputState = trackInputLine(inputState, data, (line) => {
+            if (mode === "opencode") {
+              const title = inputLineToTitle(line);
+              if (title) panelApi.setTitle(title);
+            }
+          });
           invoke("pty_write", { sessionId, data }).catch(() => {});
         }
       });
@@ -154,7 +290,11 @@ function createTerminalComponent(): IContentRenderer {
       invoke<number>("pty_spawn", { mode })
         .then((id) => {
           sessionId = id;
-          const entry: SessionEntry = { terminal: terminal!, fitAddon: fitAddon! };
+          const entry: SessionEntry = {
+            terminal: terminal!,
+            fitAddon: fitAddon!,
+            searchAddon: searchAddon!,
+          };
           sessions.set(id, entry);
           panelToSession.set(panelApi.id, id);
 
@@ -193,6 +333,15 @@ function addPanelWithMode(mode: Mode, position?: AddPanelPositionOptions) {
   panel.api.setActive();
 }
 
+/** The terminal entry backing the currently focused panel, if any. */
+function activeSessionEntry(): SessionEntry | undefined {
+  const panel = api.activePanel;
+  if (!panel) return undefined;
+  const sessionId = panelToSession.get(panel.id);
+  if (sessionId === undefined) return undefined;
+  return sessions.get(sessionId);
+}
+
 function buildSidebar() {
   const sidebar = document.getElementById("sidebar")!;
 
@@ -219,8 +368,19 @@ function buildSidebar() {
     item.appendChild(document.createTextNode(source.label));
 
     item.addEventListener("dragstart", (e) => {
-      e.dataTransfer!.setData(DND_MIME, source.mode);
-      e.dataTransfer!.effectAllowed = "copy";
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      // Advertise the mode under our own MIME type *and* as plain text: some
+      // WebKitGTK builds only surface the text/plain target across a drag.
+      dt.setData(DND_MIME, source.mode);
+      dt.setData("text/plain", source.mode);
+      dt.effectAllowed = "copy";
+
+      // Custom ghost so the drag reads as a session, not a text blob.
+      const ghost = buildDragGhost(source);
+      document.body.appendChild(ghost);
+      dt.setDragImage(ghost, 8, 8);
+      requestAnimationFrame(() => ghost.remove());
     });
 
     sidebar.appendChild(item);
@@ -282,33 +442,40 @@ async function init() {
     createComponent: createTerminalComponent,
     disableFloatingGroups: true,
     theme: themeCatppuccinMocha,
+    dropOverlayModel: ({ location }) => {
+      // Wider edge zones on the terminal content so dropping a session as a
+      // split in a chosen direction is easy to hit (default is 20%).
+      if (location !== "content") return undefined;
+      return { activationSize: { value: 30, type: "percentage" } };
+    },
   });
 
   // Accept our sidebar drags so dockview shows the drop-target overlay.
   api.onUnhandledDragOver((event) => {
-    const dt = (event.nativeEvent as DragEvent).dataTransfer;
-    if (dt?.types.includes(DND_MIME)) {
+    if (isHiveFieldDrag((event.nativeEvent as DragEvent).dataTransfer)) {
       event.accept();
     }
   });
 
-  // Create a new session where the sidebar entry was dropped.
+  // Create a new session where the sidebar entry was dropped. Session drops
+  // always open as a *split*, never as a tab: dropping in the middle of a
+  // pane splits to the right (kitty-style default) so users don't have to
+  // hit a thin edge or drag a tab out afterwards. Ctrl+Shift+T is still the
+  // way to open a session as a tab.
   api.onDidDrop((event) => {
-    const dt = (event.nativeEvent as DragEvent).dataTransfer;
-    const mode = dt?.getData(DND_MIME) as Mode | undefined;
-    if (mode !== "opencode" && mode !== "raw") return;
+    const mode = readDragMode((event.nativeEvent as DragEvent).dataTransfer);
+    if (!mode) return;
 
     const direction = positionToDirection(event.position);
+    const splitDirection = direction === "within" ? "right" : direction;
     let position: AddPanelPositionOptions | undefined;
     if (event.panel) {
-      position = { direction, referencePanel: event.panel };
+      position = { direction: splitDirection, referencePanel: event.panel };
     } else if (event.group) {
-      position = { direction, referenceGroup: event.group };
-    } else if (direction !== "within") {
-      position = { direction };
+      position = { direction: splitDirection, referenceGroup: event.group };
+    } else {
+      position = { direction: splitDirection };
     }
-    // else: no reference and a 'within' drop on empty space -> let dockview
-    // decide (new group or active group)
 
     addPanelWithMode(mode, position);
   });
@@ -334,6 +501,18 @@ async function init() {
     return panelToSession.get(panel.id);
   });
 
+  // Floating search bar (Ctrl+Shift+F) over the terminal workspace.
+  initSearch({
+    container: document.getElementById("terminal")!,
+    getActive: () => activeSessionEntry(),
+  });
+
+  // If the user switches panels while searching, move the highlights to the
+  // newly active terminal instead of leaving them stale on the old one.
+  api.onDidActivePanelChange(() => {
+    if (isSearchOpen()) rerunSearch();
+  });
+
   addPanelWithMode("opencode");
 }
 
@@ -347,11 +526,14 @@ const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
 
 function setupKeyboard() {
   const settingsOpen = () => document.querySelector(".settings-backdrop") !== null;
+  // While the search bar is up, keystrokes belong to its input, so the global
+  // shortcuts below must not fire.
+  const uiOpen = () => settingsOpen() || isSearchOpen();
 
   // Ctrl+Shift+T spawns an opencode tab, Ctrl+Shift+W closes the active panel.
   // Bubble phase is fine here: these combos are not printable terminal keys.
   window.addEventListener("keydown", (e) => {
-    if (settingsOpen()) return;
+    if (uiOpen()) return;
     if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
       e.preventDefault();
       addPanelWithMode("opencode");
@@ -374,7 +556,7 @@ function setupKeyboard() {
   window.addEventListener(
     "keydown",
     (e) => {
-      if (settingsOpen()) return;
+      if (uiOpen()) return;
       if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
         const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
         if (direction) {

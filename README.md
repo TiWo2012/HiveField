@@ -8,9 +8,11 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - **Opens in the directory it was launched from** (falls back to `$HOME` if the
   launch dir is gone/unreadable)
 - **Session sidebar**: drag an **opencode** or **raw term** entry from the left
-  sidebar into the terminal area — it opens there (split or as a tab), with a
-  fresh shell in the launch dir. `opencode` sessions auto-run the agent; `raw`
-  sessions are a plain shell.
+  sidebar into the terminal area — it opens there as a **split** (drop near an
+  edge to choose the split direction, drop in the middle to split to the
+  right), with a fresh shell in the launch dir. `opencode` sessions auto-run
+  the agent; `raw` sessions are a plain shell. Use `Ctrl+Shift+T` to open a
+  session as a tab instead.
 - **Tabs & split panes** via [dockview](https://dockview.dev):
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
@@ -20,6 +22,11 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
     the key passes through to the shell (so `Ctrl+L` still clears the screen)
   - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
   - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
+- **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
+  scrollback. Matches highlight live as you type; `Enter` / `Shift+Enter` jump
+  to the next / previous match, `Alt+C` toggles case sensitivity, and `Esc`
+  closes the bar (focus returns to the terminal). The match counter shows
+  `current/total` and turns red when there are no matches.
 - Full **Unicode / UTF-8** support (incremental UTF-8 decoding on the Rust side
   so multi-byte characters survive split reads; xterm.js Unicode 11 on the UI)
 - Copy/paste, cursor blink, scrollback, window resize → PTY resize

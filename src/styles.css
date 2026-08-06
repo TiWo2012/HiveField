@@ -84,6 +84,30 @@ body {
   color: #94e2d5;
 }
 
+/* Floating label shown as the drag image while dragging a sidebar entry. */
+.drag-ghost {
+  position: absolute;
+  top: -1000px;
+  left: -1000px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #313244;
+  border: 1px solid #89b4fa;
+  color: #cdd6f4;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.drag-ghost .drag-ghost-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
 /* ---------------------------------------------------------------------------
  * Terminal panels
  * ------------------------------------------------------------------------- */
@@ -98,6 +122,109 @@ body {
 .terminal-panel .xterm {
   width: 100%;
   height: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+ * Search bar (Ctrl+Shift+F)
+ * ------------------------------------------------------------------------- */
+
+#terminal {
+  position: relative;
+}
+
+.search-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color: #cdd6f4;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  user-select: none;
+}
+
+.search-bar[hidden] {
+  display: none;
+}
+
+.search-bar-icon {
+  color: #6c7086;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.search-bar-input {
+  width: 180px;
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  color: #cdd6f4;
+  padding: 4px 8px;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+}
+
+.search-bar-input:focus {
+  outline: none;
+  border-color: #89b4fa;
+}
+
+.search-bar-input::placeholder {
+  color: #6c7086;
+}
+
+.search-bar-count {
+  min-width: 44px;
+  text-align: center;
+  color: #a6adc8;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-bar-count.no-match {
+  color: #f38ba8;
+}
+
+.search-bar-btn {
+  border: 1px solid #313244;
+  background: #181825;
+  color: #cdd6f4;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.search-bar-btn:hover {
+  background: #313244;
+  border-color: #45475a;
+}
+
+.search-bar-btn.search-bar-case.active {
+  background: #89b4fa;
+  color: #11111b;
+  border-color: #89b4fa;
+}
+
+.search-bar-btn.search-bar-close {
+  border: none;
+  background: none;
+  color: #6c7086;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.search-bar-btn.search-bar-close:hover {
+  color: #f38ba8;
+  background: #313244;
 }
 
 /* ---------------------------------------------------------------------------
