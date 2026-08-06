@@ -211,6 +211,9 @@ function buildDragGhost(source: { icon: string; label: string }): HTMLElement {
 const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
   // Colors come from the active theme via applyTerminalSettings().
   cursorBlink: true,
+  // Inactive panes get an outlined cursor; syncTerminalCursorFocus() keeps
+  // xterm's own focus bookkeeping aligned with the active panel.
+  cursorInactiveStyle: "outline",
   scrollback: 10000,
   allowProposedApi: true,
 };
@@ -261,6 +264,53 @@ function hexToRgba(hex: string, alpha: number): string {
 function isPanelActive(panelId: string): boolean {
   return api?.activePanel?.id === panelId;
 }
+
+/**
+ * Reconcile xterm's per-terminal cursor state with the app's active panel so
+ * the cursor renders filled only in the focused pane and outlined everywhere
+ * else.
+ *
+ * xterm picks block vs. outline from the focus state of its hidden textarea,
+ * and WebKitGTK never fires a blur when a focused terminal is detached while
+ * its workspace is parked — so a restored terminal can stay "focused" forever
+ * and keep painting a filled cursor in an inactive pane. Explicitly focusing
+ * the active panel's terminal and blurring the rest keeps the cursor style
+ * honest after parking/restore races. Blurring an already-unfocused textarea
+ * is a no-op, so already-initialized terminals never get spurious focus
+ * in/out reports injected into their shells.
+ */
+function syncTerminalCursorFocus(): void {
+  const activeId = api?.activePanel?.id;
+  let activeTerm: Terminal | undefined;
+  // Neutralize every non-active terminal first (one-time focus+blur cycle for
+  // never-focused panes so their cursor initializes to the outline style).
+  for (const panel of api.panels) {
+    const sessionId = panelToSession.get(panel.id);
+    if (sessionId === undefined) continue;
+    const entry = sessions.get(sessionId);
+    if (!entry) continue;
+    const term = entry.terminal;
+    if (panel.id === activeId) {
+      activeTerm = term;
+      continue;
+    }
+    if (!cursorInitialized.has(term)) {
+      cursorInitialized.add(term);
+      term.focus();
+      term.blur();
+    } else {
+      term.blur();
+    }
+  }
+  // Focus the active terminal last so it wins any focus race in the burst.
+  if (activeTerm) {
+    activeTerm.focus();
+    cursorInitialized.add(activeTerm);
+  }
+}
+
+/** Terminals whose cursor was already pushed through a focus/blur cycle. */
+const cursorInitialized = new WeakSet<Terminal>();
 
 /** Random-ish codename used to label a fresh opencode session's worktree. */
 const ADJECTIVES = [
@@ -936,7 +986,9 @@ function createTerminalComponent(): IContentRenderer {
           // spawn path, which relies on the async spawn timing).
           setTimeout(() => {
             sync();
-            terminal?.focus();
+            // Give every restored terminal its correct cursor rendering
+            // (filled only in the active pane, outlined elsewhere).
+            syncTerminalCursorFocus();
           }, 0);
           return;
         }
@@ -1095,7 +1147,11 @@ function createTerminalComponent(): IContentRenderer {
           }
 
           sync(); // first pty_resize -> backend flushes the buffered prompt
-          terminal?.focus();
+          // Reconcile cursor fill/outline state with the active pane instead
+          // of unconditionally focusing: the session may have spawned while
+          // another pane is focused, and stealing focus would leave this
+          // terminal's cursor filled in an inactive pane.
+          syncTerminalCursorFocus();
         })
         .catch((err) => console.error("failed to spawn session", err));
     },
@@ -1785,6 +1841,12 @@ function parkWorkspaceSessions(slot: number): void {
     // under the parked key.
     clearIdle(panel.id);
     clearNotify(panel.id);
+    // The panel is about to be detached (api.clear runs next), and WebKitGTK
+    // never fires a blur for a textarea removed from the DOM — leaving xterm
+    // believing the terminal is still focused, so restoring the session into
+    // an inactive pane would paint a filled cursor instead of an outlined one.
+    // Blur explicitly first (a no-op for panes that were never focused).
+    entry.terminal.blur();
     parkedSessions.set(sessionId, { slot, element });
   }
 }
@@ -1839,6 +1901,9 @@ function switchToWorkspace(slot: number): void {
     }
     if (!restored) addPanelWithMode("opencode");
     renderWorkspaceStrip();
+    // Reconcile cursor fill/outline state with the newly active pane after
+    // parked sessions were re-attached and fresh ones spawned.
+    syncTerminalCursorFocus();
   });
 }
 
@@ -2489,6 +2554,7 @@ async function init() {
     refreshSidebarRunning();
     const panel = api.activePanel;
     if (panel) clearIndicator(panel.id);
+    syncTerminalCursorFocus();
   });
 
   // Double-click a tab to rename it.
@@ -2555,6 +2621,9 @@ async function init() {
   async function continueFromSplash(dropPath?: string): Promise<void> {
     splash.hide();
     const restored = await resumeSavedWorkspace();
+    // Reconcile cursor fill/outline state with the active pane once restored
+    // (or fresh) sessions are attached.
+    syncTerminalCursorFocus();
     if (dropPath) {
       if (restored) {
         // The drop happened while the splash deferred the resume — land the
