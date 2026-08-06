@@ -531,23 +531,46 @@ function isAtBottom(terminal: Terminal): boolean {
 }
 
 /**
- * Write data to a terminal, keeping the viewport pinned to the bottom when it
- * was already there.
+ * Per-terminal follow intent. Defaults to following output; the user leaves
+ * follow mode by scrolling up (wheel/touch/PageUp) and re-enters it by
+ * scrolling back down to the bottom or typing.
  *
- * Guards against an xterm quirk where the internal "user is scrolling" flag
- * gets stuck: scrolling up once, and then having the terminal resized (which
- * reflows the scrollback), can leave the flag set while the viewport is
- * visually back at the bottom. From then on every new output line grows the
- * buffer but not the viewport offset, so the display silently drifts up into
- * scrollback while the cursor keeps advancing below the fold. Re-asserting
- * the bottom position after the chunk is parsed is a no-op when the viewport
- * really is at the bottom, but it clears the stuck flag so subsequent output
- * keeps following.
+ * This is the app's own copy of "is the user reading scrollback", because
+ * xterm's internal equivalent (`bufferService.isUserScrolling`) gets stuck:
+ * scrolling up once and then having the terminal resized (which reflows the
+ * scrollback) can leave the flag set while the viewport is back at the
+ * bottom, so from then on new output grows the buffer but not the viewport
+ * offset — the display silently drifts up and freezes at a fixed point in
+ * scrollback while the cursor advances below the fold. The app's flag is
+ * driven by real user input, so a stuck xterm flag self-heals on the next
+ * write instead of freezing the view forever.
+ */
+const followState = new WeakMap<Terminal, boolean>();
+
+function isFollowing(terminal: Terminal): boolean {
+  return followState.get(terminal) ?? true;
+}
+
+function setFollowing(terminal: Terminal, following: boolean): void {
+  followState.set(terminal, following);
+}
+
+/**
+ * Write data to a terminal, keeping the viewport pinned to the bottom.
+ *
+ * Pins when the user is following output OR the viewport is already at the
+ * bottom. The first condition recovers from xterm's stuck scroll flag (see
+ * `followState`): even if the viewport has already drifted into scrollback,
+ * an output chunk re-asserts the bottom position, which clears the stuck flag
+ * and lets output follow again. The second keeps the old behavior of snapping
+ * back when the viewport visually sits at the bottom without ever yanking a
+ * user who is genuinely reading scrollback.
+ *
+ * xterm parses writes asynchronously (its internal write buffer drains on a
+ * later tick), so the follow-up must run once this chunk has been parsed.
  */
 function writeToTerminal(terminal: Terminal, data: string): void {
-  // xterm parses writes asynchronously (its internal write buffer drains on a
-  // later tick), so the follow-up must run once this chunk has been parsed.
-  const follow = isAtBottom(terminal);
+  const follow = isAtBottom(terminal) || isFollowing(terminal);
   terminal.write(data, () => {
     if (follow) terminal.scrollToBottom();
   });
@@ -557,8 +580,9 @@ function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
   try {
     // Resizing reflows the scrollback; like writes, it can leave the viewport
     // (and xterm's scroll-tracking flag) off the bottom. Snap back when the
-    // user was following output.
-    const follow = isAtBottom(terminal);
+    // user was following output or the viewport is at the bottom; never yank
+    // a user who scrolled up to read.
+    const follow = isAtBottom(terminal) || isFollowing(terminal);
     fitAddon.fit();
     if (follow) terminal.scrollToBottom();
     invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
@@ -932,6 +956,41 @@ function createTerminalComponent(): IContentRenderer {
       // OS file drops over this pane write the quoted path(s) into its PTY.
       registerTerminalRoot(element, () => sessionId);
 
+      // Track the user's scroll intent so output stays pinned unless the user
+      // explicitly scrolled up to read (see `followState`). xterm stopPropagation's
+      // wheel/key events at the terminal element, so listen in the capture phase
+      // on this panel root, which runs before xterm's own handlers.
+      const followAtBottom = () => {
+        if (isAtBottom(terminal!)) setFollowing(terminal!, true);
+      };
+      element.addEventListener(
+        "wheel",
+        (ev) => {
+          if (!terminal?.element?.contains(ev.target as Node)) return;
+          if (ev.deltaY < 0) {
+            // Scrolling up = reading scrollback: leave follow mode.
+            setFollowing(terminal, false);
+          } else if (ev.deltaY > 0) {
+            // Scrolling down re-enters follow mode once the viewport actually
+            // reaches the bottom (trackpad bursts: re-check a frame later).
+            requestAnimationFrame(followAtBottom);
+          }
+        },
+        { capture: true, passive: true }
+      );
+      element.addEventListener(
+        "keydown",
+        (ev) => {
+          if (!terminal?.element?.contains(ev.target as Node)) return;
+          if (ev.key === "PageUp") {
+            setFollowing(terminal, false);
+          } else if (ev.key === "PageDown" || ev.key === "End") {
+            requestAnimationFrame(followAtBottom);
+          }
+        },
+        { capture: true }
+      );
+
       // Buffer of the input line currently being typed, used to title the
       // pane once the line is submitted to the agent.
       let inputState: InputLineState = { line: "", escape: 0 };
@@ -954,6 +1013,9 @@ function createTerminalComponent(): IContentRenderer {
       // it no-ops until the session id is known.
       terminal.onData((data) => {
         if (sessionId !== undefined) {
+          // Typing happens at the prompt at the bottom of the buffer: the
+          // user wants output to follow again (also covers pastes).
+          setFollowing(terminal!, true);
           // Track the line being typed; when it is submitted (Enter) it
           // becomes this pane's title before being forwarded to the agent.
           inputState = trackInputLine(inputState, data, (line) => {
