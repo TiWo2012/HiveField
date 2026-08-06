@@ -32,8 +32,8 @@ import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
 import { bindWorkspaceSave, restoreWorkspace } from "./workspace";
 import "./styles.css";
 
-/** What a session auto-runs: the opencode agent, or a plain shell. */
-type Mode = "opencode" | "raw";
+/** What a session auto-runs: a coding agent (opencode / pi), or a plain shell. */
+type Mode = "opencode" | "pi" | "raw";
 
 /** Result of the `git_worktree_auto_create` IPC command. */
 interface AutoWorktree {
@@ -52,7 +52,15 @@ interface SessionDrag {
 const DND_MIME = "application/x-hivefield-session";
 
 /** Session modes the sidebar can start. */
-const KNOWN_MODES: readonly Mode[] = ["opencode", "raw"];
+const KNOWN_MODES: readonly Mode[] = ["opencode", "pi", "raw"];
+
+/** Modes that auto-run a coding agent (vs. a plain shell). */
+const AGENT_MODES: readonly Mode[] = ["opencode", "pi"];
+
+/** Whether `mode` auto-runs a coding agent (and gets an isolated worktree). */
+function isAgentMode(mode: Mode): boolean {
+  return AGENT_MODES.includes(mode);
+}
 
 /** Serialize a session drag payload (JSON, so it carries the optional cwd). */
 function serializeDrag(drag: SessionDrag): string {
@@ -198,7 +206,7 @@ function generateSessionName(): string {
 }
 
 interface SessionEntry {
-  /** What this session auto-runs ("opencode" agent or "raw" shell). */
+  /** What this session auto-runs: a coding agent ("opencode"/"pi") or "raw" shell. */
   mode: Mode;
   terminal: Terminal;
   fitAddon: FitAddon;
@@ -442,13 +450,13 @@ function clearIdle(panelId: string): void {
 }
 
 /* ---------------------------------------------------------------------------
- * Auto-worktrees: every opencode session gets its own throwaway worktree so
- * parallel agents never share a checkout. Raw sessions and non-git launch
- * directories keep the launch-dir behavior.
+ * Auto-worktrees: every agent session (opencode / pi) gets its own throwaway
+ * worktree so parallel agents never share a checkout. Raw sessions and
+ * non-git launch directories keep the launch-dir behavior.
  * ------------------------------------------------------------------------- */
 
 /**
- * Resolve the directory an opencode session should spawn in. When no cwd is
+ * Resolve the directory an agent session should spawn in. When no cwd is
  * given (a fresh session), a throwaway worktree is auto-created under the
  * configured base dir. Sessions restored from a saved layout with a still-
  * existing cwd reuse it (and are not deleted on close); a stale cwd falls
@@ -460,7 +468,7 @@ async function resolveWorktree(
   cwd: string | undefined,
   name: string | undefined
 ): Promise<{ cwd?: string; name?: string; created: boolean }> {
-  if (mode !== "opencode") return { cwd, created: false };
+  if (!isAgentMode(mode)) return { cwd, created: false };
   if (cwd) {
     // Restored layout: reuse the saved worktree when it still exists.
     try {
@@ -632,7 +640,7 @@ function createTerminalComponent(): IContentRenderer {
           // Track the line being typed; when it is submitted (Enter) it
           // becomes this pane's title before being forwarded to the agent.
           inputState = trackInputLine(inputState, data, (line) => {
-            if (mode === "opencode" && !oscTitleSeen && !st.userTitle) {
+            if (isAgentMode(mode) && !oscTitleSeen && !st.userTitle) {
               const title = inputLineToTitle(line);
               if (title) setBaseTitle(panelApi.id, title);
             }
@@ -649,10 +657,10 @@ function createTerminalComponent(): IContentRenderer {
         }
       });
 
-      // Resolve the session: opencode sessions auto-create a throwaway
-      // worktree (unless restored with an existing cwd), then ask the backend
-      // for a fresh PTY in the requested mode and directory, and wire the
-      // terminal to it once we know its id.
+      // Resolve the session: agent sessions auto-create a throwaway worktree
+      // (unless restored with an existing cwd), then ask the backend for a
+      // fresh PTY in the requested mode and directory, and wire the terminal
+      // to it once we know its id.
       void resolveWorktree(mode, cwd, requestedName)
         .then(async (resolved) => {
           let id: number;
@@ -691,7 +699,7 @@ function createTerminalComponent(): IContentRenderer {
             if (panel && sessions.has(id)) entry.panel = panel;
           }, 0);
 
-          // A fresh opencode session's tab takes the worktree's codename.
+          // A fresh agent session's tab takes the worktree's codename.
           if (resolved.name && !st.userTitle && !oscTitleSeen) {
             setBaseTitle(panelApi.id, resolved.name);
           }
@@ -719,10 +727,10 @@ function addPanelWithMode(
   cwd?: string,
   titleOverride?: string
 ) {
-  // A fresh opencode session without a pinned cwd gets a codename (the tab
+  // A fresh agent session without a pinned cwd gets a codename (the tab
   // title and the auto-created worktree's branch are both derived from it).
-  const name = mode === "opencode" && !cwd ? titleOverride ?? generateSessionName() : undefined;
-  const base = mode === "opencode" ? (name ?? "opencode") : "shell";
+  const name = isAgentMode(mode) && !cwd ? titleOverride ?? generateSessionName() : undefined;
+  const base = isAgentMode(mode) ? (name ?? mode) : "shell";
   const title = cwd ? `${base}@${shortLabel(cwd)}` : base;
   const panel = api.addPanel({
     id: nextPanelId(),
@@ -862,6 +870,7 @@ function buildSidebar() {
 
   const sources: Array<{ mode: Mode; label: string; icon: string }> = [
     { mode: "opencode", label: "opencode", icon: "✦" },
+    { mode: "pi", label: "pi agent", icon: "π" },
     { mode: "raw", label: "raw term", icon: "$" },
   ];
 
@@ -1276,12 +1285,20 @@ const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
  * title, mode icon, and cwd detail) followed by the available actions. Called
  * fresh every time the palette opens so the list reflects the live layout.
  */
+
+/** Sidebar / palette icon for a session mode. */
+function modeIcon(mode: Mode): string {
+  if (mode === "pi") return "π";
+  return mode === "opencode" ? "✦" : "$";
+}
+
 function buildPaletteItems(): PaletteItem[] {
   const items: PaletteItem[] = [];
 
   for (const panel of api.panels) {
     const params = panel.api.getParameters() as Record<string, unknown>;
-    const mode: Mode = params.mode === "raw" ? "raw" : "opencode";
+    const mode: Mode =
+      params.mode === "pi" ? "pi" : params.mode === "raw" ? "raw" : "opencode";
     const sessionId = panelToSession.get(panel.id);
     const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
     const cwd =
@@ -1296,7 +1313,7 @@ function buildPaletteItems(): PaletteItem[] {
       id: panel.id,
       label: panel.title ?? "…",
       detail,
-      icon: mode === "opencode" ? "✦" : "$",
+      icon: modeIcon(mode),
       group: "Panes",
       run: () => {
         panel.api.setActive();
@@ -1320,6 +1337,11 @@ function buildPaletteItems(): PaletteItem[] {
       run: () => addPanelWithMode("opencode"),
     },
     {
+      label: "New pi agent tab",
+      icon: "π",
+      run: () => addPanelWithMode("pi"),
+    },
+    {
       label: "New raw term tab",
       icon: "$",
       run: () => addPanelWithMode("raw"),
@@ -1328,6 +1350,11 @@ function buildPaletteItems(): PaletteItem[] {
       label: "New opencode split",
       icon: "✦",
       run: () => addPanelWithMode("opencode", { direction: "right" }),
+    },
+    {
+      label: "New pi agent split",
+      icon: "π",
+      run: () => addPanelWithMode("pi", { direction: "right" }),
     },
     {
       label: "New raw term split",

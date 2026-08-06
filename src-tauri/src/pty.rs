@@ -144,8 +144,8 @@ impl Utf8StreamDecoder {
 /// Spawn a shell in a fresh PTY, store the session in Tauri state under
 /// `session_id`, and start a reader thread that forwards output to the frontend.
 ///
-/// `mode` is `"opencode"` to auto-run `opencode` in the session, or `"raw"`
-/// for a plain shell.
+/// `mode` is `"opencode"` to auto-run `opencode` in the session, `"pi"` to
+/// auto-run `pi` (the pi coding agent), or `"raw"` for a plain shell.
 ///
 /// `start_dir` is the directory the shell should launch in. When `None`, the
 /// directory the app was launched from is used (falling back to `$HOME`); when
@@ -269,19 +269,24 @@ pub fn spawn<R: Runtime>(
         }
     });
 
-    // For `opencode` sessions, auto-run `opencode` shortly after the shell
-    // starts so each tab opens straight into the agent. The shell stays alive
-    // underneath, so quitting opencode returns to the prompt. Writes go
-    // through the same sessions mutex as `pty_write`, so input cannot
+    // For agent sessions (`opencode` / `pi`), auto-run the agent shortly after
+    // the shell starts so each tab opens straight into the agent. The shell
+    // stays alive underneath, so quitting the agent returns to the prompt.
+    // Writes go through the same sessions mutex as `pty_write`, so input cannot
     // interleave. `raw` sessions skip this entirely.
-    if mode == "opencode" {
+    let autorun: Option<&'static [u8]> = match mode {
+        "opencode" => Some(b"opencode\r\n"),
+        "pi" => Some(b"pi\r\n"),
+        _ => None,
+    };
+    if let Some(cmd) = autorun {
         let autorun_app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(500));
             let state = autorun_app.state::<crate::PtyState<R>>();
             let mut guard = state.sessions.lock().unwrap();
             if let Some(session) = guard.get_mut(&session_id) {
-                let _ = session.writer.write_all(b"opencode\r\n");
+                let _ = session.writer.write_all(cmd);
                 let _ = session.writer.flush();
             }
         });

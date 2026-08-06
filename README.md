@@ -11,17 +11,18 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   open and their modes) is saved per launch directory and restored the next time
   you start hiveField from that directory. A fully-wiped layout falls back to a
   fresh opencode session
-- **Session sidebar**: drag an **opencode** or **raw term** entry from the left
-  sidebar into the terminal area — it opens there as a **split** (drop near an
-  edge to choose the split direction, drop in the middle to split to the
-  right). `opencode` sessions auto-run the agent; `raw` sessions are a plain
-  shell. Use `Ctrl+Shift+T` to open a session as a tab instead.
-- **Isolated sessions**: every `opencode` session automatically gets its own
-  throwaway git worktree (branch + directory minted from a codename, checked
-  out under the **Worktree base dir** setting, default `/tmp`), so parallel
-  agents never share a checkout. Closing the tab force-deletes the worktree.
-  When the launch directory isn't a git repo, opencode falls back to the
-  launch dir. Raw terms always run in the launch dir.
+- **Session sidebar**: drag an **opencode**, **pi agent**, or **raw term**
+  entry from the left sidebar into the terminal area — it opens there as a
+  **split** (drop near an edge to choose the split direction, drop in the
+  middle to split to the right). `opencode` and `pi` sessions auto-run the
+  agent; `raw` sessions are a plain shell. Use `Ctrl+Shift+T` to open a
+  session as a tab instead.
+- **Isolated sessions**: every agent session (`opencode` / `pi`) automatically
+  gets its own throwaway git worktree (branch + directory minted from a
+  codename, checked out under the **Worktree base dir** setting, default
+  `/tmp`), so parallel agents never share a checkout. Closing the tab
+  force-deletes the worktree. When the launch directory isn't a git repo, the
+  agent runs in the launch dir. Raw terms always run in the launch dir.
 - **Tabs & split panes** via [dockview](https://dockview.dev):
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
@@ -35,8 +36,8 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
     never overwritten by program/OSC titles, and clearing it reverts to
     automatic titles
 - **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
-  open pane (jump straight to it) and common actions (new opencode/raw tab or
-  split, find, focus panes, rename, close, settings). Type to fuzzy-filter with
+  open pane (jump straight to it) and common actions (new opencode/pi/raw tab
+  or split, find, focus panes, rename, close, settings). Type to fuzzy-filter with
   live match highlighting, `↑`/`↓` (or `Ctrl+P` / `Ctrl+N`, or `Ctrl+K` /
   `Ctrl+J`) to move, `Enter` to jump/run, `Esc` to close.
 - **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
@@ -110,14 +111,14 @@ backend for each spawned shell).
 |-----------|-----------------|-----------------------------------------------|
 | Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
 | Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
-| JS → Rust | `pty_spawn`     | `{ mode, cwd? }` (`"opencode"` \| `"raw"`, default opencode; `cwd` optionally pins the start directory, e.g. a worktree) → returns `sessionId` |
+| JS → Rust | `pty_spawn`     | `{ mode, cwd? }` (`"opencode"` \| `"pi"` \| `"raw"`, default opencode; `cwd` optionally pins the start directory, e.g. a worktree) → returns `sessionId` |
 | JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
 | JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
 | JS → Rust | `pty_kill`      | `{ sessionId }`                               |
 | JS → Rust | `workspace_cwd` | () → canonicalized launch directory (`String`) |
 | JS → Rust | `workspace_get` | `{ cwd }` → saved dockview layout (JSON) or `null` |
 | JS → Rust | `workspace_set` | `{ cwd, layout }` — persist the dockview layout |
-| JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`). Called for every new opencode session |
+| JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`). Called for every new agent session (`opencode` / `pi`) |
 | JS → Rust | `git_worktree_remove` | `{ path, force? }` — remove a worktree; `force` runs `--force` (used when closing an auto-created session worktree) |
 | JS → Rust | `git_worktrees` / `git_worktree_create` | legacy listing / named-branch creation commands (no longer used by the UI, kept for compatibility) |
 | JS → Rust | `dir_exists`   | `{ path }` → whether the path exists (lets restored sessions detect stale worktree paths) |

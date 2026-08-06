@@ -162,6 +162,10 @@ body {
   color: var(--hf-green);
 }
 
+.drag-item[data-mode="pi"] .drag-icon {
+  color: var(--hf-yellow);
+}
+
 .drag-item[data-mode="raw"] .drag-icon {
   color: var(--hf-teal);
 }

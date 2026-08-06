@@ -30,6 +30,7 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
 ///
 /// `mode` controls what the session auto-runs:
 ///   - `"opencode"` (default): the shell auto-runs `opencode`
+///   - `"pi"`: the shell auto-runs `pi` (the pi coding agent)
 ///   - `"raw"`: plain shell, no auto-run
 ///
 /// `cwd` optionally pins the directory the shell starts in (e.g. a git
