@@ -2170,14 +2170,9 @@ async function init() {
     // saved workspace) plus quick-start buttons for the current directory.
     const splash = mountSplash(document.getElementById("terminal")!, {
       cwd: getWorkspaceCwd(),
-      quickAgents: [
-        ...AGENTS.slice(0, 3).map((a) => ({
-          mode: a.id,
-          label: a.label,
-          icon: a.icon,
-        })),
-        { mode: RAW_MODE, label: "raw term", icon: "$" },
-      ],
+      // The first few visible agents (respecting the settings filter) plus
+      // the raw shell, matching the sidebar's session sources.
+      quickAgents: sessionModes().slice(0, 4),
       onOpenProject: (path) => {
         // Open the default agent in the chosen directory and mark it recent.
         addPanelWithMode(DEFAULT_MODE, undefined, path);

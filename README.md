@@ -11,6 +11,13 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   open and their modes) is saved per launch directory and restored the next time
   you start hiveField from that directory. A fully-wiped layout falls back to a
   fresh opencode session
+- **Splash screen with recent projects**: when the launch directory has no saved
+  workspace, a welcome screen shows instead of auto-opening a session — the
+  current directory with quick-start session buttons (respecting the visible
+  agents setting), plus a **Recent projects** list of every directory with a
+  saved workspace, sorted by most recently opened. Click a project to open the
+  default agent there (its recency stamp updates), ✕ forgets it, and any new
+  session (drop, palette, …) dismisses the splash.
 - **Ten workspace slots (`Ctrl+1`…`Ctrl+9`, `Ctrl+0`)**: keep up to ten
   independent tab/split layouts per launch directory. Press **`Ctrl+1`…`Ctrl+9`
   / `Ctrl+0`** to jump to workspace slots 1…10 — the current layout is saved
@@ -163,6 +170,8 @@ backend for each spawned shell).
 | JS → Rust | `workspace_cwd` | () → canonicalized launch directory (`String`) |
 | JS → Rust | `workspace_get` | `{ cwd }` → saved dockview layout (JSON) or `null` |
 | JS → Rust | `workspace_set` | `{ cwd, layout }` — persist the dockview layout |
+| JS → Rust | `projects_list` | () → recent projects: every cwd with a saved workspace as `{ cwd, lastOpened, exists }`, newest first (splash screen) |
+| JS → Rust | `project_touch` | `{ cwd }` — bump a project's `lastOpened` stamp without touching its saved layout |
 | JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`). Called for every new agent session (`opencode` / `pi`) |
 | JS → Rust | `git_worktree_remove` | `{ path, force? }` — remove a worktree; `force` runs `--force` (used when closing an auto-created session worktree) |
 | JS → Rust | `git_worktrees` / `git_worktree_create` | legacy listing / named-branch creation commands (no longer used by the UI, kept for compatibility) |
