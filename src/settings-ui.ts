@@ -130,6 +130,15 @@ function textField(value: string, onChange?: (v: string) => void): HTMLElement {
   return input;
 }
 
+function passwordField(value: string, onChange?: (v: string) => void): HTMLElement {
+  const input = el("input", "settings-text");
+  input.type = "password";
+  input.autocomplete = "new-password";
+  input.value = value;
+  input.addEventListener("change", () => onChange?.(input.value));
+  return input;
+}
+
 function selectField<T extends string>(
   value: T,
   options: ReadonlyArray<{ value: T; label: string }>,
@@ -343,6 +352,109 @@ function buildOverlay(): HTMLElement {
     )
   );
   body.appendChild(dictationSection);
+
+  /* --- Notifications --- */
+  const notifySection = section("Notifications");
+  notifySection.appendChild(
+    controlRow(
+      "Desktop notifications",
+      toggleField(s.desktopNotifications, (desktopNotifications) =>
+        updateSettings({ desktopNotifications })
+      ),
+      "Show a system notification when a background agent session finishes"
+    )
+  );
+  notifySection.appendChild(
+    controlRow(
+      "Push notifications (ntfy)",
+      toggleField(s.ntfyEnabled, (ntfyEnabled) => updateSettings({ ntfyEnabled })),
+      "Publish agent-done notifications to an ntfy topic; subscribe your phone to receive them"
+    )
+  );
+  notifySection.appendChild(
+    controlRow(
+      "Server",
+      textField(s.ntfyServer, (ntfyServer) => updateSettings({ ntfyServer })),
+      "ntfy base URL (default https://ntfy.sh, self-hosted instances welcome)"
+    )
+  );
+  notifySection.appendChild(
+    controlRow(
+      "Topic",
+      textField(s.ntfyTopic, (ntfyTopic) => updateSettings({ ntfyTopic })),
+      "Published to <server>/<topic>; subscribe a device to receive the push"
+    )
+  );
+  notifySection.appendChild(
+    controlRow(
+      "Username",
+      textField(s.ntfyUser, (ntfyUser) => updateSettings({ ntfyUser })),
+      "Optional Basic-auth username (stored unencrypted)"
+    )
+  );
+  notifySection.appendChild(
+    controlRow(
+      "Password",
+      passwordField(s.ntfyPass, (ntfyPass) => updateSettings({ ntfyPass })),
+      "Optional Basic-auth password (stored unencrypted in settings.json)"
+    )
+  );
+  notifySection.appendChild(
+    controlRow(
+      "Test",
+      (() => {
+        const actions = el("div", "settings-actions");
+        const test = (
+          button: HTMLButtonElement,
+          send: () => Promise<void>
+        ) => {
+          button.disabled = true;
+          button.textContent = "Sending…";
+          send()
+            .then(() => {
+              button.textContent = "Sent ✓";
+            })
+            .catch((err) => {
+              button.textContent = "Failed";
+              console.error("notification test failed", err);
+            })
+            .finally(() => {
+              setTimeout(() => {
+                button.disabled = false;
+                button.textContent = button.dataset.label ?? "Test";
+              }, 2500);
+            });
+        };
+        const desktopBtn = el("button", "settings-done");
+        desktopBtn.type = "button";
+        desktopBtn.dataset.label = "Test desktop";
+        desktopBtn.textContent = "Test desktop";
+        desktopBtn.addEventListener("click", () =>
+          test(desktopBtn, () =>
+            invoke("notify_desktop", {
+              title: "hiveField test",
+              body: "Desktop notifications are working!",
+            })
+          )
+        );
+        const pushBtn = el("button", "settings-done");
+        pushBtn.type = "button";
+        pushBtn.dataset.label = "Test push";
+        pushBtn.textContent = "Test push";
+        pushBtn.addEventListener("click", () =>
+          test(pushBtn, () =>
+            invoke("ntfy_send", {
+              title: "hiveField test",
+              message: "Push notifications are working!",
+            })
+          )
+        );
+        actions.append(desktopBtn, pushBtn);
+        return actions;
+      })()
+    )
+  );
+  body.appendChild(notifySection);
 
   /* --- Preview --- */
   const previewSection = section("Preview");

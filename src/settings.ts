@@ -31,6 +31,18 @@ export interface AppSettings {
   dictationEngine: DictationEngine;
   /** Base directory for auto-created worktree sessions (default /tmp). */
   worktreeBaseDir: string;
+  /** Show a native desktop notification when an agent session finishes. */
+  desktopNotifications: boolean;
+  /** Master switch for ntfy push notifications. */
+  ntfyEnabled: boolean;
+  /** ntfy server base URL (https://ntfy.sh or a self-hosted instance). */
+  ntfyServer: string;
+  /** ntfy topic to publish agent-done notifications to. */
+  ntfyTopic: string;
+  /** Optional ntfy username (Basic auth; stored unencrypted). */
+  ntfyUser: string;
+  /** Optional ntfy password (Basic auth; stored unencrypted). */
+  ntfyPass: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -48,6 +60,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   backgroundOpacity: 1,
   dictationEngine: "whisper",
   worktreeBaseDir: "/tmp",
+  desktopNotifications: true,
+  ntfyEnabled: false,
+  ntfyServer: "https://ntfy.sh",
+  ntfyTopic: "",
+  ntfyUser: "",
+  ntfyPass: "",
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -99,6 +117,15 @@ function normalize(value: unknown): AppSettings {
         ? v.dictationEngine
         : "whisper",
     worktreeBaseDir: pickStr("worktreeBaseDir", DEFAULT_SETTINGS.worktreeBaseDir),
+    desktopNotifications: pickBool(
+      "desktopNotifications",
+      DEFAULT_SETTINGS.desktopNotifications
+    ),
+    ntfyEnabled: pickBool("ntfyEnabled", DEFAULT_SETTINGS.ntfyEnabled),
+    ntfyServer: pickStr("ntfyServer", DEFAULT_SETTINGS.ntfyServer),
+    ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),
+    ntfyUser: pickStr("ntfyUser", DEFAULT_SETTINGS.ntfyUser),
+    ntfyPass: pickStr("ntfyPass", DEFAULT_SETTINGS.ntfyPass),
   };
 }
 

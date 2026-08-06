@@ -702,6 +702,21 @@ body {
   filter: brightness(1.08);
 }
 
+.settings-done:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-actions .settings-done {
+  padding: 4px 10px;
+}
+
 /* Single-input prompt modals (session name, tab rename). */
 .prompt-modal .settings-label {
   display: block;

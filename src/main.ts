@@ -5,6 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createDockview,
   positionToDirection,
@@ -149,6 +150,9 @@ const INDICATOR_DONE = "✓ ";
 /** Idle window (ms) after which a background tab's activity becomes "done". */
 const ACTIVITY_IDLE_MS = 2000;
 
+/** Quiet window (ms) before a finished background agent fires notifications. */
+const NOTIFY_IDLE_MS = 8000;
+
 /** OSC 133 shell-integration marker regex (ESC ] 133 ; A/B/C/D ; … BEL|ST). */
 const OSC133_SRC = "\\x1b\\]133;([ABCD])(?:[^\\x07\\x1b]*)(?:\\x07|\\x1b\\\\)";
 const OSC133_RE = new RegExp(OSC133_SRC, "g");
@@ -227,6 +231,8 @@ interface PanelStatus {
   baseTitle: string;
   indicator: string;
   userTitle: boolean;
+  /** True once a finished agent session has been reported to the user. */
+  notified: boolean;
 }
 
 /** sessionId -> terminal entry. */
@@ -239,6 +245,11 @@ const pendingOutputs = new Map<number, string[]>();
 const panelStatus = new Map<string, PanelStatus>();
 /** panel id -> idle timer id (activity → "done" after inactivity). */
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** panel id -> notification timer id (agent done after a quiet window). */
+const notifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Whether the OS window currently has focus (false while the user is elsewhere). */
+let windowFocused = true;
 
 let api: DockviewApi;
 let panelCounter = 0;
@@ -398,6 +409,7 @@ function ensurePanelStatus(panelId: string, initialTitle: string, userTitle?: st
     baseTitle: userTitle ?? clean,
     indicator: "",
     userTitle: typeof userTitle === "string" && userTitle.length > 0,
+    notified: false,
   };
   panelStatus.set(panelId, st);
   return st;
@@ -447,6 +459,62 @@ function clearIdle(panelId: string): void {
     clearTimeout(t);
     idleTimers.delete(panelId);
   }
+}
+
+/** Cancel any pending agent-done notification timer for a panel. */
+function clearNotify(panelId: string): void {
+  const t = notifyTimers.get(panelId);
+  if (t !== undefined) {
+    clearTimeout(t);
+    notifyTimers.delete(panelId);
+  }
+}
+
+/**
+ * Report a finished agent session to the user: a native desktop notification
+ * and/or an ntfy push, per the settings. Only fires for agent sessions
+ * (opencode / pi), once per completion episode, and skips when the user is
+ * actively watching the panel (window focused + panel active).
+ */
+function notifyAgentDone(panelId: string, entry: SessionEntry): void {
+  if (!isAgentMode(entry.mode)) return;
+  // The user is looking at this very panel: interrupting them is pointless.
+  if (windowFocused && isPanelActive(panelId)) return;
+  const st = panelStatus.get(panelId);
+  if (!st || st.notified) return;
+  st.notified = true;
+
+  const settings = getSettings();
+  const label = entry.mode === "pi" ? "pi agent" : "opencode";
+  const title = st.baseTitle || entry.panel?.title || label;
+  const body = `${label} session “${title}” finished`;
+
+  if (settings.desktopNotifications) {
+    invoke("notify_desktop", { title: `${label} done`, body }).catch((err) =>
+      console.error("notify_desktop failed", err)
+    );
+  }
+  if (settings.ntfyEnabled) {
+    invoke("ntfy_send", { title: `${label} done`, body }).catch((err) =>
+      console.error("ntfy_send failed", err)
+    );
+  }
+}
+
+/**
+ * Arm the notification quiet-window for an agent session: once it stays quiet
+ * for [`NOTIFY_IDLE_MS`] (longer than the tab indicator's window, so mid-run
+ * thinking pauses don't spam), treat it as done and notify.
+ */
+function armNotify(panelId: string, entry: SessionEntry): void {
+  clearNotify(panelId);
+  notifyTimers.set(
+    panelId,
+    setTimeout(() => {
+      notifyTimers.delete(panelId);
+      notifyAgentDone(panelId, entry);
+    }, NOTIFY_IDLE_MS)
+  );
 }
 
 /* ---------------------------------------------------------------------------
@@ -1092,18 +1160,38 @@ async function registerGlobalListeners() {
       const { markers, text } = analyzeOutput(data);
       if (text) entry.terminal.write(text);
       const panel = entry.panel;
-      if (panel && panelStatus.has(panel.id) && !isPanelActive(panel.id)) {
-        if (markers.includes("D")) {
-          // Command finished (OSC 133;D): mark the tab done immediately.
-          clearIdle(panel.id);
-          setIndicator(panel.id, INDICATOR_DONE);
-        } else if (markers.includes("C")) {
-          // Command started: nothing to show yet.
-        } else if (text.length > 0) {
-          // Visible output in a background tab: activity, then "done" once
-          // the tab stays quiet.
-          setIndicator(panel.id, INDICATOR_ACTIVITY);
-          armIdle(panel.id);
+      if (panel && panelStatus.has(panel.id)) {
+        // Agent-done notifications run for every panel (active or not): a
+        // completion signal (OSC 133;D or a quiet window after output)
+        // reports "done"; notifyAgentDone decides whether the user is
+        // actually watching and skips if so.
+        const st = panelStatus.get(panel.id);
+        if (st && isAgentMode(entry.mode)) {
+          if (markers.includes("D")) {
+            clearNotify(panel.id);
+            notifyAgentDone(panel.id, entry);
+          } else if (markers.includes("C") || text.length > 0) {
+            // New command started / visible output: a fresh completion
+            // episode, so the next "done" may notify again.
+            st.notified = false;
+            if (text.length > 0) armNotify(panel.id, entry);
+          }
+        }
+        // The tab activity/completion indicator only applies to background
+        // tabs; the active one is already in view.
+        if (!isPanelActive(panel.id)) {
+          if (markers.includes("D")) {
+            // Command finished (OSC 133;D): mark the tab done immediately.
+            clearIdle(panel.id);
+            setIndicator(panel.id, INDICATOR_DONE);
+          } else if (markers.includes("C")) {
+            // Command started: nothing to show yet.
+          } else if (text.length > 0) {
+            // Visible output in a background tab: activity, then "done" once
+            // the tab stays quiet.
+            setIndicator(panel.id, INDICATOR_ACTIVITY);
+            armIdle(panel.id);
+          }
         }
       }
       return;
@@ -1125,6 +1213,14 @@ async function registerGlobalListeners() {
 
 async function init() {
   await loadSettings();
+
+  // Track OS window focus so agent-done notifications still fire while the
+  // user is in another application (even when the agent's panel is active).
+  const win = getCurrentWindow();
+  windowFocused = await win.isFocused().catch(() => true);
+  win.onFocusChanged(({ payload }) => {
+    windowFocused = payload;
+  });
 
   // Keep every open terminal in sync with the settings, and let the whole UI
   // use the chosen font family + theme (sidebar, tabs, settings page).
@@ -1210,6 +1306,7 @@ async function init() {
     panelToSession.delete(panel.id);
     pendingOutputs.delete(sessionId);
     clearIdle(panel.id);
+    clearNotify(panel.id);
     panelStatus.delete(panel.id);
     // If the searched terminal just went away, move the highlights onto
     // whatever is active now (or clear them if nothing is).

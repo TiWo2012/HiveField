@@ -52,6 +52,7 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   prints output gets a `●` prefix, flipping to `✓` once the output goes quiet
   (or immediately when shell integration emits an OSC 133 `D` finish marker).
   Switching to the tab clears the indicator.
+- **Notifications**: when a background agent session (opencode / pi) finishes — or the window is unfocused — hiveField fires a **desktop notification** and/or an **ntfy push notification** (configurable in Settings): ntfy supports a custom server (default `https://ntfy.sh`), topic, and optional username/password Basic auth (stored unencrypted in `settings.json`, as configured). A "Test" button in Settings verifies each channel.
 - **Font-size zoom**: `Ctrl+=` / `Ctrl+-` adjust the font size of every
   terminal live (persisted in settings); `Ctrl+0` resets it.
 - **Themes**: a color theme setting drives both the terminal palette and the
@@ -123,6 +124,8 @@ backend for each spawned shell).
 | JS → Rust | `git_worktrees` / `git_worktree_create` | legacy listing / named-branch creation commands (no longer used by the UI, kept for compatibility) |
 | JS → Rust | `dir_exists`   | `{ path }` → whether the path exists (lets restored sessions detect stale worktree paths) |
 | JS → Rust | `open_url`     | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
+| JS → Rust | `notify_desktop` | `{ title, body }` — show a native desktop notification |
+| JS → Rust | `ntfy_send`    | `{ title, body }` — publish a push notification to the configured ntfy server/topic (config read from settings: `ntfyEnabled`, `ntfyServer`, `ntfyTopic`, `ntfyUser`, `ntfyPass`; no-op when disabled) |
 
 The workspace persistence commands are keyed by the canonicalized launch
 directory (`cwd`), not by a session.
