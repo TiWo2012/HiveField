@@ -20,6 +20,46 @@ export type FontWeightValue = "normal" | "bold";
 export type UnicodeVersion = "6" | "11";
 export type DictationEngine = "whisper" | "vosk" | "cloud";
 
+/** A prompt snippet: a named chunk of text inserted into the active terminal. */
+export interface PromptSnippet {
+  name: string;
+  content: string;
+}
+
+/** Built-in prompt snippets offered out of the box (editable in Settings). */
+export const DEFAULT_PROMPT_SNIPPETS: PromptSnippet[] = [
+  {
+    name: "Explain this code",
+    content:
+      "Explain what this code does, section by section, and call out anything surprising, fragile, or hard to follow.",
+  },
+  {
+    name: "Review my changes",
+    content:
+      "Review the current changes. Point out bugs, style issues, and missing edge cases, ordered by severity.",
+  },
+  {
+    name: "Write tests",
+    content:
+      "Write tests for this code covering the main happy paths and the edge cases. Run them and fix any failures.",
+  },
+  {
+    name: "Fix failing tests",
+    content:
+      "Run the test suite, diagnose the failures, fix the underlying bugs, and re-run until everything is green.",
+  },
+  {
+    name: "Debug this problem",
+    content:
+      "I'm hitting a problem here. Diagnose the most likely cause, then fix it and verify the fix actually works.",
+  },
+  {
+    name: "Summarize recent changes",
+    content:
+      "Summarize the recent git history and the current state of the working tree in a few bullet points.",
+  },
+];
+
 export interface AppSettings {
   fontFamily: string;
   fontSize: number;
@@ -59,6 +99,8 @@ export interface AppSettings {
    * action's default.
    */
   keybinds: Record<KeybindAction, string>;
+  /** Prompt snippets offered via Ctrl+Shift+P → "Insert prompt…". */
+  promptSnippets: PromptSnippet[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -83,6 +125,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ntfyToken: "",
   visibleAgents: AGENTS.map((a) => a.id),
   keybinds: { ...DEFAULT_KEYBINDS },
+  promptSnippets: DEFAULT_PROMPT_SNIPPETS,
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -138,6 +181,22 @@ function normalize(value: unknown): AppSettings {
     return out;
   };
 
+  const pickSnippets = (key: string, fallback: PromptSnippet[]): PromptSnippet[] => {
+    // Missing key (older settings files) → default snippets. Explicit arrays
+    // are kept as-is (even empty = no snippets offered), preserving each
+    // entry's name/content verbatim (a blank name shows as "(unnamed)").
+    if (!Array.isArray(v[key])) return fallback;
+    const out: PromptSnippet[] = [];
+    for (const item of v[key] as unknown[]) {
+      if (typeof item !== "object" || item === null) continue;
+      const o = item as Record<string, unknown>;
+      const name = typeof o.name === "string" ? o.name : "";
+      const content = typeof o.content === "string" ? o.content : "";
+      out.push({ name, content });
+    }
+    return out;
+  };
+
   return {
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
     fontSize: Math.max(6, Math.min(48, pickNum("fontSize", DEFAULT_SETTINGS.fontSize))),
@@ -168,6 +227,7 @@ function normalize(value: unknown): AppSettings {
     ntfyToken: pickStr("ntfyToken", DEFAULT_SETTINGS.ntfyToken),
     visibleAgents: pickAgents("visibleAgents", DEFAULT_SETTINGS.visibleAgents),
     keybinds: pickKeybinds(v.keybinds),
+    promptSnippets: pickSnippets("promptSnippets", DEFAULT_SETTINGS.promptSnippets),
   };
 }
 

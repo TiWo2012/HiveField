@@ -95,6 +95,12 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   Type to fuzzy-filter with
   live match highlighting, `↑`/`↓` (or `Ctrl+P` / `Ctrl+N`, or `Ctrl+K` /
   `Ctrl+J`) to move, `Enter` to jump/run, `Esc` to close.
+- **Prompt snippets**: `Ctrl+Shift+P` → **Insert prompt…** opens a picker of
+  named prompt snippets; picking one pastes its text into the active terminal
+  (bracketed-paste aware, like `Ctrl+Shift+V`). A handful of useful prompts
+  (explain code, review changes, write/fix tests, …) ship by default, and the
+  **Settings → Snippets** tab lets you add, edit, and remove your own —
+  name + content per snippet, persisted in `settings.json`.
 - **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
   scrollback. Matches highlight live as you type; `Enter` / `Shift+Enter` jump
   to the next / previous match, `Alt+C` toggles case sensitivity, and `Esc`

@@ -57,6 +57,17 @@ let rendered: PaletteItem[] = [];
 let activeIndex = 0;
 let open = false;
 
+/**
+ * Transient item source for a scoped sub-picker (e.g. the "Insert prompt…"
+ * snippet list). When set, the next `openPalette()` uses it instead of the
+ * app-level `context.getItems()` and shows a custom placeholder. Cleared when
+ * the palette closes so a later Ctrl+Shift+P returns to the full list.
+ */
+let transientItems: (() => PaletteItem[]) | null = null;
+let transientPlaceholder: string | null = null;
+
+const DEFAULT_PLACEHOLDER = "Search panes and commands…";
+
 /** Escape the given text for use as innerHTML content. */
 function escapeHtml(text: string): string {
   return text
@@ -226,7 +237,7 @@ export function initPalette(ctx: PaletteContext): void {
 
   input = document.createElement("input");
   input.className = "palette-input";
-  input.placeholder = "Search panes and commands…";
+  input.placeholder = DEFAULT_PLACEHOLDER;
   input.spellcheck = false;
   input.autocomplete = "off";
   input.autocapitalize = "off";
@@ -281,7 +292,8 @@ export function openPalette(): void {
   // close the search bar if it's up.
   closeContextMenu();
   if (isSearchOpen()) closeSearch();
-  items = context.getItems();
+  items = transientItems ? transientItems() : context.getItems();
+  input.placeholder = transientPlaceholder ?? DEFAULT_PLACEHOLDER;
   rendered = [];
   activeIndex = 0;
   input.value = "";
@@ -291,10 +303,28 @@ export function openPalette(): void {
   input.focus();
 }
 
+/**
+ * Open the palette scoped to a custom item source and placeholder — used for
+ * sub-pickers like "Insert prompt…" that list a different kind of entry. The
+ * override applies to this opening only; the next plain `openPalette()` shows
+ * the full app item list again.
+ */
+export function openPaletteWith(
+  getItems: () => PaletteItem[],
+  placeholder?: string
+): void {
+  transientItems = getItems;
+  transientPlaceholder = placeholder ?? null;
+  openPalette();
+}
+
 export function closePalette(): void {
   if (!open) return;
   open = false;
   backdrop.hidden = true;
+  transientItems = null;
+  transientPlaceholder = null;
+  input.placeholder = DEFAULT_PLACEHOLDER;
   context?.onClose?.();
 }
 

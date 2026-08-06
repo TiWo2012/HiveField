@@ -1013,6 +1013,96 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Prompt snippet editor (Settings → Prompt snippets). */
+.settings-snippets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 2px;
+}
+
+.settings-snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 8px;
+}
+
+.settings-snippet-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-snippet-name {
+  flex: 1;
+  font-weight: 600;
+}
+
+.settings-snippet-content {
+  width: 100%;
+  min-height: 60px;
+  max-height: 160px;
+  resize: vertical;
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 6px;
+  color: var(--hf-text);
+  padding: 6px 8px;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-snippet-content:focus {
+  outline: none;
+  border-color: var(--hf-accent);
+}
+
+.settings-snippet-remove {
+  border: 1px solid var(--hf-surface2);
+  background: transparent;
+  color: var(--hf-overlay0);
+  border-radius: 6px;
+  padding: 2px 9px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.settings-snippet-remove:hover {
+  color: var(--hf-red);
+  background: var(--hf-surface1);
+}
+
+.settings-snippet-add {
+  align-self: flex-start;
+  border: 1px dashed var(--hf-surface2);
+  background: transparent;
+  color: var(--hf-subtext0);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-snippet-add:hover {
+  color: var(--hf-accent);
+  border-color: var(--hf-accent);
+}
+
+.settings-kbd {
+  font-family: var(--hivefield-font);
+  font-size: 11px;
+  color: var(--hf-subtext0);
+  background: var(--hf-surface1);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 5px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
 .settings-preview {
   margin: 4px 0 8px;
   padding: 10px 12px;

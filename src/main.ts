@@ -39,7 +39,8 @@ import {
 } from "./agents";
 import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
-import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
+import { initPalette, isPaletteOpen, openPaletteWith, type PaletteItem } from "./palette";
+import { snippetPickerItems } from "./snippets";
 import {
   bindWorkspaceSave,
   getCurrentSlot,
@@ -2743,6 +2744,25 @@ function buildPaletteItems(): PaletteItem[] {
       icon,
       run: () => addPanelWithMode(mode, { direction: "right" }),
     })),
+    {
+      label: "Insert prompt…",
+      detail: (() => {
+        const count = getSettings().promptSnippets.length;
+        return `${count} snippet${count === 1 ? "" : "s"}`;
+      })(),
+      icon: "✎",
+      run: () =>
+        // Sub-picker: list every configured snippet; picking one pastes its
+        // content into the active terminal (bracketed-paste aware).
+        openPaletteWith(
+          () =>
+            snippetPickerItems((snippet) => {
+              const entry = activeSessionEntry();
+              if (entry) entry.terminal.paste(snippet.content);
+            }),
+          "Pick a prompt to insert…"
+        ),
+    },
     {
       label: "Find in terminal",
       detail: kb().find,

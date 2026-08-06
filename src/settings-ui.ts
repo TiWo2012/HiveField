@@ -219,6 +219,90 @@ function section(title: string): HTMLElement {
   return sectionEl;
 }
 
+/**
+ * Prompt snippet editor: one editable row per snippet (name + content),
+ * with a remove button and an "Add snippet" button. Every change writes
+ * straight into the settings store, so the "Insert prompt…" picker always
+ * reflects the current list.
+ */
+function promptSnippetsEditor(): HTMLElement {
+  const wrap = el("div", "settings-snippets");
+
+  const renderList = () => {
+    wrap.textContent = "";
+    const snippets = getSettings().promptSnippets;
+    snippets.forEach((snippet, i) => {
+      const row = el("div", "settings-snippet");
+
+      const head = el("div", "settings-snippet-head");
+      const nameInput = el("input", "settings-snippet-name");
+      nameInput.type = "text";
+      nameInput.value = snippet.name;
+      nameInput.placeholder = "Prompt name";
+      nameInput.spellcheck = false;
+      nameInput.addEventListener("change", () => {
+        const next = [...getSettings().promptSnippets];
+        next[i] = { ...next[i], name: nameInput.value };
+        void updateSettings({ promptSnippets: next });
+      });
+      const removeBtn = el("button", "settings-snippet-remove");
+      removeBtn.type = "button";
+      removeBtn.textContent = "✕";
+      removeBtn.title = "Remove snippet";
+      removeBtn.addEventListener("click", () => {
+        const next = getSettings().promptSnippets.filter((_, j) => j !== i);
+        void updateSettings({ promptSnippets: next });
+      });
+      head.append(nameInput, removeBtn);
+
+      const contentInput = el("textarea", "settings-snippet-content");
+      contentInput.value = snippet.content;
+      contentInput.placeholder = "Prompt text inserted into the terminal";
+      contentInput.spellcheck = false;
+      contentInput.addEventListener("change", () => {
+        const next = [...getSettings().promptSnippets];
+        next[i] = { ...next[i], content: contentInput.value };
+        void updateSettings({ promptSnippets: next });
+      });
+
+      row.append(head, contentInput);
+      wrap.appendChild(row);
+    });
+
+    const addBtn = el("button", "settings-snippet-add");
+    addBtn.type = "button";
+    addBtn.textContent = "+ Add snippet";
+    addBtn.addEventListener("click", () => {
+      const next = [
+        ...getSettings().promptSnippets,
+        { name: "New prompt", content: "" },
+      ];
+      void updateSettings({ promptSnippets: next });
+    });
+    wrap.appendChild(addBtn);
+  };
+
+  renderList();
+  return wrap;
+}
+
+/* ---- Snippets tab ---- */
+
+function buildSnippetsTab(): HTMLElement {
+  const panel = el("div", "settings-tab-panel");
+
+  const hint = el("div", "settings-hint");
+  const paletteKey = getSettings().keybinds.palette;
+  hint.textContent =
+    "Snippets paste into the active terminal via the command palette" +
+    (paletteKey ? ` (${paletteKey} → Insert prompt…)` : " (→ Insert prompt…)") +
+    ". Add, edit, or remove your own here.";
+  panel.appendChild(hint);
+
+  panel.appendChild(promptSnippetsEditor());
+  return panel;
+}
+
 /* ---- General tab ---- */
 
 function buildGeneralTab(): HTMLElement {
@@ -714,6 +798,7 @@ function buildOverlay(): HTMLElement {
   };
   modal.appendChild(tabbar);
   addTab("general", "General", buildGeneralTab());
+  addTab("snippets", "Snippets", buildSnippetsTab());
   addTab("keybinds", "Keybinds", buildKeybindsTab());
   activateTab("general");
   modal.appendChild(body);
