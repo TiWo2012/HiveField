@@ -7,7 +7,12 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { AGENTS, AGENT_MODES } from "./agents";
+import {
+  AGENTS,
+  AGENT_MODES,
+  RAW_MODE,
+  type CustomAgentDef,
+} from "./agents";
 import { DEFAULT_THEME_ID, getTheme } from "./themes";
 import {
   DEFAULT_KEYBINDS,
@@ -104,8 +109,15 @@ export interface AppSettings {
   /**
    * Agent mode ids offered as new-session sources (sidebar / context menu /
    * palette). Empty array hides every agent (the raw shell is always shown).
+   * Covers built-in ids and custom-agent ids.
    */
   visibleAgents: string[];
+  /**
+   * User-defined agents (Settings → Agents → Custom agents), merged with the
+   * built-in registry at runtime. Each has its own command line, so agents
+   * with custom flags/args are supported (e.g. `opencode --model gpt-5`).
+   */
+  customAgents: CustomAgentDef[];
   /**
    * Keyboard shortcuts, keyed by action id (see keybinds.ts). An empty string
    * means the action is unbound. Missing/invalid entries fall back to the
@@ -140,6 +152,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ntfyTopic: "",
   ntfyToken: "",
   visibleAgents: AGENTS.map((a) => a.id),
+  customAgents: [],
   keybinds: { ...DEFAULT_KEYBINDS },
   promptSnippets: DEFAULT_PROMPT_SNIPPETS,
 };
@@ -172,13 +185,51 @@ function normalize(value: unknown): AppSettings {
       : fallback;
   const pickBool = (key: string, fallback: boolean): boolean =>
     typeof v[key] === "boolean" ? (v[key] as boolean) : fallback;
-  const pickAgents = (key: string, fallback: string[]): string[] => {
+  /**
+   * Parse user-defined agents from stored settings. Invalid entries (empty
+   * id/label/command, or a mode id colliding with a built-in) are dropped.
+   * Used both for the `customAgents` setting itself and to know which custom
+   * ids are valid when filtering `visibleAgents`.
+   */
+  const pickCustomAgents = (value: unknown): CustomAgentDef[] => {
+    if (!Array.isArray(value)) return [];
+    const out: CustomAgentDef[] = [];
+    const taken = new Set<string>([...AGENT_MODES, RAW_MODE]);
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      const id = typeof o.id === "string" ? o.id.trim() : "";
+      const label = typeof o.label === "string" ? o.label.trim() : "";
+      const command = typeof o.command === "string" ? o.command.trim() : "";
+      if (!id || !label || !command || taken.has(id)) continue;
+      taken.add(id);
+      out.push({
+        id,
+        label,
+        command,
+        icon:
+          typeof o.icon === "string" && o.icon.trim() !== ""
+            ? o.icon.trim()
+            : "✦",
+      });
+    }
+    return out;
+  };
+  const pickAgents = (
+    key: string,
+    fallback: string[],
+    customAgents: CustomAgentDef[]
+  ): string[] => {
     // Missing key (older settings files) → fall back to "all agents". An
     // explicit array is kept as-is (even empty = hide every agent), only
     // dropping ids that are no longer in the registry.
     if (!Array.isArray(v[key])) return fallback;
+    const known = new Set<string>([
+      ...AGENT_MODES,
+      ...customAgents.map((a) => a.id),
+    ]);
     return (v[key] as unknown[]).filter(
-      (x): x is string => typeof x === "string" && AGENT_MODES.includes(x)
+      (x): x is string => typeof x === "string" && known.has(x)
     );
   };
   const pickKeybinds = (value: unknown): Record<KeybindAction, string> => {
@@ -212,6 +263,14 @@ function normalize(value: unknown): AppSettings {
     }
     return out;
   };
+
+  const customAgents = pickCustomAgents(v.customAgents);
+  // The "all agents" fallback for older settings files must include custom
+  // agents, otherwise they would be hidden until the user re-checks them.
+  const allDefaultVisible = [
+    ...DEFAULT_SETTINGS.visibleAgents,
+    ...customAgents.map((a) => a.id),
+  ];
 
   return {
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
@@ -250,7 +309,8 @@ function normalize(value: unknown): AppSettings {
     ntfyServer: pickStr("ntfyServer", DEFAULT_SETTINGS.ntfyServer),
     ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),
     ntfyToken: pickStr("ntfyToken", DEFAULT_SETTINGS.ntfyToken),
-    visibleAgents: pickAgents("visibleAgents", DEFAULT_SETTINGS.visibleAgents),
+    visibleAgents: pickAgents("visibleAgents", allDefaultVisible, customAgents),
+    customAgents,
     keybinds: pickKeybinds(v.keybinds),
     promptSnippets: pickSnippets("promptSnippets", DEFAULT_SETTINGS.promptSnippets),
   };

@@ -49,16 +49,22 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   in Settings).
 - **Session sidebar**: drag an **agent** (opencode, pi, Codex, GitHub Copilot,
   Claude Code, Gemini CLI, aider, Cursor, Amp, Qwen Code, Goose, Crush, Cody,
-  OpenHands, …) or a **raw term** entry from the left sidebar into the
+  OpenHands, Editor, …) or a **raw term** entry from the left sidebar into the
   terminal area — it opens there as a **split** (drop near an edge to choose
   the split direction, drop in the middle to split to the right). Agent
   sessions auto-run the agent CLI; `raw` sessions are a plain shell. Use
   `Ctrl+Shift+T` to open a session as a tab instead. Which agents are offered
   is configurable in **Settings → Agents** (uncheck an agent to hide it from
   the sidebar, context menu and palette; the raw shell is always available).
-  Adding a new agent is a one-line change in the frontend registry (`AGENTS`
-  in `src/agents.ts`); the backend auto-runs any non-`raw` mode as its
-  command.
+  **Custom agents** are defined in the same panel: give one a name and a
+  command line (arguments allowed, e.g. `opencode --model gpt-5`), and it
+  behaves like a built-in — sidebar entry, palette/context-menu source,
+  isolated worktree, completion notifications. A built-in **Editor** agent
+  runs `$EDITOR` (resolved at spawn, honoring a profile-set value with `vi` /
+  `notepad` as fallback) and runs in the launch directory instead of a
+  throwaway worktree so edited files are never swallowed. Adding a built-in
+  agent is still a one-line change in the frontend registry (`AGENTS` in
+  `src/agents.ts`); the backend auto-runs any non-`raw` mode as its command.
 - **Live sidebar info**: below the drag sources the sidebar shows a
   **Running** section — every open session with its mode icon, tab title,
   working directory, and a status glyph (active / ● producing output /
@@ -199,7 +205,8 @@ backend for each spawned shell).
 |-----------|-----------------|-----------------------------------------------|
 | Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
 | Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
-| JS → Rust | `pty_spawn`     | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"` (default opencode); `cwd` optionally pins the start directory (e.g. a worktree; when omitted the session starts in the *invoking window's* launch directory); `autorun` optionally overrides the command when the CLI binary differs from the mode id (e.g. `cursor` → `cursor-agent`) → returns `sessionId` |
+| JS → Rust | `pty_spawn`     | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"` (default opencode); `cwd` optionally pins the start directory (e.g. a worktree; when omitted the session starts in the *invoking window's* launch directory); `autorun` optionally overrides the command when the CLI binary differs from the mode id (e.g. `cursor` → `cursor-agent`), for a user-defined custom agent's full command line, or the resolved `$EDITOR` command for the `editor` mode → returns `sessionId` |
+| JS → Rust | `editor_command` | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with a per-platform fallback (`${EDITOR:-vi}` on unix, quoted `%EDITOR%`/`notepad` on Windows) |
 | JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
 | JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
 | JS → Rust | `pty_kill`      | `{ sessionId }`                               |

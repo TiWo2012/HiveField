@@ -43,9 +43,11 @@ fn window_cwd(window: &tauri::WebviewWindow) -> Result<String, String> {
 /// `mode` controls what the session auto-runs. `"raw"` runs a plain shell;
 /// any other value is treated as a coding-agent id and auto-runs `<mode>` as
 /// the command (codex, copilot, claude, ...). `autorun` optionally pins the
-/// exact command when the CLI binary differs from the mode id (e.g. mode
-/// `cursor` -> `cursor-agent`); it is supplied by the frontend agent registry.
-/// Default mode (when omitted) is `"opencode"`.
+/// exact command: a built-in whose CLI binary differs from its mode id (e.g.
+/// mode `cursor` -> `cursor-agent`), a user-configured custom agent's full
+/// command line, or the Editor agent's resolved `$EDITOR` command. It is
+/// supplied by the frontend agent registry. Default mode (when omitted) is
+/// `"opencode"`.
 ///
 /// `cwd` optionally pins the directory the shell starts in (e.g. a git
 /// worktree path). When omitted the shell starts in the invoking window's
@@ -94,6 +96,13 @@ fn pty_resize(
 #[tauri::command]
 fn pty_kill(state: State<'_, PtyState>, session_id: u64) -> Result<(), String> {
     pty::kill(&state, session_id).map_err(|e| e.to_string())
+}
+
+/// IPC command: resolve the command the built-in "Editor" agent auto-runs
+/// (honors `$EDITOR` with a per-platform fallback; see `pty::editor_command`).
+#[tauri::command]
+fn editor_command() -> String {
+    pty::editor_command()
 }
 
 /// IPC command: read all stored settings as a JSON object ({} if none yet).
@@ -311,6 +320,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            editor_command,
             settings_get,
             settings_set,
             workspace_cwd,

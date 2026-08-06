@@ -10,7 +10,11 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { AGENTS } from "./agents";
+import {
+  allAgents,
+  makeCustomAgentId,
+  type CustomAgentDef,
+} from "./agents";
 import { THEMES } from "./themes";
 import {
   getSettings,
@@ -42,6 +46,8 @@ let previewEl: HTMLElement | null = null;
 let unsubscribe: (() => void) | null = null;
 /** Refresh the Keybinds tab rows whenever settings change (see openSettings). */
 let renderKeybindRows: (() => void) | null = null;
+/** Refresh the Agents section (checklist + custom-agent editor) on settings change. */
+let renderAgentsSection: (() => void) | null = null;
 
 export function openSettings(): void {
   if (!overlay) {
@@ -52,6 +58,7 @@ export function openSettings(): void {
         previewEl.style.fontSize = `${s.fontSize}px`;
       }
       renderKeybindRows?.();
+      renderAgentsSection?.();
     });
     document.addEventListener("keydown", onKeydown);
   }
@@ -228,14 +235,15 @@ function toggleField(value: boolean, onChange?: (v: boolean) => void): HTMLEleme
 }
 
 /**
- * A checkbox per registered agent, controlling which ones are offered as
- * new-session sources. Unchecking an agent hides it from the sidebar, the
- * context menu and the palette (existing sessions keep running).
+ * A checkbox per registered agent (built-in and custom), controlling which
+ * ones are offered as new-session sources. Unchecking an agent hides it from
+ * the sidebar, the context menu and the palette (existing sessions keep
+ * running).
  */
 function agentChecklist(): HTMLElement {
   const wrap = el("div", "settings-agents");
   const visible = new Set(getSettings().visibleAgents);
-  for (const agent of AGENTS) {
+  for (const agent of allAgents(getSettings().customAgents)) {
     const item = el("label", "settings-agent");
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -247,7 +255,9 @@ function agentChecklist(): HTMLElement {
       else next.delete(agent.id);
       // Keep registry order so the sidebar/menu order stays stable.
       void updateSettings({
-        visibleAgents: AGENTS.filter((a) => next.has(a.id)).map((a) => a.id),
+        visibleAgents: allAgents(getSettings().customAgents)
+          .filter((a) => next.has(a.id))
+          .map((a) => a.id),
       });
     });
     const name = el("span", "settings-agent-name");
@@ -255,6 +265,108 @@ function agentChecklist(): HTMLElement {
     item.append(cb, name);
     wrap.appendChild(item);
   }
+  return wrap;
+}
+
+/**
+ * The custom-agent editor: the list of user-defined agents (with a per-row
+ * remove button) plus an add form (name / command line / optional icon).
+ * Saving an agent registers it in `customAgents` and surfaces it as a
+ * new-session source immediately.
+ */
+function customAgentEditor(): HTMLElement {
+  const wrap = el("div", "settings-custom-agents");
+  const title = el("div", "settings-custom-agents-title");
+  title.textContent = "Custom agents";
+  wrap.appendChild(title);
+
+  const list = el("div", "settings-custom-agent-list");
+  wrap.appendChild(list);
+
+  const customs = getSettings().customAgents;
+  if (customs.length === 0) {
+    const empty = el("div", "settings-hint");
+    empty.textContent = "No custom agents yet — add one below.";
+    list.appendChild(empty);
+  } else {
+    for (const agent of customs) {
+      const row = el("div", "settings-custom-agent");
+      const icon = el("span", "settings-custom-agent-icon");
+      icon.textContent = agent.icon;
+      const body = el("div", "settings-custom-agent-body");
+      const name = el("div", "settings-custom-agent-name");
+      name.textContent = agent.label;
+      const cmd = el("div", "settings-custom-agent-command");
+      cmd.textContent = agent.command;
+      body.append(name, cmd);
+      const del = el("button", "settings-custom-agent-delete");
+      del.type = "button";
+      del.textContent = "×";
+      del.title = "Remove this agent";
+      del.addEventListener("click", () => {
+        const cur = getSettings();
+        void updateSettings({
+          customAgents: cur.customAgents.filter((a) => a.id !== agent.id),
+          visibleAgents: cur.visibleAgents.filter((id) => id !== agent.id),
+        });
+      });
+      row.append(icon, body, del);
+      list.appendChild(row);
+    }
+  }
+
+  // Add form: label, command line, optional icon glyph. Enter submits.
+  const form = el("div", "settings-custom-agent-form");
+  const labelInput = el("input", "settings-text");
+  labelInput.type = "text";
+  labelInput.placeholder = "Agent name";
+  const commandInput = el("input", "settings-text");
+  commandInput.type = "text";
+  commandInput.placeholder = "Command, e.g. opencode --model gpt-5";
+  const iconInput = el("input", "settings-text");
+  iconInput.type = "text";
+  iconInput.placeholder = "Icon";
+  iconInput.maxLength = 4;
+  const addBtn = el("button", "settings-done");
+  addBtn.type = "button";
+  addBtn.textContent = "Add agent";
+  const submit = () => {
+    const label = labelInput.value.trim();
+    const command = commandInput.value.trim();
+    if (!label || !command) {
+      labelInput.focus();
+      return;
+    }
+    const cur = getSettings();
+    const custom: CustomAgentDef = {
+      id: makeCustomAgentId(label, cur.customAgents),
+      label,
+      command,
+      icon: iconInput.value.trim() || "✦",
+    };
+    // The agent appears as a new-session source right away.
+    void updateSettings({
+      customAgents: [...cur.customAgents, custom],
+      visibleAgents: [...cur.visibleAgents, custom.id],
+    });
+  };
+  addBtn.addEventListener("click", submit);
+  for (const input of [labelInput, commandInput, iconInput]) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      }
+    });
+  }
+  form.append(labelInput, commandInput, iconInput, addBtn);
+  wrap.appendChild(form);
+
+  const help = el("div", "settings-hint");
+  help.textContent =
+    "A custom agent runs its command line in the session shell (arguments allowed). The built-in Editor agent runs $EDITOR instead.";
+  wrap.appendChild(help);
+
   return wrap;
 }
 
@@ -487,11 +599,18 @@ function buildGeneralTab(): HTMLElement {
   const agentsLabel = el("span", "settings-label");
   agentsLabel.textContent = "Show in sidebar";
   agentsSection.appendChild(agentsLabel);
-  agentsSection.appendChild(agentChecklist());
+  const agentsContainer = el("div", "settings-agents-container");
+  agentsSection.appendChild(agentsContainer);
   const agentsHint = el("span", "settings-hint");
   agentsHint.textContent =
     "Which coding agents are offered as new-session sources (sidebar, context menu, palette). The raw shell is always available.";
   agentsSection.appendChild(agentsHint);
+  // Rebuild the checklist + custom-agent editor whenever settings change
+  // (adding/removing a custom agent updates both immediately).
+  renderAgentsSection = () => {
+    agentsContainer.replaceChildren(agentChecklist(), customAgentEditor());
+  };
+  renderAgentsSection();
   body.appendChild(agentsSection);
 
   /* --- Worktrees --- */

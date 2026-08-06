@@ -151,10 +151,11 @@ impl Utf8StreamDecoder {
 /// `mode` is the session type: any coding-agent id (`opencode`, `pi`, `codex`,
 /// `copilot`, `claude`, ...) auto-runs that agent in the session, and
 /// `"raw"` gives a plain shell with no auto-run. `autorun_override` optionally
-/// pins the exact command to run when the CLI binary differs from the mode id
-/// (e.g. mode `cursor` -> `cursor-agent`); the frontend agent registry passes
-/// it. New agents work without a Rust change: any non-`"raw"` mode auto-runs
-/// the mode itself as the command.
+/// pins the exact command to run: a built-in whose CLI binary differs from its
+/// mode id (e.g. mode `cursor` -> `cursor-agent`), a user-configured custom
+/// agent's full command line, or the Editor agent's resolved `$EDITOR`
+/// command. New agents work without a Rust change: any non-`"raw"` mode
+/// auto-runs the mode itself as the command.
 ///
 /// `start_dir` is the directory the shell should launch in. When `None`, the
 /// directory the app was launched from is used (falling back to `$HOME`); when
@@ -316,17 +317,32 @@ pub fn spawn<R: Runtime>(
 ///
 /// `"raw"` runs nothing (a plain shell). Every other mode auto-runs the mode
 /// itself as the command (`codex`, `copilot`, `claude`, ...), so new agents
-/// work without a Rust change. `autorun` overrides the command when the CLI
-/// binary differs from the mode id (e.g. mode `cursor` -> `cursor-agent`); the
-/// frontend agent registry passes it.
+/// work without a Rust change. `autorun` overrides the command: either a
+/// built-in's bare-word override (e.g. mode `cursor` -> `cursor-agent`) or a
+/// user-configured custom agent's full command line (`opencode --model
+/// gpt-5`, `${EDITOR:-vi}`, ...).
 ///
-/// Only a bare command word is accepted — no whitespace or shell metacharacters
-/// — so nothing can smuggle extra arguments or shell syntax through the PTY.
+/// Two validation tiers, deliberately:
+///  - An explicit `autorun` is trusted as a full command line (arguments and
+///    shell expansions allowed) — the frontend is its only producer and it
+///    derives it from the user's own agent registry, never from saved
+///    workspace data, so custom agents can pass args.
+///  - The fallback (mode id as command) is restricted to a bare command word
+///    — no whitespace or shell metacharacters — so a crafted workspace layout
+///    cannot smuggle extra arguments or shell syntax through the PTY.
 fn autorun_command(mode: &str, autorun: Option<&str>) -> Option<String> {
     if mode == "raw" {
         return None;
     }
-    let cmd = autorun.unwrap_or(mode).trim();
+    if let Some(cmd) = autorun {
+        let trimmed = cmd.trim();
+        return if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    let cmd = mode.trim();
     if !cmd.is_empty()
         && cmd
             .chars()
@@ -335,6 +351,25 @@ fn autorun_command(mode: &str, autorun: Option<&str>) -> Option<String> {
         Some(cmd.to_string())
     } else {
         None
+    }
+}
+
+/// Resolve the command the built-in "Editor" agent auto-runs.
+///
+/// On unix this returns a shell-expandable string (`${EDITOR:-vi}`) so a
+/// profile-defined `$EDITOR` (e.g. exported in `.bashrc`/`.zshrc`) is honored
+/// by the session shell, with `vi` as the POSIX fallback. On Windows the PTY
+/// shell is `cmd.exe`/powershell, which does not expand `$EDITOR`, so the
+/// value is resolved here (quoted so paths with spaces survive) with a
+/// `notepad` fallback.
+pub fn editor_command() -> String {
+    if cfg!(windows) {
+        match std::env::var("EDITOR") {
+            Ok(v) if !v.trim().is_empty() => format!("\"{}\"", v.trim()),
+            _ => "notepad".to_string(),
+        }
+    } else {
+        "${EDITOR:-vi}".to_string()
     }
 }
 
@@ -539,13 +574,43 @@ mod tests {
     }
 
     #[test]
-    fn autorun_command_rejects_shell_syntax() {
-        assert_eq!(autorun_command("codex", Some("codex; rm -rf /")), None);
-        assert_eq!(autorun_command("codex", Some("codex --dangerous")), None);
-        assert_eq!(autorun_command("a", Some("$(evil)")), None);
+    fn autorun_command_rejects_shell_syntax_in_mode_fallback() {
+        // No explicit autorun → the mode id itself must be a bare command
+        // word, so a crafted workspace layout cannot smuggle shell syntax.
+        assert_eq!(autorun_command("codex; rm -rf /", None), None);
+        assert_eq!(autorun_command("codex --dangerous", None), None);
+        assert_eq!(autorun_command("$(evil)", None), None);
         assert_eq!(autorun_command("", None), None);
         assert_eq!(autorun_command(" ", None), None);
-        assert_eq!(autorun_command("pi", Some("")), None);
+        assert_eq!(autorun_command("pi", None).as_deref(), Some("pi"));
+    }
+
+    #[test]
+    fn autorun_command_accepts_full_custom_command_lines() {
+        // Custom agents (and the Editor) pass their full command line as the
+        // explicit autorun; arguments and shell expansions are allowed.
+        assert_eq!(
+            autorun_command("custom-x", Some("opencode --model gpt-5")).as_deref(),
+            Some("opencode --model gpt-5")
+        );
+        assert_eq!(
+            autorun_command("custom-x", Some("aider --model sonnet --architect")).as_deref(),
+            Some("aider --model sonnet --architect")
+        );
+        assert_eq!(
+            autorun_command("editor", Some("${EDITOR:-vi}")).as_deref(),
+            Some("${EDITOR:-vi}")
+        );
+        assert_eq!(autorun_command("custom-x", Some("")), None);
+        assert_eq!(autorun_command("custom-x", Some("   ")), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn editor_command_returns_shell_expandable_on_unix() {
+        // Unix: let the session shell expand $EDITOR (profile-set values
+        // honored) with the POSIX fallback vi.
+        assert_eq!(editor_command(), "${EDITOR:-vi}");
     }
 
     // ---- Utf8StreamDecoder ----

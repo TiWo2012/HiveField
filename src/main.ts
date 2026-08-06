@@ -29,13 +29,16 @@ import {
 import { toggleSettings } from "./settings-ui";
 import {
   AGENTS,
-  KNOWN_MODES,
+  EDITOR_CMD,
   RAW_MODE,
-  agentForMode,
-  isAgentMode,
-  modeCommand,
-  modeIcon,
-  modeLabel,
+  agentUsesWorktreeAll,
+  allAgents,
+  isAgentModeAll,
+  isKnownModeAll,
+  modeCommandAll,
+  modeIconAll,
+  modeLabelAll,
+  type CustomAgentDef,
 } from "./agents";
 import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
@@ -69,18 +72,26 @@ type Mode = string;
 /** Default session mode when none is requested (the first agent). */
 const DEFAULT_MODE: Mode = AGENTS[0].id;
 
+/** The user-defined agents currently configured (shortcut for call sites). */
+function customs(): readonly CustomAgentDef[] {
+  return getSettings().customAgents;
+}
+
 /**
  * The session modes currently offered as new-session sources (sidebar, context
  * menu, palette): the agents enabled in the `visibleAgents` setting (all of
- * them by default), plus the raw shell which is always offered.
+ * them by default, built-in and custom), plus the raw shell which is always
+ * offered.
  */
 function sessionModes(): ReadonlyArray<{ mode: Mode; label: string; icon: string }> {
   const visible = new Set(getSettings().visibleAgents);
-  const agents = AGENTS.filter((a) => visible.has(a.id)).map((a) => ({
-    mode: a.id,
-    label: a.label,
-    icon: a.icon,
-  }));
+  const agents = allAgents(customs())
+    .filter((a) => visible.has(a.id))
+    .map((a) => ({
+      mode: a.id,
+      label: a.label,
+      icon: a.icon,
+    }));
   return [...agents, { mode: RAW_MODE, label: "raw term", icon: "$" }];
 }
 
@@ -128,7 +139,7 @@ function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | und
       parsed &&
       typeof parsed === "object" &&
       typeof parsed.mode === "string" &&
-      (KNOWN_MODES as readonly string[]).includes(parsed.mode)
+      isKnownModeAll(parsed.mode, customs())
     ) {
       return {
         mode: parsed.mode as Mode,
@@ -138,7 +149,7 @@ function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | und
   } catch {
     // Not JSON — fall through to the bare-mode legacy payload.
   }
-  return (KNOWN_MODES as readonly string[]).includes(raw)
+  return isKnownModeAll(raw, customs())
     ? { mode: raw as Mode }
     : undefined;
 }
@@ -731,7 +742,7 @@ function clearNotify(panelId: string): void {
  * actively watching the panel (window focused + panel active).
  */
 function notifyAgentDone(panelId: string, entry: SessionEntry): void {
-  if (!isAgentMode(entry.mode)) return;
+  if (!isAgentModeAll(entry.mode, customs())) return;
   // The user is looking at this very panel: interrupting them is pointless.
   if (windowFocused && isPanelActive(panelId)) return;
   const st = panelStatus.get(panelId);
@@ -739,7 +750,7 @@ function notifyAgentDone(panelId: string, entry: SessionEntry): void {
   st.notified = true;
 
   const settings = getSettings();
-  const label = modeLabel(entry.mode);
+  const label = modeLabelAll(entry.mode, customs());
   const title = st.baseTitle || entry.panel?.title || label;
   const body = `${label} session “${title}” finished`;
 
@@ -883,7 +894,10 @@ async function resolveWorktree(
   cwd: string | undefined,
   name: string | undefined
 ): Promise<{ cwd?: string; name?: string; created: boolean }> {
-  if (!isAgentMode(mode)) return { cwd, created: false };
+  if (!isAgentModeAll(mode, customs())) return { cwd, created: false };
+  // Agents that opt out of worktrees (the Editor) run in the launch dir:
+  // an editor edits real files, and a throwaway checkout would swallow them.
+  if (!agentUsesWorktreeAll(mode, customs())) return { cwd, created: false };
   if (cwd) {
     // Restored layout: reuse the saved worktree when it still exists.
     try {
@@ -1012,7 +1026,8 @@ function createTerminalComponent(): IContentRenderer {
     element,
     init({ api: panelApi, containerApi, params }: GroupPanelPartInitParameters) {
       const mode: Mode =
-        typeof params.mode === "string" && KNOWN_MODES.includes(params.mode)
+        typeof params.mode === "string" &&
+        isKnownModeAll(params.mode, customs())
           ? params.mode
           : DEFAULT_MODE;
       const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
@@ -1169,7 +1184,7 @@ function createTerminalComponent(): IContentRenderer {
           // Track the line being typed; when it is submitted (Enter) it
           // becomes this pane's title before being forwarded to the agent.
           inputState = trackInputLine(inputState, data, (line) => {
-            if (isAgentMode(mode) && !oscTitleSeen && !st.userTitle) {
+            if (isAgentModeAll(mode, customs()) && !oscTitleSeen && !st.userTitle) {
               const title = inputLineToTitle(line);
               if (title) setBaseTitle(panelApi.id, title);
             }
@@ -1195,12 +1210,25 @@ function createTerminalComponent(): IContentRenderer {
           let id: number;
           try {
             // Auto-run the agent (except raw). Pass the exact command only
-            // when the CLI binary differs from the mode id.
-            const command = modeCommand(mode);
+            // when the CLI binary differs from the mode id. The Editor agent
+            // resolves $EDITOR through the backend so a profile-set value
+            // (and a per-platform fallback) is honored; custom agents pass
+            // their full command line (args allowed).
+            const command = modeCommandAll(mode, customs());
+            let autorun: string | undefined;
+            if (command === EDITOR_CMD) {
+              try {
+                autorun = await invoke<string>("editor_command");
+              } catch {
+                autorun = "vi";
+              }
+            } else if (command !== undefined && command !== mode) {
+              autorun = command;
+            }
             id = await invoke<number>("pty_spawn", {
               mode,
               ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
-              ...(command !== undefined && command !== mode ? { autorun: command } : {}),
+              ...(autorun !== undefined ? { autorun } : {}),
             });
           } catch (err) {
             console.error("failed to spawn session", err);
@@ -1273,8 +1301,13 @@ function addPanelWithMode(
 ) {
   // A fresh agent session without a pinned cwd gets a codename (the tab
   // title and the auto-created worktree's branch are both derived from it).
-  const name = isAgentMode(mode) && !cwd ? titleOverride ?? generateSessionName() : undefined;
-  const base = isAgentMode(mode) ? (name ?? mode) : "shell";
+  // Agents that opt out of worktrees (the Editor) keep the plain mode title.
+  const worktree = agentUsesWorktreeAll(mode, customs());
+  const name =
+    isAgentModeAll(mode, customs()) && !cwd && worktree
+      ? titleOverride ?? generateSessionName()
+      : undefined;
+  const base = isAgentModeAll(mode, customs()) ? (name ?? mode) : "shell";
   const title = cwd ? `${base}@${shortLabel(cwd)}` : base;
   const panel = api.addPanel({
     id: nextPanelId(),
@@ -1534,7 +1567,8 @@ function refreshSidebarRunning(): void {
   for (const panel of [...panels].reverse()) {
     const params = panel.api.getParameters() as Record<string, unknown>;
     const mode: Mode =
-      typeof params.mode === "string" && KNOWN_MODES.includes(params.mode)
+      typeof params.mode === "string" &&
+      isKnownModeAll(params.mode, customs())
         ? params.mode
         : DEFAULT_MODE;
     const sessionId = panelToSession.get(panel.id);
@@ -1551,7 +1585,7 @@ function refreshSidebarRunning(): void {
 
     const icon = document.createElement("span");
     icon.className = "sidebar-session-icon";
-    icon.textContent = modeIcon(mode);
+    icon.textContent = modeIconAll(mode, customs());
     item.appendChild(icon);
 
     const body = document.createElement("div");
@@ -1607,7 +1641,7 @@ function refreshSidebarRunning(): void {
     if (!entry) continue;
     const parkedKey = parkedKeyFor(sessionId);
     const st = panelStatus.get(parkedKey);
-    const baseTitle = st?.baseTitle ?? entry.panel?.title ?? modeLabel(entry.mode);
+    const baseTitle = st?.baseTitle ?? entry.panel?.title ?? modeLabelAll(entry.mode, customs());
     const { glyph, cls } = sessionStatusGlyph(parkedKey);
 
     const item = document.createElement("div");
@@ -1619,7 +1653,7 @@ function refreshSidebarRunning(): void {
 
     const icon = document.createElement("span");
     icon.className = "sidebar-session-icon";
-    icon.textContent = modeIcon(entry.mode);
+    icon.textContent = modeIconAll(entry.mode, customs());
     item.appendChild(icon);
 
     const body = document.createElement("div");
@@ -1726,7 +1760,18 @@ function renderWorkspaceSection(): void {
 let sidebarSourcesEl: HTMLElement | null = null;
 
 /** Last visible-agent selection, to detect when the sidebar sources need rebuilding. */
-let lastVisibleAgents = getSettings().visibleAgents.join(",");
+let lastVisibleAgents = visibleAgentsKey(getSettings());
+
+/**
+ * Key over the visible-agent selection AND the custom-agent registry: adding
+ * or removing a custom agent changes the offered sources just like toggling
+ * an existing one, so the sidebar must rebuild in both cases.
+ */
+function visibleAgentsKey(s: AppSettings): string {
+  return `${s.visibleAgents.join(",")}|${s.customAgents
+    .map((a) => a.id)
+    .join(",")}`;
+}
 
 /**
  * (Re)build the drag sources at the top of the sidebar from the currently
@@ -2421,7 +2466,7 @@ async function registerGlobalListeners() {
         // reports "done"; notifyAgentDone decides whether the user is
         // actually watching and skips if so.
         const st = panelStatus.get(statusKey);
-        if (st && isAgentMode(entry.mode)) {
+        if (st && isAgentModeAll(entry.mode, customs())) {
           if (markers.includes("D")) {
             clearNotify(statusKey);
             notifyAgentDone(statusKey, entry);
@@ -2509,7 +2554,7 @@ async function init() {
     // Rebuild the sidebar's drag sources when the visible-agent selection
     // changes, so hidden agents disappear (and re-enabled ones reappear)
     // without restarting the app.
-    const visibleKey = settings.visibleAgents.join(",");
+    const visibleKey = visibleAgentsKey(settings);
     if (visibleKey !== lastVisibleAgents) {
       lastVisibleAgents = visibleKey;
       buildSidebarSources();
@@ -2802,7 +2847,8 @@ function buildPaletteItems(): PaletteItem[] {
   for (const panel of api.panels) {
     const params = panel.api.getParameters() as Record<string, unknown>;
     const mode: Mode =
-      typeof params.mode === "string" && KNOWN_MODES.includes(params.mode)
+      typeof params.mode === "string" &&
+      isKnownModeAll(params.mode, customs())
         ? params.mode
         : DEFAULT_MODE;
     const sessionId = panelToSession.get(panel.id);
@@ -2819,7 +2865,7 @@ function buildPaletteItems(): PaletteItem[] {
       id: panel.id,
       label: panel.title ?? "…",
       detail,
-      icon: modeIcon(mode),
+      icon: modeIconAll(mode, customs()),
       group: "Panes",
       run: () => {
         panel.api.setActive();
