@@ -11,6 +11,18 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   open and their modes) is saved per launch directory and restored the next time
   you start hiveField from that directory. A fully-wiped layout falls back to a
   fresh opencode session
+- **Ten workspace slots (`Ctrl+1`…`Ctrl+9`, `Ctrl+0`)**: keep up to ten
+  independent tab/split layouts per launch directory. Press **`Ctrl+1`…`Ctrl+9`
+  / `Ctrl+0`** to jump to workspace slots 1…10 — the current layout is saved
+  into the slot you're leaving and the target slot's saved layout is restored
+  (sessions respawn from it, exactly like a launch restore). Pressing a digit on
+  an empty slot starts a fresh workspace there. The **Workspaces** section in the
+  sidebar shows all ten slots (the active one is highlighted, a green dot marks
+  slots with a saved layout): click to switch, double-click to rename. Every
+  slot also appears in the command palette (`Ctrl+Shift+P`).
+  *Note:* `Ctrl+0` now switches to workspace 10, so font-size reset no longer
+  binds to it — keep zooming with `Ctrl+=` / `Ctrl+-` (size is also adjustable
+  in Settings).
 - **Session sidebar**: drag an **opencode**, **pi agent**, or **raw term**
   entry from the left sidebar into the terminal area — it opens there as a
   **split** (drop near an edge to choose the split direction, drop in the

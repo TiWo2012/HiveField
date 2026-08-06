@@ -31,7 +31,14 @@ import { toggleSettings } from "./settings-ui";
 import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
 import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
-import { bindWorkspaceSave, restoreWorkspace } from "./workspace";
+import {
+  bindWorkspaceSave,
+  getCurrentSlot,
+  getWorkspaceSlots,
+  renameWorkspace,
+  restoreWorkspace,
+  switchWorkspace,
+} from "./workspace";
 import { initFileDrop, registerTerminalRoot } from "./file-drop";
 import {
   closeContextMenu,
@@ -302,6 +309,9 @@ let panelCounter = 0;
 /** Sidebar live sections (populated by buildSidebar). */
 let sidebarRunningEl: HTMLElement | null = null;
 let sidebarWorkspaceEl: HTMLElement | null = null;
+
+/** Sidebar workspace-slot switcher strip (Ctrl+1…Ctrl+0). */
+let sidebarWorkspacesEl: HTMLElement | null = null;
 
 /** Cached workspace info shown in the sidebar's Workspace section. */
 let launchCwd: string | undefined;
@@ -1373,6 +1383,18 @@ function buildSidebar() {
   sidebarRunningEl = runningList;
   sidebar.appendChild(runningSection);
 
+  // Workspace switcher: ten slots, Ctrl+1…Ctrl+0 to jump. Click a row to
+  // switch (empty slots start a fresh workspace), double-click to rename.
+  const wsStripSection = document.createElement("div");
+  wsStripSection.className = "sidebar-section workspaces";
+  wsStripSection.appendChild(sidebarSectionTitle("Workspaces"));
+  const wsStrip = document.createElement("div");
+  wsStrip.className = "sidebar-workspace-strip";
+  wsStripSection.appendChild(wsStrip);
+  sidebar.appendChild(wsStripSection);
+  sidebarWorkspacesEl = wsStrip;
+  renderWorkspaceStrip();
+
   // Workspace info: launch dir, git branch/worktrees, session count.
   const wsSection = document.createElement("div");
   wsSection.className = "sidebar-section workspace";
@@ -1390,6 +1412,7 @@ function buildSidebar() {
     ["Ctrl+Shift+T", "new tab"],
     ["Ctrl+Shift+P", "palette"],
     ["Ctrl+Shift+F", "find"],
+    ["Ctrl+1-0", "workspaces"],
   ] as const) {
     const row = document.createElement("div");
     const kbd = document.createElement("kbd");
@@ -1407,6 +1430,83 @@ function buildSidebar() {
   settingsBtn.textContent = "⚙";
   settingsBtn.addEventListener("click", toggleSettings);
   sidebar.appendChild(settingsBtn);
+}
+
+/* ---------------------------------------------------------------------------
+ * Workspace switching (Ctrl+1…Ctrl+0) + sidebar slot strip
+ * --------------------------------------------------------------------------- */
+
+/**
+ * Jump to a workspace slot: save the current layout, restore the target
+ * (closing live panels and respawning their sessions from the saved layout),
+ * seed empty slots with a fresh opencode panel, and refresh the strip.
+ */
+function switchToWorkspace(slot: number): void {
+  void switchWorkspace(api, slot).then((restored) => {
+    // Restored panels carry serialized ids like `panel-1`, so bump the
+    // counter past them before any new panel is added (avoids duplicates).
+    for (const panel of api.panels) {
+      const m = /^panel-(\d+)$/.exec(panel.id);
+      if (m) panelCounter = Math.max(panelCounter, parseInt(m[1], 10));
+    }
+    if (!restored) addPanelWithMode("opencode");
+    renderWorkspaceStrip();
+  });
+}
+
+/** Re-render the sidebar workspace-slot strip from the workspace module. */
+function renderWorkspaceStrip(): void {
+  if (!sidebarWorkspacesEl) return;
+  sidebarWorkspacesEl.replaceChildren();
+  const current = getCurrentSlot();
+  for (const ws of getWorkspaceSlots()) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "workspace-slot";
+    if (ws.slot === current) row.classList.add("active");
+
+    const num = document.createElement("span");
+    num.className = "workspace-slot-num";
+    num.textContent = String(ws.slot);
+
+    const label = document.createElement("span");
+    label.className = "workspace-slot-label";
+    label.textContent =
+      ws.name ?? (ws.hasLayout ? `workspace ${ws.slot}` : "empty");
+
+    const dot = document.createElement("span");
+    dot.className = "workspace-slot-dot";
+    if (ws.hasLayout) dot.classList.add("filled");
+
+    const shortcut = ws.slot === 10 ? "Ctrl+0" : `Ctrl+${ws.slot}`;
+    row.title =
+      `Workspace ${ws.slot}${ws.name ? ` (${ws.name})` : ""} — ${shortcut}` +
+      (ws.slot === current ? " (current)" : "") +
+      ". Click to switch, double-click to rename.";
+    row.append(num, label, dot);
+    row.addEventListener("click", () => switchToWorkspace(ws.slot));
+    row.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      void renameWorkspacePrompt(ws.slot);
+    });
+    sidebarWorkspacesEl!.appendChild(row);
+  }
+}
+
+/** Prompt for a workspace slot's name (double-click a strip row). */
+async function renameWorkspacePrompt(slot: number): Promise<void> {
+  const ws = getWorkspaceSlots().find((w) => w.slot === slot);
+  const name = await openPromptModal({
+    title: `Rename workspace ${slot}`,
+    label: "Workspace name",
+    placeholder: "e.g. docs, backend, agents",
+    hint: "Leave empty to clear the name. Ctrl+1…Ctrl+0 switches workspaces.",
+    value: ws?.name ?? "",
+    confirmText: "Save",
+  });
+  if (name === null) return;
+  await renameWorkspace(slot, name);
+  renderWorkspaceStrip();
 }
 
 /* ---------------------------------------------------------------------------
@@ -1923,6 +2023,7 @@ async function init() {
     panelStatus.delete(panel.id);
     refreshSidebarRunning();
     scheduleWorkspaceRefresh();
+    renderWorkspaceStrip();
     // If the searched terminal just went away, move the highlights onto
     // whatever is active now (or clear them if nothing is).
     if (isSearchOpen()) rerunSearch();
@@ -1992,6 +2093,11 @@ async function init() {
 
   // Persist subsequent layout changes for this launch directory.
   bindWorkspaceSave(api);
+
+  // Keep the sidebar workspace strip in sync with the live layout (a new tab
+  // or split marks the current slot as having a layout immediately).
+  api.onDidLayoutChange(() => renderWorkspaceStrip());
+  renderWorkspaceStrip();
 }
 
 /** Ctrl+H/J/K/L move focus between panes (vim-style). */
@@ -2132,6 +2238,32 @@ function buildPaletteItems(): PaletteItem[] {
   for (const action of actions) {
     items.push({ id: `action-${action.label}`, group: "Actions", ...action });
   }
+
+  // Every workspace slot: jump to it (Ctrl+1…Ctrl+0) or rename it.
+  for (const ws of getWorkspaceSlots()) {
+    const isCurrent = ws.slot === getCurrentSlot();
+    items.push({
+      id: `workspace-${ws.slot}`,
+      label: ws.name
+        ? `Workspace ${ws.slot} · ${ws.name}`
+        : `Workspace ${ws.slot}`,
+      detail: isCurrent
+        ? "current"
+        : ws.hasLayout
+          ? `Ctrl+${ws.slot === 10 ? "0" : ws.slot}`
+          : "empty",
+      icon: "▦",
+      group: "Workspaces",
+      run: () => switchToWorkspace(ws.slot),
+    });
+  }
+  items.push({
+    id: `action-rename-workspace-${getCurrentSlot()}`,
+    label: `Rename workspace ${getCurrentSlot()}`,
+    icon: "▦",
+    group: "Workspaces",
+    run: () => void renameWorkspacePrompt(getCurrentSlot()),
+  });
   return items;
 }
 
@@ -2188,16 +2320,31 @@ function setupKeyboard() {
     }
   });
 
-  // Ctrl+H/J/K/L vim-style pane movement, plus font-size zoom (Ctrl+= / - / 0).
-  // Registered in the CAPTURE phase so the keys are intercepted before xterm
-  // sees them (otherwise Ctrl+H is backspace, Ctrl+J newline, Ctrl+K kill-line,
-  // Ctrl+L clear-screen). If there is no adjacent pane in that direction the
-  // key falls through to the terminal.
+  // Ctrl+H/J/K/L vim-style pane movement, Ctrl+1…Ctrl+0 workspace switching,
+  // plus font-size zoom (Ctrl+= / -). Registered in the CAPTURE phase so the
+  // keys are intercepted before xterm sees them (otherwise Ctrl+H is
+  // backspace, Ctrl+J newline, Ctrl+K kill-line, Ctrl+L clear-screen). If
+  // there is no adjacent pane in that direction the key falls through to the
+  // terminal.
   window.addEventListener(
     "keydown",
     (e) => {
       if (uiOpen()) return;
       if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+        // Ctrl+1…Ctrl+9 / Ctrl+0 jump to workspace slots 1…10. Switching to
+        // an empty slot starts a fresh workspace there.
+        const workspaceSlot =
+          e.key >= "1" && e.key <= "9"
+            ? parseInt(e.key, 10)
+            : e.key === "0"
+              ? 10
+              : undefined;
+        if (workspaceSlot !== undefined) {
+          e.preventDefault();
+          e.stopPropagation();
+          switchToWorkspace(workspaceSlot);
+          return;
+        }
         // Font-size zoom.
         const zoomBy = (delta: number) => {
           const s = getSettings();
@@ -2217,12 +2364,6 @@ function setupKeyboard() {
           e.preventDefault();
           e.stopPropagation();
           zoomBy(-1);
-          return;
-        }
-        if (e.key === "0") {
-          e.preventDefault();
-          e.stopPropagation();
-          zoomBy(0);
           return;
         }
         const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
