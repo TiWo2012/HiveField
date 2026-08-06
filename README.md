@@ -91,7 +91,8 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   that tab. `↑`/`↓` navigate, `→`/`Enter` open/activate, `←`/`Esc` go back.
 - **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
   open pane (jump straight to it) and common actions (new agent/raw tab or
-  split for every supported agent, find, focus panes, rename, close, settings).
+  split for every supported agent, find, focus panes, rename, close, send
+  SIGINT to every pane, close all panes, settings).
   Type to fuzzy-filter with
   live match highlighting, `↑`/`↓` (or `Ctrl+P` / `Ctrl+N`, or `Ctrl+K` /
   `Ctrl+J`) to move, `Enter` to jump/run, `Esc` to close.

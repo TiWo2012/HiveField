@@ -2900,6 +2900,30 @@ function buildPaletteItems(): PaletteItem[] {
       run: () => api.activePanel?.api.close(),
     },
     {
+      label: "Send SIGINT to all panes",
+      icon: "⏹",
+      run: () => {
+        // Ctrl+C as a PTY byte: the tty driver turns 0x03 into SIGINT for
+        // the foreground process group of every live session in this
+        // workspace (parked background sessions are not touched).
+        for (const panel of api.panels) {
+          const sessionId = panelToSession.get(panel.id);
+          if (sessionId === undefined || !sessions.has(sessionId)) continue;
+          invoke("pty_write", { sessionId, data: "\x03" }).catch(() => {});
+        }
+      },
+    },
+    {
+      label: "Close all panes",
+      icon: "✕",
+      run: () => {
+        // Snapshot the list: closing a panel mutates api.panels mid-loop.
+        // Each close goes through onDidRemovePanel, which kills the session
+        // and tears down its terminal/worktree as usual.
+        for (const panel of [...api.panels]) panel.api.close();
+      },
+    },
+    {
       label: "Settings",
       detail: kb().settings,
       icon: "⚙",
