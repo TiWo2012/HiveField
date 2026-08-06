@@ -4,13 +4,14 @@ mod git;
 mod notifications;
 mod pty;
 mod settings;
+mod windows;
 mod workspace;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 /// Managed state holding all live PTY sessions, keyed by session id.
 pub struct PtyState<R: tauri::Runtime = tauri::Wry> {
@@ -27,6 +28,16 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
     }
 }
 
+/// The directory a command's window resolves its "launch directory" to: the
+/// window's registered cwd when it has one (an extra window opened on a
+/// project), otherwise the process working directory (the main window).
+fn window_cwd(window: &tauri::WebviewWindow) -> Result<String, String> {
+    match windows::window_cwd(window) {
+        Some(cwd) => Ok(cwd.to_string_lossy().into_owned()),
+        None => workspace::resolve_cwd(),
+    }
+}
+
 /// IPC command: spawn a new PTY shell session, returns its session id.
 ///
 /// `mode` controls what the session auto-runs. `"raw"` runs a plain shell;
@@ -37,11 +48,13 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
 /// Default mode (when omitted) is `"opencode"`.
 ///
 /// `cwd` optionally pins the directory the shell starts in (e.g. a git
-/// worktree path). When omitted the shell starts in the directory the app was
-/// launched from.
+/// worktree path). When omitted the shell starts in the invoking window's
+/// launch directory (see [`window_cwd`]), which is the directory the app was
+/// launched from for the main window.
 #[tauri::command]
 fn pty_spawn(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, PtyState>,
     mode: Option<String>,
     cwd: Option<String>,
@@ -49,8 +62,14 @@ fn pty_spawn(
 ) -> Result<u64, String> {
     let session_id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let mode = mode.unwrap_or_else(|| "opencode".to_string());
-    let cwd = cwd.map(std::path::PathBuf::from);
-    pty::spawn(&app, session_id, &mode, cwd, autorun).map_err(|e| e.to_string())?;
+    // Default the start directory to the window's own launch directory so a
+    // project window's sessions land in the project, not the process cwd.
+    let cwd = cwd
+        .map(std::path::PathBuf::from)
+        .or_else(|| windows::window_cwd(&window));
+    let window_label = window.label().to_string();
+    pty::spawn(&app, session_id, &mode, cwd, autorun, Some(window_label))
+        .map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 
@@ -91,12 +110,14 @@ fn settings_set(app: tauri::AppHandle, settings: serde_json::Value) -> Result<()
     store.write(&settings)
 }
 
-/// IPC command: resolve the canonical absolute path of the process's working
-/// directory, falling back to the home directory when the cwd is gone or
-/// unreadable.
+/// IPC command: resolve the canonical absolute path of the invoking window's
+/// launch directory — its registered cwd when it has one (a window opened via
+/// `window_new` on a project), otherwise the process's working directory,
+/// falling back to the home directory when that is gone or unreadable. The
+/// value keys the window's workspace persistence.
 #[tauri::command]
-fn workspace_cwd() -> Result<String, String> {
-    workspace::resolve_cwd()
+fn workspace_cwd(window: tauri::WebviewWindow) -> Result<String, String> {
+    window_cwd(&window)
 }
 
 /// IPC command: read the stored layout for a launch directory (`cwd`), or
@@ -164,34 +185,58 @@ fn project_touch(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
     store.touch(&cwd)
 }
 
-/// IPC command: list the git worktrees of the repo containing the launch
-/// directory. `root` is `null` when the launch dir is not inside a git repo,
-/// in which case `worktrees` is empty.
+/// IPC command: open a new app window. `cwd` optionally pins the new window's
+/// launch directory (its sessions default there and its workspace document is
+/// keyed by it); when omitted the process working directory is used. Returns
+/// the new window's label. The frontend passes the invoking window's own
+/// launch directory so "New Window" opens a second window on the same project.
+///
+/// Async on purpose: on Windows, building a window inside a synchronous
+/// command deadlocks (see [`tauri::WebviewWindowBuilder`] docs).
 #[tauri::command]
-fn git_worktrees() -> git::WorktreesInfo {
-    match workspace::resolve_cwd().map(std::path::PathBuf::from) {
+async fn window_new(
+    app: tauri::AppHandle,
+    cwd: Option<String>,
+) -> Result<String, String> {
+    windows::new_window(&app, cwd)
+}
+
+/// IPC command: list the git worktrees of the repo containing the invoking
+/// window's launch directory. `root` is `null` when the launch dir is not
+/// inside a git repo, in which case `worktrees` is empty.
+#[tauri::command]
+fn git_worktrees(window: tauri::WebviewWindow) -> git::WorktreesInfo {
+    match window_cwd(&window).map(std::path::PathBuf::from) {
         Ok(dir) => git::list(&dir),
         Err(_) => git::WorktreesInfo { root: None, worktrees: Vec::new() },
     }
 }
 
 /// IPC command: create a worktree on a new branch in the repo containing the
-/// launch directory. `path` is optional — when omitted the worktree is created
-/// in a sibling directory named `<repo dir>-<branch>`. Returns the absolute
-/// path of the new worktree.
+/// invoking window's launch directory. `path` is optional — when omitted the
+/// worktree is created in a sibling directory named `<repo dir>-<branch>`.
+/// Returns the absolute path of the new worktree.
 #[tauri::command]
-fn git_worktree_create(branch: String, path: Option<String>) -> Result<String, String> {
-    let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
+fn git_worktree_create(
+    window: tauri::WebviewWindow,
+    branch: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let dir = window_cwd(&window).map(std::path::PathBuf::from)?;
     git::create(&dir, &branch, path.as_deref()).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// IPC command: remove the worktree at `path` from the repo containing the
-/// launch directory. Fails (surfacing git's error) when the worktree has
-/// uncommitted or untracked files; pass `force` (default false) to run
-/// `git worktree remove --force`, which also deletes the working tree.
+/// invoking window's launch directory. Fails (surfacing git's error) when the
+/// worktree has uncommitted or untracked files; pass `force` (default false)
+/// to run `git worktree remove --force`, which also deletes the working tree.
 #[tauri::command]
-fn git_worktree_remove(path: String, force: Option<bool>) -> Result<(), String> {
-    let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
+fn git_worktree_remove(
+    window: tauri::WebviewWindow,
+    path: String,
+    force: Option<bool>,
+) -> Result<(), String> {
+    let dir = window_cwd(&window).map(std::path::PathBuf::from)?;
     git::remove(&dir, &path, force.unwrap_or(false))
 }
 
@@ -200,8 +245,12 @@ fn git_worktree_remove(path: String, force: Option<bool>) -> Result<(), String> 
 /// and checked out under `base_dir` (the global "worktree base dir" setting,
 /// defaults to `/tmp`). Returns the new checkout's path and branch.
 #[tauri::command]
-fn git_worktree_auto_create(name: String, base_dir: String) -> Result<git::AutoWorktree, String> {
-    let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
+fn git_worktree_auto_create(
+    window: tauri::WebviewWindow,
+    name: String,
+    base_dir: String,
+) -> Result<git::AutoWorktree, String> {
+    let dir = window_cwd(&window).map(std::path::PathBuf::from)?;
     git::auto_create(&dir, &name, &base_dir)
 }
 
@@ -255,6 +304,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(PtyState::<tauri::Wry>::default())
+        .manage(windows::WindowState::default())
         .manage(dictation::DictationState::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
@@ -268,6 +318,7 @@ pub fn run() {
             workspace_set,
             projects_list,
             project_touch,
+            window_new,
             git_worktrees,
             git_worktree_create,
             git_worktree_remove,
@@ -282,6 +333,46 @@ pub fn run() {
             notifications::notify_desktop,
             notifications::ntfy_send
         ])
+        // A minimal File menu exposing "New Window" (plus the standard app
+        // menu on macOS). The menu item asks the *focused* window to open the
+        // new one — it knows its own launch directory — by broadcasting a
+        // `menu://new-window` event that only the focused window acts on.
+        .menu(|app| {
+            use tauri::menu::{MenuBuilder, SubmenuBuilder};
+            let new_window = tauri::menu::MenuItemBuilder::with_id("new_window", "New Window")
+                .build(app)?;
+            let file = SubmenuBuilder::new(app, "File").item(&new_window).build()?;
+            #[cfg(target_os = "macos")]
+            let menu = {
+                use tauri::menu::PredefinedMenuItem;
+                let quit = PredefinedMenuItem::quit(app, None)?;
+                let app_menu = SubmenuBuilder::new(app, "hiveField")
+                    .item(&quit)
+                    .build()?;
+                MenuBuilder::new(app).items(&[&app_menu, &file]).build()?
+            };
+            #[cfg(not(target_os = "macos"))]
+            let menu = MenuBuilder::new(app).item(&file).build()?;
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == "new_window" {
+                // Only the focused window should act (it knows its cwd).
+                let _ = app.emit("menu://new-window", ());
+            }
+        })
+        // When a window closes, tear down the sessions it spawned (the shells
+        // would otherwise keep running orphaned in the background) and forget
+        // its launch directory. Fires for every window, including on app exit.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                let label = window.label().to_string();
+                let state = app.state::<PtyState>();
+                pty::kill_window_sessions(&state, &label);
+                app.state::<windows::WindowState>().remove(&label);
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

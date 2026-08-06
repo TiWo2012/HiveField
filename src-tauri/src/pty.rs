@@ -46,6 +46,10 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 /// child process and a handle used to emit events to the frontend.
 pub struct PtySession<R: tauri::Runtime = tauri::Wry> {
     session_id: u64,
+    /// The window that spawned this session (its label), so closing that
+    /// window can tear the session down. `None` for sessions from before
+    /// multi-window support (should not happen at runtime).
+    window_label: Option<String>,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
@@ -157,12 +161,16 @@ impl Utf8StreamDecoder {
 /// `Some`, that directory is used when it is readable, otherwise the same
 /// fallback chain applies. This lets a session open inside a specific git
 /// worktree (or any other directory) instead of always sharing the launch dir.
+///
+/// `window_label` records which window spawned this session (its label), so
+/// closing that window can tear the session down with it.
 pub fn spawn<R: Runtime>(
     app: &AppHandle<R>,
     session_id: u64,
     mode: &str,
     start_dir: Option<PathBuf>,
     autorun_override: Option<String>,
+    window_label: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
@@ -204,8 +212,12 @@ pub fn spawn<R: Runtime>(
 
     let ready = Arc::new(AtomicBool::new(false));
     let buffer = Arc::new(Mutex::new(Vec::new()));
+    // Events go only to the window that spawned the session (never broadcast),
+    // so another window's frontend never buffers output it does not own.
+    let owner_label = window_label.clone();
     let session = PtySession {
         session_id,
+        window_label,
         master,
         child,
         writer,
@@ -236,13 +248,7 @@ pub fn spawn<R: Runtime>(
                         pending.push(data);
                         if ready.load(Ordering::Relaxed) {
                             for s in pending.drain(..) {
-                                let _ = reader_app.emit(
-                                    "pty://output",
-                                    OutputPayload {
-                                        session_id,
-                                        data: s,
-                                    },
-                                );
+                                emit_output(&reader_app, &owner_label, session_id, &s);
                             }
                         }
                     }
@@ -265,9 +271,18 @@ pub fn spawn<R: Runtime>(
                     .ok()
                     .map(|status| status.exit_code())
                     .unwrap_or(0) as i32;
-                let _ = session
-                    .app
-                    .emit("pty://exit", ExitPayload { session_id, code });
+                match &session.window_label {
+                    Some(label) => {
+                        let _ = session
+                            .app
+                            .emit_to(label, "pty://exit", ExitPayload { session_id, code });
+                    }
+                    None => {
+                        let _ = session
+                            .app
+                            .emit("pty://exit", ExitPayload { session_id, code });
+                    }
+                }
             }
             None => {
                 // Session was killed/removed via `pty_kill`: no spurious exit.
@@ -387,6 +402,28 @@ pub fn resize<R: Runtime>(state: &PtyState<R>, session_id: u64, cols: u16, rows:
     Ok(())
 }
 
+/// Emit a session's output chunk to the window that owns it (falling back to
+/// a broadcast for sessions without an owner, i.e. pre-multi-window sessions).
+fn emit_output<R: Runtime>(
+    app: &AppHandle<R>,
+    window_label: &Option<String>,
+    session_id: u64,
+    data: &str,
+) {
+    let payload = OutputPayload {
+        session_id,
+        data: data.to_string(),
+    };
+    match window_label {
+        Some(label) => {
+            let _ = app.emit_to(label, "pty://output", payload);
+        }
+        None => {
+            let _ = app.emit("pty://output", payload);
+        }
+    }
+}
+
 /// Kill the session's shell process and remove the session. Idempotent: a
 /// session that is already gone (or was never created) is not an error.
 pub fn kill<R: Runtime>(state: &PtyState<R>, session_id: u64) -> io::Result<()> {
@@ -397,15 +434,32 @@ pub fn kill<R: Runtime>(state: &PtyState<R>, session_id: u64) -> io::Result<()> 
     Ok(())
 }
 
+/// Kill every session spawned by the window with the given label. Called when
+/// a window is destroyed so its shells do not keep running orphaned in the
+/// background (closing a terminal window ends its sessions, like any terminal
+/// emulator).
+pub fn kill_window_sessions<R: Runtime>(state: &PtyState<R>, window_label: &str) {
+    // Collect ids under the lock, then kill outside it (kill takes the lock).
+    let ids: Vec<u64> = {
+        let guard = state.sessions.lock().unwrap();
+        guard
+            .iter()
+            .filter(|(_, s)| s.window_label.as_deref() == Some(window_label))
+            .map(|(id, _)| *id)
+            .collect()
+    };
+    for id in ids {
+        let _ = kill(state, id);
+    }
+}
+
 /// Mark the frontend as ready (first contact) and flush any output that was
 /// buffered before the webview finished registering its event listeners.
 fn mark_ready<R: Runtime>(session: &mut PtySession<R>) {
     if !session.ready.swap(true, Ordering::Relaxed) {
         let drained: Vec<String> = session.buffer.lock().unwrap().drain(..).collect();
         for s in drained {
-            let _ = session
-                .app
-                .emit("pty://output", OutputPayload { session_id: session.session_id, data: s });
+            emit_output(&session.app, &session.window_label, session.session_id, &s);
         }
     }
 }
@@ -442,6 +496,13 @@ mod tests {
         let state = empty_state();
         assert!(kill(&state, 42).is_ok(), "first kill should be a no-op");
         assert!(kill(&state, 42).is_ok(), "second kill should also be a no-op");
+    }
+
+    #[test]
+    fn kill_window_sessions_on_empty_state_is_a_noop() {
+        let state = empty_state();
+        kill_window_sessions(&state, "win-1");
+        assert!(state.sessions.lock().unwrap().is_empty());
     }
 
     #[test]

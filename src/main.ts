@@ -2518,6 +2518,14 @@ async function init() {
 
   await registerGlobalListeners();
 
+  // The native File → New Window menu item broadcasts this event; only the
+  // focused window acts on it (it knows its own launch directory, which it
+  // passes to the backend so the new window opens on the same project).
+  await listen("menu://new-window", async () => {
+    const win = getCurrentWindow();
+    if (await win.isFocused().catch(() => true)) openNewWindow();
+  });
+
   buildSidebar();
   refreshSidebarRunning();
   void refreshWorkspaceInfo();
@@ -2867,6 +2875,12 @@ function buildPaletteItems(): PaletteItem[] {
       run: () => openSearch(),
     },
     {
+      label: "New window",
+      detail: kb().newWindow,
+      icon: "▭",
+      run: () => openNewWindow(),
+    },
+    {
       label: "Focus pane left",
       detail: kb().focusLeft,
       run: () => movePaneFocus("left"),
@@ -2980,6 +2994,11 @@ function setupKeyboard() {
       e.preventDefault();
       addPanelWithMode(DEFAULT_MODE);
     }
+    // Open a new app window (see openNewWindow).
+    if (matchesKeybind(kb.newWindow, e)) {
+      e.preventDefault();
+      openNewWindow();
+    }
     if (matchesKeybind(kb.closePanel, e)) {
       e.preventDefault();
       api.activePanel?.api.close();
@@ -3077,6 +3096,17 @@ function zoomBy(delta: number): void {
   const s = getSettings();
   const next = Math.max(6, Math.min(48, s.fontSize + delta));
   void updateSettings({ fontSize: next });
+}
+
+/**
+ * Open a new app window via the backend, on this window's launch directory
+ * (so the new window restores the same project's workspace and its sessions
+ * land there). The backend creates the window and scopes it to that cwd.
+ */
+function openNewWindow(): void {
+  void invoke("window_new", { cwd: getWorkspaceCwd() }).catch((err) =>
+    console.error("failed to open new window", err)
+  );
 }
 
 init().catch((err) => console.error("failed to initialize terminal layout", err));

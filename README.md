@@ -5,6 +5,14 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 ## Features
 
 - Real shell session (your default `$SHELL`) running in a PTY — one per tab/pane
+- **Multiple windows**: press **`Ctrl+Shift+N`** (also in the **File → New
+  Window** menu and the command palette) to open another app window. Every
+  window is fully independent: it has its own tabs/splits, sessions (its PTYs
+  keep running until the window closes), workspace slots and saved layout.
+  A new window opens on the same launch directory as the one that created it,
+  and each window's workspace document is keyed by its own directory — so you
+  can run several projects side by side. Closing a window ends the sessions
+  it spawned.
 - **Opens in the directory it was launched from** (falls back to `$HOME` if the
   launch dir is gone/unreadable)
 - **Per-directory workspace restore**: the tab/split layout (which sessions are
@@ -191,11 +199,12 @@ backend for each spawned shell).
 |-----------|-----------------|-----------------------------------------------|
 | Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
 | Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
-| JS → Rust | `pty_spawn`     | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"` (default opencode); `cwd` optionally pins the start directory (e.g. a worktree); `autorun` optionally overrides the command when the CLI binary differs from the mode id (e.g. `cursor` → `cursor-agent`) → returns `sessionId` |
+| JS → Rust | `pty_spawn`     | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"` (default opencode); `cwd` optionally pins the start directory (e.g. a worktree; when omitted the session starts in the *invoking window's* launch directory); `autorun` optionally overrides the command when the CLI binary differs from the mode id (e.g. `cursor` → `cursor-agent`) → returns `sessionId` |
 | JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
 | JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
 | JS → Rust | `pty_kill`      | `{ sessionId }`                               |
-| JS → Rust | `workspace_cwd` | () → canonicalized launch directory (`String`) |
+| JS → Rust | `workspace_cwd` | () → canonicalized launch directory of the *invoking window* (its own cwd when it was opened via `window_new`, otherwise the process cwd) — keys the window's workspace persistence |
+| JS → Rust | `window_new`    | `{ cwd? }` — open a new app window scoped to `cwd` (default: process cwd); `cwd` is what the new window's sessions default to and its workspace is keyed by → returns the new window's label | |
 | JS → Rust | `workspace_get` | `{ cwd }` → saved dockview layout (JSON) or `null` |
 | JS → Rust | `workspace_set` | `{ cwd, layout }` — persist the dockview layout |
 | JS → Rust | `projects_list` | () → recent projects: every cwd with a saved workspace as `{ cwd, lastOpened, exists }`, newest first (splash screen) |
