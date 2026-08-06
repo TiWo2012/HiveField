@@ -39,10 +39,8 @@ export interface AppSettings {
   ntfyServer: string;
   /** ntfy topic to publish agent-done notifications to. */
   ntfyTopic: string;
-  /** Optional ntfy username (Basic auth; stored unencrypted). */
-  ntfyUser: string;
-  /** Optional ntfy password (Basic auth; stored unencrypted). */
-  ntfyPass: string;
+  /** Optional ntfy access token (sent as Authorization: Bearer; stored unencrypted). */
+  ntfyToken: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -64,8 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ntfyEnabled: false,
   ntfyServer: "https://ntfy.sh",
   ntfyTopic: "",
-  ntfyUser: "",
-  ntfyPass: "",
+  ntfyToken: "",
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -124,8 +121,7 @@ function normalize(value: unknown): AppSettings {
     ntfyEnabled: pickBool("ntfyEnabled", DEFAULT_SETTINGS.ntfyEnabled),
     ntfyServer: pickStr("ntfyServer", DEFAULT_SETTINGS.ntfyServer),
     ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),
-    ntfyUser: pickStr("ntfyUser", DEFAULT_SETTINGS.ntfyUser),
-    ntfyPass: pickStr("ntfyPass", DEFAULT_SETTINGS.ntfyPass),
+    ntfyToken: pickStr("ntfyToken", DEFAULT_SETTINGS.ntfyToken),
   };
 }
 

@@ -387,16 +387,9 @@ function buildOverlay(): HTMLElement {
   );
   notifySection.appendChild(
     controlRow(
-      "Username",
-      textField(s.ntfyUser, (ntfyUser) => updateSettings({ ntfyUser })),
-      "Optional Basic-auth username (stored unencrypted)"
-    )
-  );
-  notifySection.appendChild(
-    controlRow(
-      "Password",
-      passwordField(s.ntfyPass, (ntfyPass) => updateSettings({ ntfyPass })),
-      "Optional Basic-auth password (stored unencrypted in settings.json)"
+      "Access token",
+      passwordField(s.ntfyToken, (ntfyToken) => updateSettings({ ntfyToken })),
+      "Optional ntfy access token, sent as Authorization: Bearer (stored unencrypted in settings.json)"
     )
   );
   notifySection.appendChild(

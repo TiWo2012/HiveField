@@ -4,16 +4,16 @@
 //!
 //! The frontend decides *when* to notify (an agent session finished) and
 //! invokes [`notify_desktop`] / [`ntfy_send`] with a title and body. The ntfy
-//! endpoint, topic and optional Basic-auth credentials are read from the
-//! settings store (see `settings.rs`); the keys are written by the settings
-//! page:
+//! endpoint, topic and optional access-token auth are read from the settings
+//! store (see `settings.rs`); the keys are written by the settings page:
 //!
 //!   - `ntfyEnabled`: master switch (disabled → `ntfy_send` is a no-op)
 //!   - `ntfyServer`:  base URL, e.g. `https://ntfy.sh` or `https://ntfy.example.com`
 //!   - `ntfyTopic`:   topic to publish to (a phone subscribed to this topic
 //!                    receives the push)
-//!   - `ntfyUser` / `ntfyPass`: optional Basic-auth credentials. Stored in
-//!     plaintext in `settings.json`, exactly as the user configured them.
+//!   - `ntfyToken`:   optional ntfy access token, sent as `Authorization: Bearer`.
+//!                    Stored in plaintext in `settings.json`, exactly as the
+//!                    user configured it.
 
 use tauri_plugin_notification::NotificationExt;
 
@@ -30,8 +30,11 @@ pub fn notify_desktop(app: tauri::AppHandle, title: String, body: String) -> Res
 
 /// Publish a push notification to the configured ntfy server + topic.
 ///
-/// Reads `ntfyEnabled` / `ntfyServer` / `ntfyTopic` / `ntfyUser` / `ntfyPass`
-/// from the settings store. Returns `Ok(())` without sending when ntfy is
+/// Reads `ntfyEnabled` / `ntfyServer` / `ntfyTopic` / `ntfyToken` from the
+/// settings store. The message is sent as the raw request body with the title
+/// and tag carried in `X-Title` / `X-Tags` headers (ntfy's format for
+/// publishing to a topic path; a JSON body to a topic path would be stored
+/// verbatim as the message). Returns `Ok(())` without sending when ntfy is
 /// disabled; errors when the server or topic is missing or the HTTP request
 /// fails (non-2xx status included).
 #[tauri::command]
@@ -61,26 +64,19 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, message: String) -> Resul
     if server.is_empty() || topic.is_empty() {
         return Err("ntfy is enabled but server or topic is not configured".to_string());
     }
-    let user = str_setting("ntfyUser");
-    let pass = str_setting("ntfyPass");
+    let token = str_setting("ntfyToken");
 
     let url = format!("{}/{}", server.trim_end_matches('/'), topic);
-    let payload = serde_json::json!({
-        "title": title,
-        "message": message,
-        "tags": ["computer"],
-    });
 
-    let mut request = ureq::post(&url).set("Content-Type", "application/json");
-    if !user.is_empty() {
-        use base64::Engine as _;
-        let credentials =
-            base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
-        request = request.set("Authorization", &format!("Basic {credentials}"));
+    let mut request = ureq::post(&url)
+        .set("X-Title", &title)
+        .set("X-Tags", "computer");
+    if !token.is_empty() {
+        request = request.set("Authorization", &format!("Bearer {token}"));
     }
 
     let response = request
-        .send_string(&payload.to_string())
+        .send_string(&message)
         .map_err(|e| format!("ntfy request failed: {e}"))?;
     let status = response.status();
     if !(200..300).contains(&status) {
