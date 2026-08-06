@@ -1,5 +1,6 @@
 mod dictation;
 mod fonts;
+mod git;
 mod pty;
 mod settings;
 mod workspace;
@@ -30,15 +31,21 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
 /// `mode` controls what the session auto-runs:
 ///   - `"opencode"` (default): the shell auto-runs `opencode`
 ///   - `"raw"`: plain shell, no auto-run
+///
+/// `cwd` optionally pins the directory the shell starts in (e.g. a git
+/// worktree path). When omitted the shell starts in the directory the app was
+/// launched from.
 #[tauri::command]
 fn pty_spawn(
     app: tauri::AppHandle,
     state: State<'_, PtyState>,
     mode: Option<String>,
+    cwd: Option<String>,
 ) -> Result<u64, String> {
     let session_id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let mode = mode.unwrap_or_else(|| "opencode".to_string());
-    pty::spawn(&app, session_id, &mode).map_err(|e| e.to_string())?;
+    let cwd = cwd.map(std::path::PathBuf::from);
+    pty::spawn(&app, session_id, &mode, cwd).map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 
@@ -107,6 +114,36 @@ fn workspace_set(
     store.set(&cwd, &layout)
 }
 
+/// IPC command: list the git worktrees of the repo containing the launch
+/// directory. `root` is `null` when the launch dir is not inside a git repo,
+/// in which case `worktrees` is empty.
+#[tauri::command]
+fn git_worktrees() -> git::WorktreesInfo {
+    match workspace::resolve_cwd().map(std::path::PathBuf::from) {
+        Ok(dir) => git::list(&dir),
+        Err(_) => git::WorktreesInfo { root: None, worktrees: Vec::new() },
+    }
+}
+
+/// IPC command: create a worktree on a new branch in the repo containing the
+/// launch directory. `path` is optional — when omitted the worktree is created
+/// in a sibling directory named `<repo dir>-<branch>`. Returns the absolute
+/// path of the new worktree.
+#[tauri::command]
+fn git_worktree_create(branch: String, path: Option<String>) -> Result<String, String> {
+    let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
+    git::create(&dir, &branch, path.as_deref()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// IPC command: remove the worktree at `path` from the repo containing the
+/// launch directory. Fails (surfacing git's error) when the worktree has
+/// uncommitted or untracked files.
+#[tauri::command]
+fn git_worktree_remove(path: String) -> Result<(), String> {
+    let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
+    git::remove(&dir, &path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -122,6 +159,9 @@ pub fn run() {
             workspace_cwd,
             workspace_get,
             workspace_set,
+            git_worktrees,
+            git_worktree_create,
+            git_worktree_remove,
             fonts::list_system_fonts,
             dictation::dictation_start,
             dictation::dictation_stop,

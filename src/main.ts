@@ -33,35 +33,80 @@ import "./styles.css";
 /** What a session auto-runs: the opencode agent, or a plain shell. */
 type Mode = "opencode" | "raw";
 
+/** A git worktree of the repo the app was launched from. */
+interface WorktreeInfo {
+  path: string;
+  branch: string | null;
+  bare: boolean;
+  detached: boolean;
+  current: boolean;
+}
+
+/** Response of the `git_worktrees` IPC command. */
+interface WorktreesInfo {
+  root: string | null;
+  worktrees: WorktreeInfo[];
+}
+
+/** A session start request carried across a drag or passed to a panel. */
+interface SessionDrag {
+  mode: Mode;
+  /** Directory the shell should start in (e.g. a worktree path). */
+  cwd?: string;
+}
+
 /** Custom MIME type used to drag sidebar entries into the dockview layout. */
-const DND_MIME = "application/x-hivefield-mode";
+const DND_MIME = "application/x-hivefield-session";
 
 /** Session modes the sidebar can start. */
 const KNOWN_MODES: readonly Mode[] = ["opencode", "raw"];
 
+/** Serialize a session drag payload (JSON, so it carries the optional cwd). */
+function serializeDrag(drag: SessionDrag): string {
+  return JSON.stringify(drag);
+}
+
 /**
- * Read the requested session mode from a drag payload. Tolerates platforms
- * (WebKitGTK / Tauri on Linux) that only preserve the `text/plain` target
- * across a drag instead of our custom MIME type.
+ * Read the requested session (mode + optional cwd) from a drag payload.
+ * Tolerates platforms (WebKitGTK / Tauri on Linux) that only preserve the
+ * `text/plain` target across a drag instead of our custom MIME type, and
+ * falls back to a bare mode string for compatibility.
  */
-function readDragMode(dt: DataTransfer | null | undefined): Mode | undefined {
+function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | undefined {
   if (!dt) return undefined;
-  const payload = dt.getData(DND_MIME) || dt.getData("text/plain");
-  return (KNOWN_MODES as readonly string[]).includes(payload)
-    ? (payload as Mode)
+  const raw = dt.getData(DND_MIME) || dt.getData("text/plain");
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { mode?: unknown; cwd?: unknown };
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.mode === "string" &&
+      (KNOWN_MODES as readonly string[]).includes(parsed.mode)
+    ) {
+      return {
+        mode: parsed.mode as Mode,
+        cwd: typeof parsed.cwd === "string" ? parsed.cwd : undefined,
+      };
+    }
+  } catch {
+    // Not JSON — fall through to the bare-mode legacy payload.
+  }
+  return (KNOWN_MODES as readonly string[]).includes(raw)
+    ? { mode: raw as Mode }
     : undefined;
 }
 
 /**
  * True while one of our sidebar sessions is being dragged over a drop
- * target. Requires a known mode value: dockview's own tab drags set
+ * target. Requires a known session payload: dockview's own tab drags set
  * `text/plain` to `""`, so this never collides with its internal DnD.
  */
 function isHiveFieldDrag(dt: DataTransfer | null | undefined): boolean {
   if (!dt) return false;
   const types = Array.from(dt.types);
   if (types.includes(DND_MIME)) return true;
-  return types.includes("text/plain") && readDragMode(dt) !== undefined;
+  return types.includes("text/plain") && readDragPayload(dt) !== undefined;
 }
 
 /** Small floating label used as the custom drag image for sidebar entries. */
@@ -109,6 +154,8 @@ interface SessionEntry {
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
   panel?: IDockviewPanel;
+  /** Directory the session's shell was started in, when it wasn't the launch dir. */
+  cwd?: string;
 }
 
 /** sessionId -> terminal entry. */
@@ -117,6 +164,11 @@ const sessions = new Map<number, SessionEntry>();
 const panelToSession = new Map<string, number>();
 /** Output buffered before the terminal for a session was registered. */
 const pendingOutputs = new Map<number, string[]>();
+
+/** Last worktree listing from the backend, used to render the sidebar section. */
+let worktreeInfo: WorktreesInfo = { root: null, worktrees: [] };
+/** worktree path -> info, for turning a cwd into a short tab-title label. */
+const worktreeByPath = new Map<string, WorktreeInfo>();
 
 let api: DockviewApi;
 let panelCounter = 0;
@@ -273,6 +325,7 @@ function createTerminalComponent(): IContentRenderer {
     element,
     init({ api: panelApi, containerApi, params }: GroupPanelPartInitParameters) {
       const mode = (params.mode as Mode) ?? "opencode";
+      const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
 
       const created = createTerminal();
       terminal = created.terminal;
@@ -321,15 +374,17 @@ function createTerminalComponent(): IContentRenderer {
         if (isActive) terminal?.focus();
       });
 
-      // Ask the backend for a fresh session in the requested mode, then wire
-      // the terminal to it once we know its id.
-      invoke<number>("pty_spawn", { mode })
+      // Ask the backend for a fresh session in the requested mode (and, for
+      // worktree sessions, a specific start directory), then wire the
+      // terminal to it once we know its id.
+      invoke<number>("pty_spawn", { mode, ...(cwd ? { cwd } : {}) })
         .then((id) => {
           sessionId = id;
           const entry: SessionEntry = {
             terminal: terminal!,
             fitAddon: fitAddon!,
             searchAddon: searchAddon!,
+            cwd,
           };
           sessions.set(id, entry);
           panelToSession.set(panelApi.id, id);
@@ -358,12 +413,22 @@ function createTerminalComponent(): IContentRenderer {
   };
 }
 
-function addPanelWithMode(mode: Mode, position?: AddPanelPositionOptions) {
+/** Short tab-title label for a directory: branch name, else last path segment. */
+function shortLabel(cwd: string): string {
+  const wt = worktreeByPath.get(cwd);
+  if (wt?.branch) return wt.branch;
+  const last = cwd.split(/[\\/]/).filter(Boolean).pop();
+  return last || cwd;
+}
+
+function addPanelWithMode(mode: Mode, position?: AddPanelPositionOptions, cwd?: string) {
+  const base = mode === "opencode" ? "opencode" : "shell";
+  const title = cwd ? `${base}@${shortLabel(cwd)}` : base;
   const panel = api.addPanel({
     id: nextPanelId(),
     component: "terminal",
-    title: mode === "opencode" ? "opencode" : "shell",
-    params: { mode },
+    title,
+    params: { mode, cwd },
     ...(position ? { position } : {}),
   });
   panel.api.setActive();
@@ -393,7 +458,7 @@ function setupDropFallback() {
   // dockview's outer-layout edge overlay activates within this many px.
   const OUTER_EDGE_PX = 10;
 
-  const complete = (clientX: number, clientY: number, mode: Mode, before: number) => {
+  const complete = (clientX: number, clientY: number, drag: SessionDrag, before: number) => {
     // dockview handles drops synchronously inside the same event dispatch, so
     // when a session already opened by the time this runs, it handled the drop.
     setTimeout(() => {
@@ -439,7 +504,7 @@ function setupDropFallback() {
         if (direction) position = { direction };
       }
 
-      if (position) addPanelWithMode(mode, position);
+      if (position) addPanelWithMode(drag.mode, position, drag.cwd);
     }, 0);
   };
 
@@ -448,10 +513,10 @@ function setupDropFallback() {
   document.addEventListener(
     "drop",
     (e) => {
-      const mode = readDragMode(e.dataTransfer);
-      if (!mode) return;
+      const drag = readDragPayload(e.dataTransfer);
+      if (!drag) return;
       e.preventDefault(); // don't let the webview insert/paste the payload
-      complete(e.clientX, e.clientY, mode, api.panels.length);
+      complete(e.clientX, e.clientY, drag, api.panels.length);
     },
     true
   );
@@ -485,10 +550,12 @@ function buildSidebar() {
     item.addEventListener("dragstart", (e) => {
       const dt = e.dataTransfer;
       if (!dt) return;
-      // Advertise the mode under our own MIME type *and* as plain text: some
-      // WebKitGTK builds only surface the text/plain target across a drag.
-      dt.setData(DND_MIME, source.mode);
-      dt.setData("text/plain", source.mode);
+      // Advertise the session under our own MIME type *and* as plain text:
+      // some WebKitGTK builds only surface the text/plain target across a
+      // drag. JSON carries the mode plus an optional worktree cwd.
+      const payload = serializeDrag({ mode: source.mode });
+      dt.setData(DND_MIME, payload);
+      dt.setData("text/plain", payload);
       dt.effectAllowed = "copy";
 
       // Custom ghost so the drag reads as a session, not a text blob.
@@ -501,6 +568,12 @@ function buildSidebar() {
     sidebar.appendChild(item);
   }
 
+  // Worktrees section — populated asynchronously by refreshWorktrees() so a
+  // non-git launch directory simply renders nothing here.
+  const worktreeSection = document.createElement("div");
+  worktreeSection.id = "worktrees-section";
+  sidebar.appendChild(worktreeSection);
+
   const settingsBtn = document.createElement("button");
   settingsBtn.className = "sidebar-settings";
   settingsBtn.type = "button";
@@ -508,6 +581,224 @@ function buildSidebar() {
   settingsBtn.textContent = "⚙";
   settingsBtn.addEventListener("click", toggleSettings);
   sidebar.appendChild(settingsBtn);
+}
+
+/* ---------------------------------------------------------------------------
+ * Worktrees
+ * ------------------------------------------------------------------------- */
+
+/** Fetch the worktree listing from the backend and re-render the sidebar. */
+async function refreshWorktrees(): Promise<void> {
+  try {
+    const info = await invoke<WorktreesInfo>("git_worktrees");
+    worktreeInfo = info;
+  } catch (err) {
+    console.error("failed to list git worktrees", err);
+    worktreeInfo = { root: null, worktrees: [] };
+  }
+  worktreeByPath.clear();
+  for (const wt of worktreeInfo.worktrees) worktreeByPath.set(wt.path, wt);
+  renderWorktreeSection();
+}
+
+/** Render the "Worktrees" sidebar section (no-op outside a git repository). */
+function renderWorktreeSection(): void {
+  const container = document.getElementById("worktrees-section");
+  if (!container) return;
+  container.replaceChildren();
+
+  const wts = worktreeInfo.worktrees;
+  if (wts.length === 0) return;
+
+  const heading = document.createElement("div");
+  heading.className = "worktree-heading";
+  const headingTitle = document.createElement("span");
+  headingTitle.className = "sidebar-title";
+  headingTitle.textContent = "Worktrees";
+  const addBtn = document.createElement("button");
+  addBtn.className = "worktree-add";
+  addBtn.type = "button";
+  addBtn.textContent = "+";
+  addBtn.title = "Create a worktree on a new branch";
+  addBtn.addEventListener("click", openCreateWorktreeModal);
+  heading.append(headingTitle, addBtn);
+  container.appendChild(heading);
+
+  for (const wt of wts) {
+    const label =
+      wt.branch ?? (wt.detached ? "(detached)" : wt.bare ? "(bare)" : "(no branch)");
+    const item = document.createElement("div");
+    item.className = "drag-item worktree-item" + (wt.current ? " current" : "");
+    item.dataset.mode = "opencode";
+    item.dataset.cwd = wt.path;
+    item.draggable = true;
+    item.title = [
+      wt.current ? "Current worktree" : "Worktree",
+      `${label} — ${wt.path}`,
+      "Click: opencode · Shift+click: raw shell · Drag to split",
+    ].join("\n");
+
+    const icon = document.createElement("span");
+    icon.className = "drag-icon";
+    icon.textContent = "⤴";
+    item.appendChild(icon);
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "worktree-label";
+    const branchEl = document.createElement("span");
+    branchEl.className = "worktree-branch";
+    branchEl.textContent = label;
+    const pathEl = document.createElement("span");
+    pathEl.className = "worktree-path";
+    pathEl.textContent = wt.path;
+    labelEl.append(branchEl, pathEl);
+    item.appendChild(labelEl);
+
+    item.addEventListener("dragstart", (e) => {
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const payload = serializeDrag({ mode: "opencode", cwd: wt.path });
+      dt.setData(DND_MIME, payload);
+      dt.setData("text/plain", payload);
+      dt.effectAllowed = "copy";
+      const ghost = buildDragGhost({ icon: "⤴", label });
+      document.body.appendChild(ghost);
+      dt.setDragImage(ghost, 8, 8);
+      requestAnimationFrame(() => ghost.remove());
+    });
+
+    item.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".worktree-rm")) return;
+      // Click opens an agent right in this worktree; Shift+click a raw shell.
+      addPanelWithMode(e.shiftKey ? "raw" : "opencode", undefined, wt.path);
+    });
+
+    const rmBtn = document.createElement("button");
+    rmBtn.className = "worktree-rm";
+    rmBtn.type = "button";
+    rmBtn.textContent = "✕";
+    rmBtn.title = "Remove this worktree (fails while it has changes)";
+    rmBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void removeWorktree(wt.path);
+    });
+    item.appendChild(rmBtn);
+
+    container.appendChild(item);
+  }
+}
+
+/** Small modal asking for a branch name, then creates the worktree. */
+function openCreateWorktreeModal(): void {
+  document.querySelector(".settings-backdrop")?.remove();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "settings-backdrop";
+
+  const modal = document.createElement("div");
+  modal.className = "settings-modal worktree-modal";
+
+  const header = document.createElement("div");
+  header.className = "settings-header";
+  const title = document.createElement("h1");
+  title.className = "settings-title";
+  title.textContent = "New worktree";
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "settings-close";
+  closeBtn.type = "button";
+  closeBtn.textContent = "×";
+  closeBtn.addEventListener("click", () => backdrop.remove());
+  header.append(title, closeBtn);
+  modal.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "settings-body";
+  const label = document.createElement("label");
+  label.className = "settings-label";
+  label.textContent = "Branch name";
+  body.appendChild(label);
+  const input = document.createElement("input");
+  input.className = "settings-text";
+  input.placeholder = "feature/xyz";
+  input.autocomplete = "off";
+  body.appendChild(input);
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = `Creates a sibling directory next to ${worktreeInfo.root ?? "this repo"} named <repo>-<branch>.`;
+  body.appendChild(hint);
+  modal.appendChild(body);
+
+  const footer = document.createElement("div");
+  footer.className = "settings-footer";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "settings-reset";
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => backdrop.remove());
+  const createBtn = document.createElement("button");
+  createBtn.className = "settings-done";
+  createBtn.type = "button";
+  createBtn.textContent = "Create";
+  createBtn.addEventListener("click", async () => {
+    const branch = input.value.trim();
+    if (!branch) return;
+    createBtn.disabled = true;
+    try {
+      const path = await invoke<string>("git_worktree_create", { branch });
+      backdrop.remove();
+      await refreshWorktrees();
+      // Drop the user straight into the new checkout.
+      addPanelWithMode("opencode", undefined, path);
+    } catch (err) {
+      console.error("failed to create worktree", err);
+      showToast(`Could not create worktree: ${err}`);
+      createBtn.disabled = false;
+    }
+  });
+  footer.append(cancelBtn, createBtn);
+  modal.appendChild(footer);
+
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  input.focus();
+
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") createBtn.click();
+    if (e.key === "Escape") backdrop.remove();
+  });
+}
+
+/** Remove a worktree and close any sessions that were running inside it. */
+async function removeWorktree(path: string): Promise<void> {
+  try {
+    await invoke("git_worktree_remove", { path });
+  } catch (err) {
+    console.error("failed to remove worktree", err);
+    showToast(`Could not remove worktree: ${err}`);
+    return;
+  }
+  // Sessions started inside the removed worktree can no longer run — close
+  // their panels (which kills the shell). Fall back to pty_kill when the panel
+  // reference isn't wired up yet.
+  for (const [id, entry] of sessions) {
+    if (entry.cwd === path) {
+      if (entry.panel) entry.panel.api.close();
+      else invoke("pty_kill", { sessionId: id }).catch(() => {});
+    }
+  }
+  await refreshWorktrees();
+}
+
+/** Transient status toast for operation failures. */
+function showToast(message: string): void {
+  const toast = document.createElement("div");
+  toast.className = "hivefield-toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3200);
 }
 
 async function registerGlobalListeners() {
@@ -552,6 +843,7 @@ async function init() {
   await registerGlobalListeners();
 
   buildSidebar();
+  void refreshWorktrees();
 
   api = createDockview(document.getElementById("terminal")!, {
     createComponent: createTerminalComponent,
@@ -578,8 +870,8 @@ async function init() {
   // hit a thin edge or drag a tab out afterwards. Ctrl+Shift+T is still the
   // way to open a session as a tab.
   api.onDidDrop((event) => {
-    const mode = readDragMode((event.nativeEvent as DragEvent).dataTransfer);
-    if (!mode) return;
+    const drag = readDragPayload((event.nativeEvent as DragEvent).dataTransfer);
+    if (!drag) return;
 
     const direction = positionToDirection(event.position);
     const splitDirection = direction === "within" ? "right" : direction;
@@ -592,7 +884,7 @@ async function init() {
       position = { direction: splitDirection };
     }
 
-    addPanelWithMode(mode, position);
+    addPanelWithMode(drag.mode, position, drag.cwd);
   });
 
   // WebKitGTK can drop the final `drop` near pane top/bottom edges; make sure a

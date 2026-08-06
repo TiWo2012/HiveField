@@ -109,6 +109,111 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Worktrees sidebar section
+ * ------------------------------------------------------------------------- */
+
+.worktree-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.worktree-heading .sidebar-title {
+  margin-bottom: 0;
+}
+
+.worktree-add {
+  border: 1px solid #313244;
+  background: #1e1e2e;
+  color: #a6e3a1;
+  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.worktree-add:hover {
+  background: #313244;
+  border-color: #45475a;
+}
+
+.worktree-item .worktree-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.worktree-branch {
+  color: #a6e3a1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.worktree-path {
+  color: #6c7086;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.worktree-item.current {
+  border-color: #89b4fa;
+}
+.worktree-item.current .worktree-branch {
+  color: #89b4fa;
+}
+
+.worktree-rm {
+  border: none;
+  background: none;
+  color: #6c7086;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.worktree-rm:hover {
+  color: #f38ba8;
+  background: #313244;
+}
+
+/* ---------------------------------------------------------------------------
+ * Toast
+ * ------------------------------------------------------------------------- */
+
+.hivefield-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 3000;
+  background: #313244;
+  border: 1px solid #45475a;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  user-select: none;
+}
+
+.worktree-modal .settings-label {
+  display: block;
+  margin: 4px 0 6px;
+}
+
+/* ---------------------------------------------------------------------------
  * Terminal panels
  * ------------------------------------------------------------------------- */
 

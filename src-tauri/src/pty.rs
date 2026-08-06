@@ -35,6 +35,7 @@
 
 use crate::PtyState;
 use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -145,10 +146,17 @@ impl Utf8StreamDecoder {
 ///
 /// `mode` is `"opencode"` to auto-run `opencode` in the session, or `"raw"`
 /// for a plain shell.
+///
+/// `start_dir` is the directory the shell should launch in. When `None`, the
+/// directory the app was launched from is used (falling back to `$HOME`); when
+/// `Some`, that directory is used when it is readable, otherwise the same
+/// fallback chain applies. This lets a session open inside a specific git
+/// worktree (or any other directory) instead of always sharing the launch dir.
 pub fn spawn<R: Runtime>(
     app: &AppHandle<R>,
     session_id: u64,
     mode: &str,
+    start_dir: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
@@ -177,20 +185,10 @@ pub fn spawn<R: Runtime>(
         }
     }
 
-    // Start the shell in the directory the app was launched from (the process
-    // cwd), falling back to the user's home directory if that is gone or
-    // unreadable.
-    let start_dir = std::env::current_dir()
-        .ok()
-        .filter(|d| std::fs::read_dir(d).is_ok())
-        .or_else(|| {
-            let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-            std::env::var(home_var)
-                .ok()
-                .map(std::path::PathBuf::from)
-                .filter(|d| std::fs::read_dir(d).is_ok())
-        });
-    if let Some(dir) = start_dir {
+    // Start the shell in the requested directory (e.g. a git worktree), or in
+    // the directory the app was launched from, falling back to the user's home
+    // directory if the candidate is gone or unreadable.
+    if let Some(dir) = resolve_start_dir(start_dir.as_deref()) {
         cmd.cwd(dir);
     }
 
@@ -290,6 +288,33 @@ pub fn spawn<R: Runtime>(
     }
 
     Ok(())
+}
+
+/// Resolve the directory a session's shell should start in.
+///
+/// Preference order:
+/// 1. The explicitly requested `preferred` directory, when canonicalizable and
+///    readable (e.g. a git worktree path from the UI).
+/// 2. The directory the app was launched from (the process cwd).
+/// 3. The user's home directory.
+///
+/// Returns `None` only when every candidate is missing or unreadable.
+fn resolve_start_dir(preferred: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = preferred {
+        if let Some(canonical) = dir.canonicalize().ok().filter(|d| std::fs::read_dir(d).is_ok()) {
+            return Some(canonical);
+        }
+    }
+    std::env::current_dir()
+        .ok()
+        .filter(|d| std::fs::read_dir(d).is_ok())
+        .or_else(|| {
+            let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+            std::env::var(home_var)
+                .ok()
+                .map(PathBuf::from)
+                .filter(|d| std::fs::read_dir(d).is_ok())
+        })
 }
 
 /// Send input from the frontend into the session's PTY.
