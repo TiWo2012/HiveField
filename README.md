@@ -14,27 +14,14 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - **Session sidebar**: drag an **opencode** or **raw term** entry from the left
   sidebar into the terminal area — it opens there as a **split** (drop near an
   edge to choose the split direction, drop in the middle to split to the
-  right), with a fresh shell in the launch dir. `opencode` sessions auto-run
-  the agent; `raw` sessions are a plain shell. Use `Ctrl+Shift+T` to open a
-  session as a tab instead.
-- **Git worktree support**: when the launch directory is inside a git repo, a
-  **Worktrees** section appears in the sidebar listing every worktree (branch +
-  path, current one highlighted). Click a worktree to open an `opencode`
-  session right inside it, `Shift+click` for a raw shell, or drag it into the
-  terminal to split. This is the way to run parallel agents in isolated
-  checkouts instead of sharing the launch dir. The `+` button creates a new
-  worktree on a branch of your choice (sibling dir `<repo>-<branch>`), and ✕
-  removes one (killing any sessions that were running inside it). Per-worktree
-  layouts are restored independently because workspace state is keyed by
-  directory.
-- **Worktree sessions**: the sidebar's **worktree session** entry asks for a
-  name, then auto-creates a throwaway worktree and opens the agent in it —
-  no manual `git worktree add` needed. The name is sanitized into a valid
-  branch (`My Feature!` → `my-feature`), given a timestamp suffix so repeats
-  never collide, and checked out under the **Worktree base dir** setting
-  (default `/tmp`) as `<repo>-<sanitized>-<ts>`. The tab is titled with the
-  name you typed. To throw one away, click ✕ next to it in the Worktrees
-  section.
+  right). `opencode` sessions auto-run the agent; `raw` sessions are a plain
+  shell. Use `Ctrl+Shift+T` to open a session as a tab instead.
+- **Isolated sessions**: every `opencode` session automatically gets its own
+  throwaway git worktree (branch + directory minted from a codename, checked
+  out under the **Worktree base dir** setting, default `/tmp`), so parallel
+  agents never share a checkout. Closing the tab force-deletes the worktree.
+  When the launch directory isn't a git repo, opencode falls back to the
+  launch dir. Raw terms always run in the launch dir.
 - **Tabs & split panes** via [dockview](https://dockview.dev):
   - `Ctrl+Shift+T` spawns a new terminal tab
   - Drag a tab **out of the tab bar** to split it into its own pane group
@@ -44,11 +31,29 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
     the key passes through to the shell (so `Ctrl+L` still clears the screen)
   - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
   - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
+  - **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is
+    never overwritten by program/OSC titles, and clearing it reverts to
+    automatic titles
 - **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
   scrollback. Matches highlight live as you type; `Enter` / `Shift+Enter` jump
   to the next / previous match, `Alt+C` toggles case sensitivity, and `Esc`
   closes the bar (focus returns to the terminal). The match counter shows
   `current/total` and turns red when there are no matches.
+- **Hyperlinks**: URLs in output are underlined and **Ctrl+click** (or
+  Cmd+click) opens them in your system browser (`http`, `https`, `mailto`).
+  Hover shows a hint tooltip.
+- **Tab activity / completion indicator**: a background tab whose session
+  prints output gets a `●` prefix, flipping to `✓` once the output goes quiet
+  (or immediately when shell integration emits an OSC 133 `D` finish marker).
+  Switching to the tab clears the indicator.
+- **Font-size zoom**: `Ctrl+=` / `Ctrl+-` adjust the font size of every
+  terminal live (persisted in settings); `Ctrl+0` resets it.
+- **Themes**: a color theme setting drives both the terminal palette and the
+  window chrome (sidebar, tabs, modals, search bar). Includes Catppuccin
+  Mocha/Latte, Nord, Dracula, Monokai, One Dark, Gruvbox, Solarized Light,
+  GitHub Dark/Light, and Abyss. A **background opacity** setting below 1 makes
+  the terminal translucent with a backdrop blur (requires a compositor that
+  supports transparent windows).
 - Full **Unicode / UTF-8** support (incremental UTF-8 decoding on the Rust side
   so multi-byte characters survive split reads; xterm.js Unicode 11 on the UI)
 - Copy/paste, cursor blink, scrollback, window resize → PTY resize
@@ -59,8 +64,7 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - **OSC-based tab titles**: when a program sets the terminal title via an OSC
   sequence (`ESC]0;…`, `ESC]2;…`), the pane's tab reflects it. OSC titles win
   over the input-line-derived titles, which remain as a fallback for sessions
-  that never emit one.
-- Catppuccin Mocha theme end-to-end
+  that never emit one; a manually renamed tab wins over both.
 - Cross-platform (Linux/macOS/Windows) via `portable-pty`
 
 ## Architecture
@@ -108,10 +112,11 @@ backend for each spawned shell).
 | JS → Rust | `workspace_cwd` | () → canonicalized launch directory (`String`) |
 | JS → Rust | `workspace_get` | `{ cwd }` → saved dockview layout (JSON) or `null` |
 | JS → Rust | `workspace_set` | `{ cwd, layout }` — persist the dockview layout |
-| JS → Rust | `git_worktrees` | () → `{ root, worktrees }` — repo root (or `null`) and the parsed `git worktree list` (`path`, `branch`, `bare`, `detached`, `current`) |
-| JS → Rust | `git_worktree_create` | `{ branch, path? }` → absolute path of the new worktree (`path` defaults to a sibling `<repo>-<branch>` dir) |
-| JS → Rust | `git_worktree_remove` | `{ path }` — remove a worktree (errors surface git's message if it has changes) |
-| JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`) |
+| JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`). Called for every new opencode session |
+| JS → Rust | `git_worktree_remove` | `{ path, force? }` — remove a worktree; `force` runs `--force` (used when closing an auto-created session worktree) |
+| JS → Rust | `git_worktrees` / `git_worktree_create` | legacy listing / named-branch creation commands (no longer used by the UI, kept for compatibility) |
+| JS → Rust | `dir_exists`   | `{ path }` → whether the path exists (lets restored sessions detect stale worktree paths) |
+| JS → Rust | `open_url`     | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
 
 The workspace persistence commands are keyed by the canonicalized launch
 directory (`cwd`), not by a session.

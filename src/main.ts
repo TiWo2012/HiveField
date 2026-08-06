@@ -7,10 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   createDockview,
-  themeCatppuccinMocha,
   positionToDirection,
   type AddPanelPositionOptions,
-  type CreateComponentOptions,
   type DockviewApi,
   type GroupNavigationDirection,
   type GroupPanelPartInitParameters,
@@ -18,10 +16,13 @@ import {
   type IDockviewPanel,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
+import { getTheme } from "./themes";
 import {
+  DEFAULT_SETTINGS,
   getSettings,
   loadSettings,
   subscribe,
+  updateSettings,
   type AppSettings,
 } from "./settings";
 import { toggleSettings } from "./settings-ui";
@@ -32,21 +33,6 @@ import "./styles.css";
 
 /** What a session auto-runs: the opencode agent, or a plain shell. */
 type Mode = "opencode" | "raw";
-
-/** A git worktree of the repo the app was launched from. */
-interface WorktreeInfo {
-  path: string;
-  branch: string | null;
-  bare: boolean;
-  detached: boolean;
-  current: boolean;
-}
-
-/** Response of the `git_worktrees` IPC command. */
-interface WorktreesInfo {
-  root: string | null;
-  worktrees: WorktreeInfo[];
-}
 
 /** Result of the `git_worktree_auto_create` IPC command. */
 interface AutoWorktree {
@@ -128,32 +114,74 @@ function buildDragGhost(source: { icon: string; label: string }): HTMLElement {
 }
 
 const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
-  theme: {
-    background: "#1e1e2e",
-    foreground: "#cdd6f4",
-    cursor: "#f5e0dc",
-    black: "#45475a",
-    red: "#f38ba8",
-    green: "#a6e3a1",
-    yellow: "#f9e2af",
-    blue: "#89b4fa",
-    magenta: "#cba6f7",
-    cyan: "#94e2d5",
-    white: "#bac2de",
-    brightBlack: "#585b70",
-    brightRed: "#f38ba8",
-    brightGreen: "#a6e3a1",
-    brightYellow: "#f9e2af",
-    brightBlue: "#89b4fa",
-    brightMagenta: "#cba6f7",
-    brightCyan: "#94e2d5",
-    brightWhite: "#a6adc8",
-  },
-  // Font options are applied per-terminal from settings via applyTerminalSettings.
+  // Colors come from the active theme via applyTerminalSettings().
   cursorBlink: true,
   scrollback: 10000,
   allowProposedApi: true,
 };
+
+/** Tab-title prefixes used to signal background activity / command completion. */
+const INDICATOR_ACTIVITY = "● ";
+const INDICATOR_DONE = "✓ ";
+
+/** Idle window (ms) after which a background tab's activity becomes "done". */
+const ACTIVITY_IDLE_MS = 2000;
+
+/** OSC 133 shell-integration marker regex (ESC ] 133 ; A/B/C/D ; … BEL|ST). */
+const OSC133_SRC = "\\x1b\\]133;([ABCD])(?:[^\\x07\\x1b]*)(?:\\x07|\\x1b\\\\)";
+const OSC133_RE = new RegExp(OSC133_SRC, "g");
+
+/**
+ * Split a terminal output chunk into shell-integration markers (OSC 133) and
+ * the remaining visible text. Only complete markers (with a BEL/ST terminator)
+ * are stripped; a marker split across reads is left in the text so xterm can
+ * buffer it like any other OSC instead of leaking its payload bytes.
+ */
+function analyzeOutput(data: string): { markers: string[]; text: string } {
+  const markers: string[] = [];
+  let text = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = OSC133_RE.exec(data)) !== null) {
+    text += data.slice(last, m.index);
+    markers.push(m[1]);
+    last = m.index + m[0].length;
+  }
+  text += data.slice(last);
+  return { markers, text };
+}
+
+/** Convert a #rrggbb hex color to an rgba() string with the given alpha. */
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+/** Whether the given panel id is the currently focused/active panel. */
+function isPanelActive(panelId: string): boolean {
+  return api?.activePanel?.id === panelId;
+}
+
+/** Random-ish codename used to label a fresh opencode session's worktree. */
+const ADJECTIVES = [
+  "swift", "bright", "calm", "crisp", "lucky", "mellow", "quick", "silent",
+  "summer", "autumn", "bold", "gentle", "golden", "quiet", "rustic", "velvet",
+  "amber", "azure", "cobalt", "ember",
+] as const;
+const NOUNS = [
+  "otter", "falcon", "bison", "heron", "lynx", "newt", "oriole", "puma",
+  "quail", "rook", "seal", "tiger", "wren", "badger", "crane", "dove", "elk",
+  "fox", "gecko", "hawk", "ibis", "jaguar", "koala", "llama",
+] as const;
+
+/** A short kebab-case name for a new session's worktree (e.g. "swift-otter"). */
+function generateSessionName(): string {
+  const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${a}-${n}`;
+}
 
 interface SessionEntry {
   terminal: Terminal;
@@ -162,6 +190,19 @@ interface SessionEntry {
   panel?: IDockviewPanel;
   /** Directory the session's shell was started in, when it wasn't the launch dir. */
   cwd?: string;
+  /** Throwaway worktree this session auto-created; force-deleted on close. */
+  worktreePath?: string;
+}
+
+/**
+ * Per-panel tab-title state: the base title (OSC / input-line / user-renamed)
+ * plus an activity/completion indicator prefix, and whether the user pinned a
+ * custom name that overrides automatic titles.
+ */
+interface PanelStatus {
+  baseTitle: string;
+  indicator: string;
+  userTitle: boolean;
 }
 
 /** sessionId -> terminal entry. */
@@ -170,11 +211,10 @@ const sessions = new Map<number, SessionEntry>();
 const panelToSession = new Map<string, number>();
 /** Output buffered before the terminal for a session was registered. */
 const pendingOutputs = new Map<number, string[]>();
-
-/** Last worktree listing from the backend, used to render the sidebar section. */
-let worktreeInfo: WorktreesInfo = { root: null, worktrees: [] };
-/** worktree path -> info, for turning a cwd into a short tab-title label. */
-const worktreeByPath = new Map<string, WorktreeInfo>();
+/** panel id -> title/indicator state. */
+const panelStatus = new Map<string, PanelStatus>();
+/** panel id -> idle timer id (activity → "done" after inactivity). */
+const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 let api: DockviewApi;
 let panelCounter = 0;
@@ -185,6 +225,13 @@ function nextPanelId(): string {
 
 /** Push the current settings into a terminal's xterm options and Unicode version. */
 function applyTerminalSettings(terminal: Terminal, settings: AppSettings): void {
+  const theme = getTheme(settings.theme);
+  const themeCopy = { ...theme.terminal };
+  // When transparency is enabled, the terminal background carries the alpha.
+  if (settings.backgroundOpacity < 1 && themeCopy.background) {
+    themeCopy.background = hexToRgba(themeCopy.background, settings.backgroundOpacity);
+  }
+  terminal.options.theme = themeCopy;
   terminal.options.fontFamily = settings.fontFamily;
   terminal.options.fontSize = settings.fontSize;
   terminal.options.lineHeight = settings.lineHeight;
@@ -198,6 +245,43 @@ function applyTerminalSettings(terminal: Terminal, settings: AppSettings): void 
 }
 
 /**
+ * Push the active theme into the app chrome: the `--hf-*` CSS variables the
+ * sidebar/modals/search bar read, the terminal background (with optional
+ * alpha), the transparency flag, and the dockview theme.
+ */
+function applyUiTheme(settings: AppSettings): void {
+  const theme = getTheme(settings.theme);
+  const ui = theme.ui;
+  const root = document.documentElement;
+  root.style.setProperty("--hf-base", ui.base);
+  root.style.setProperty("--hf-mantle", ui.mantle);
+  root.style.setProperty("--hf-crust", ui.crust);
+  root.style.setProperty("--hf-surface0", ui.surface0);
+  root.style.setProperty("--hf-surface1", ui.surface1);
+  root.style.setProperty("--hf-surface2", ui.surface2);
+  root.style.setProperty("--hf-text", ui.text);
+  root.style.setProperty("--hf-subtext1", ui.subtext1);
+  root.style.setProperty("--hf-subtext0", ui.subtext0);
+  root.style.setProperty("--hf-overlay0", ui.overlay0);
+  root.style.setProperty("--hf-accent", ui.accent);
+  root.style.setProperty("--hf-accent-fg", ui.accentFg);
+  root.style.setProperty("--hf-green", ui.green);
+  root.style.setProperty("--hf-red", ui.red);
+  root.style.setProperty("--hf-yellow", ui.yellow);
+  root.style.setProperty("--hf-teal", ui.teal);
+  root.style.setProperty("--hf-backdrop", hexToRgba(ui.crust, 0.72));
+  const alpha = settings.backgroundOpacity;
+  const termBg = alpha >= 1 ? (theme.terminal.background ?? ui.base) : hexToRgba(theme.terminal.background ?? ui.base, alpha);
+  root.style.setProperty("--hf-terminal-bg", termBg);
+
+  root.dataset.theme = theme.id;
+  if (alpha < 1) root.dataset.transparent = "true";
+  else delete root.dataset.transparent;
+
+  if (api) api.updateOptions({ theme: theme.dockview });
+}
+
+/**
  * Toggle font ligatures. xterm's DOM renderer merges consecutive cells into
  * spans, so the browser applies ligatures when the `calt` OpenType feature is
  * enabled — this is what programming fonts (Fira Code, Maple Mono, JetBrains
@@ -208,6 +292,38 @@ function applyFontLigatures(terminal: Terminal, enabled: boolean): void {
   terminal.element.style.fontFeatureSettings = enabled ? '"calt" 1, "liga" 1, "clig" 1' : "normal";
 }
 
+/**
+ * Ctrl+click (or Cmd+click) opens URL links in the system browser. Hovering
+ * shows a small hint tooltip. Links render underlined by xterm's built-in
+ * URL detection.
+ */
+function setupLinks(terminal: Terminal): void {
+  let tooltip: HTMLElement | null = null;
+  terminal.options.linkHandler = {
+    activate: (event, text) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      invoke("open_url", { url: text }).catch((err) =>
+        console.error("open_url failed", err)
+      );
+    },
+    hover: (_event, text) => {
+      if (!terminal.element) return;
+      tooltip?.remove();
+      tooltip = document.createElement("div");
+      tooltip.className = "xterm-hover";
+      tooltip.textContent = text.startsWith("mailto:")
+        ? "Ctrl+click to compose"
+        : "Ctrl+click to open";
+      terminal.element.appendChild(tooltip);
+    },
+    leave: () => {
+      tooltip?.remove();
+      tooltip = null;
+    },
+  };
+}
+
 function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon: SearchAddon } {
   const terminal = new Terminal(TERM_OPTIONS);
   terminal.loadAddon(new Unicode11Addon());
@@ -215,6 +331,7 @@ function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon
   terminal.loadAddon(fitAddon);
   const searchAddon = new SearchAddon({ highlightLimit: 2000 });
   terminal.loadAddon(searchAddon);
+  setupLinks(terminal);
   applyTerminalSettings(terminal, getSettings());
   return { terminal, fitAddon, searchAddon };
 }
@@ -225,6 +342,116 @@ function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
     invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
   } catch {
     // ignore until the backend is ready
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Panel tab titles: automatic (OSC / input line), user-renamed, and the
+ * activity / completion indicator prefixes shown on background tabs.
+ * ------------------------------------------------------------------------- */
+
+function ensurePanelStatus(panelId: string, initialTitle: string, userTitle?: string): PanelStatus {
+  let st = panelStatus.get(panelId);
+  if (st) return st;
+  // A restored title may carry a stale indicator prefix — strip it.
+  const clean = initialTitle.replace(/^[●✓] /, "");
+  st = {
+    baseTitle: userTitle ?? clean,
+    indicator: "",
+    userTitle: typeof userTitle === "string" && userTitle.length > 0,
+  };
+  panelStatus.set(panelId, st);
+  return st;
+}
+
+function renderTitle(panelId: string): void {
+  const st = panelStatus.get(panelId);
+  const panel = api?.getPanel(panelId);
+  if (st && panel) panel.api.setTitle(st.indicator + st.baseTitle);
+}
+
+/** Update the base (indicator-free) title, keeping the indicator prefix. */
+function setBaseTitle(panelId: string, title: string): void {
+  const st = panelStatus.get(panelId);
+  if (!st) return;
+  st.baseTitle = title;
+  renderTitle(panelId);
+}
+
+function setIndicator(panelId: string, indicator: string): void {
+  const st = panelStatus.get(panelId);
+  if (!st) return;
+  st.indicator = indicator;
+  renderTitle(panelId);
+}
+
+function clearIndicator(panelId: string): void {
+  clearIdle(panelId);
+  setIndicator(panelId, "");
+}
+
+/** After activity, mark the tab "done" once it stays quiet for a while. */
+function armIdle(panelId: string): void {
+  clearIdle(panelId);
+  idleTimers.set(
+    panelId,
+    setTimeout(() => {
+      idleTimers.delete(panelId);
+      setIndicator(panelId, INDICATOR_DONE);
+    }, ACTIVITY_IDLE_MS)
+  );
+}
+
+function clearIdle(panelId: string): void {
+  const t = idleTimers.get(panelId);
+  if (t !== undefined) {
+    clearTimeout(t);
+    idleTimers.delete(panelId);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Auto-worktrees: every opencode session gets its own throwaway worktree so
+ * parallel agents never share a checkout. Raw sessions and non-git launch
+ * directories keep the launch-dir behavior.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Resolve the directory an opencode session should spawn in. When no cwd is
+ * given (a fresh session), a throwaway worktree is auto-created under the
+ * configured base dir. Sessions restored from a saved layout with a still-
+ * existing cwd reuse it (and are not deleted on close); a stale cwd falls
+ * through to a fresh worktree. Falls back to no cwd (launch dir) when the
+ * launch directory is not a git repository.
+ */
+async function resolveWorktree(
+  mode: Mode,
+  cwd: string | undefined,
+  name: string | undefined
+): Promise<{ cwd?: string; name?: string; created: boolean }> {
+  if (mode !== "opencode") return { cwd, created: false };
+  if (cwd) {
+    // Restored layout: reuse the saved worktree when it still exists.
+    try {
+      if (await invoke<boolean>("dir_exists", { path: cwd })) {
+        return { cwd, created: false };
+      }
+    } catch {
+      return { cwd, created: false };
+    }
+    // Fall through: the saved worktree is gone, mint a fresh one.
+  }
+  const baseDir = getSettings().worktreeBaseDir.trim() || "/tmp";
+  const sessionName = (name && name.trim()) || generateSessionName();
+  try {
+    const created = await invoke<AutoWorktree>("git_worktree_auto_create", {
+      name: sessionName,
+      baseDir,
+    });
+    return { cwd: created.path, name: sessionName, created: true };
+  } catch {
+    // Not inside a git repo (or git unavailable): run in the launch dir.
+    return { cwd: undefined, name: undefined, created: false };
   }
 }
 
@@ -332,6 +559,13 @@ function createTerminalComponent(): IContentRenderer {
     init({ api: panelApi, containerApi, params }: GroupPanelPartInitParameters) {
       const mode = (params.mode as Mode) ?? "opencode";
       const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
+      const requestedName =
+        typeof params.name === "string" ? params.name : undefined;
+      const userTitle =
+        typeof params.userTitle === "string" ? params.userTitle : undefined;
+
+      // Track this panel's tab title (OSC / input-line / user override).
+      const st = ensurePanelStatus(panelApi.id, panelApi.title ?? "", userTitle);
 
       const created = createTerminal();
       terminal = created.terminal;
@@ -351,12 +585,13 @@ function createTerminalComponent(): IContentRenderer {
       let oscTitleSeen = false;
 
       // xterm parses OSC 0/1/2 and exposes the parsed title here; let the
-      // running program's title win over the derived input-line one.
+      // running program's title win over the derived input-line one — but a
+      // user-renamed tab is never overridden.
       terminal.onTitleChange((title) => {
         const sanitized = sanitizeTitle(title);
         if (!sanitized) return;
         oscTitleSeen = true;
-        panelApi.setTitle(sanitized);
+        if (!st.userTitle) setBaseTitle(panelApi.id, sanitized);
       });
 
       // Register input forwarding immediately so no early keystrokes are lost;
@@ -366,9 +601,9 @@ function createTerminalComponent(): IContentRenderer {
           // Track the line being typed; when it is submitted (Enter) it
           // becomes this pane's title before being forwarded to the agent.
           inputState = trackInputLine(inputState, data, (line) => {
-            if (mode === "opencode" && !oscTitleSeen) {
+            if (mode === "opencode" && !oscTitleSeen && !st.userTitle) {
               const title = inputLineToTitle(line);
-              if (title) panelApi.setTitle(title);
+              if (title) setBaseTitle(panelApi.id, title);
             }
           });
           invoke("pty_write", { sessionId, data }).catch(() => {});
@@ -377,20 +612,36 @@ function createTerminalComponent(): IContentRenderer {
 
       panelApi.onDidDimensionsChange(() => sync());
       panelApi.onDidActiveChange(({ isActive }) => {
-        if (isActive) terminal?.focus();
+        if (isActive) {
+          terminal?.focus();
+          clearIndicator(panelApi.id);
+        }
       });
 
-      // Ask the backend for a fresh session in the requested mode (and, for
-      // worktree sessions, a specific start directory), then wire the
+      // Resolve the session: opencode sessions auto-create a throwaway
+      // worktree (unless restored with an existing cwd), then ask the backend
+      // for a fresh PTY in the requested mode and directory, and wire the
       // terminal to it once we know its id.
-      invoke<number>("pty_spawn", { mode, ...(cwd ? { cwd } : {}) })
-        .then((id) => {
+      void resolveWorktree(mode, cwd, requestedName)
+        .then(async (resolved) => {
+          let id: number;
+          try {
+            id = await invoke<number>("pty_spawn", {
+              mode,
+              ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
+            });
+          } catch (err) {
+            console.error("failed to spawn session", err);
+            return;
+          }
           sessionId = id;
           const entry: SessionEntry = {
             terminal: terminal!,
             fitAddon: fitAddon!,
             searchAddon: searchAddon!,
-            cwd,
+            cwd: resolved.cwd,
+            // Only auto-created throwaway worktrees are force-deleted on close.
+            ...(resolved.created ? { worktreePath: resolved.cwd } : {}),
           };
           sessions.set(id, entry);
           panelToSession.set(panelApi.id, id);
@@ -408,6 +659,11 @@ function createTerminalComponent(): IContentRenderer {
             if (panel && sessions.has(id)) entry.panel = panel;
           }, 0);
 
+          // A fresh opencode session's tab takes the worktree's codename.
+          if (resolved.name && !st.userTitle && !oscTitleSeen) {
+            setBaseTitle(panelApi.id, resolved.name);
+          }
+
           sync(); // first pty_resize -> backend flushes the buffered prompt
           terminal?.focus();
         })
@@ -419,10 +675,8 @@ function createTerminalComponent(): IContentRenderer {
   };
 }
 
-/** Short tab-title label for a directory: branch name, else last path segment. */
+/** Short tab-title label for a directory: last path segment. */
 function shortLabel(cwd: string): string {
-  const wt = worktreeByPath.get(cwd);
-  if (wt?.branch) return wt.branch;
   const last = cwd.split(/[\\/]/).filter(Boolean).pop();
   return last || cwd;
 }
@@ -433,13 +687,16 @@ function addPanelWithMode(
   cwd?: string,
   titleOverride?: string
 ) {
-  const base = mode === "opencode" ? "opencode" : "shell";
-  const title = titleOverride ?? (cwd ? `${base}@${shortLabel(cwd)}` : base);
+  // A fresh opencode session without a pinned cwd gets a codename (the tab
+  // title and the auto-created worktree's branch are both derived from it).
+  const name = mode === "opencode" && !cwd ? titleOverride ?? generateSessionName() : undefined;
+  const base = mode === "opencode" ? (name ?? "opencode") : "shell";
+  const title = cwd ? `${base}@${shortLabel(cwd)}` : base;
   const panel = api.addPanel({
     id: nextPanelId(),
     component: "terminal",
     title,
-    params: { mode, cwd },
+    params: { mode, cwd, ...(name ? { name } : {}) },
     ...(position ? { position } : {}),
   });
   panel.api.setActive();
@@ -579,28 +836,6 @@ function buildSidebar() {
     sidebar.appendChild(item);
   }
 
-  // Worktree session: name it, get a throwaway worktree created in the
-  // configured base dir, and open the agent there. Click-only (a name is
-  // required first), so it is not draggable like the two mode entries above.
-  const wtSession = document.createElement("div");
-  wtSession.className = "drag-item worktree-session";
-  wtSession.dataset.mode = "opencode";
-  const wtIcon = document.createElement("span");
-  wtIcon.className = "drag-icon";
-  wtIcon.textContent = "⤴";
-  wtSession.appendChild(wtIcon);
-  wtSession.appendChild(document.createTextNode("worktree session"));
-  wtSession.title =
-    "Name a throwaway worktree in the base dir and open the agent there";
-  wtSession.addEventListener("click", openWorktreeSessionModal);
-  sidebar.appendChild(wtSession);
-
-  // Worktrees section — populated asynchronously by refreshWorktrees() so a
-  // non-git launch directory simply renders nothing here.
-  const worktreeSection = document.createElement("div");
-  worktreeSection.id = "worktrees-section";
-  sidebar.appendChild(worktreeSection);
-
   const settingsBtn = document.createElement("button");
   settingsBtn.className = "sidebar-settings";
   settingsBtn.type = "button";
@@ -611,315 +846,181 @@ function buildSidebar() {
 }
 
 /* ---------------------------------------------------------------------------
- * Worktrees
+ * Prompt modal + tab rename
  * ------------------------------------------------------------------------- */
 
-/** Fetch the worktree listing from the backend and re-render the sidebar. */
-async function refreshWorktrees(): Promise<void> {
-  try {
-    const info = await invoke<WorktreesInfo>("git_worktrees");
-    worktreeInfo = info;
-  } catch (err) {
-    console.error("failed to list git worktrees", err);
-    worktreeInfo = { root: null, worktrees: [] };
-  }
-  worktreeByPath.clear();
-  for (const wt of worktreeInfo.worktrees) worktreeByPath.set(wt.path, wt);
-  renderWorktreeSection();
+interface PromptModalOptions {
+  title: string;
+  label: string;
+  placeholder?: string;
+  hint?: string;
+  value?: string;
+  confirmText?: string;
 }
 
-/** Render the "Worktrees" sidebar section (no-op outside a git repository). */
-function renderWorktreeSection(): void {
-  const container = document.getElementById("worktrees-section");
-  if (!container) return;
-  container.replaceChildren();
-
-  const wts = worktreeInfo.worktrees;
-  if (wts.length === 0) return;
-
-  const heading = document.createElement("div");
-  heading.className = "worktree-heading";
-  const headingTitle = document.createElement("span");
-  headingTitle.className = "sidebar-title";
-  headingTitle.textContent = "Worktrees";
-  const addBtn = document.createElement("button");
-  addBtn.className = "worktree-add";
-  addBtn.type = "button";
-  addBtn.textContent = "+";
-  addBtn.title = "Create a worktree on a new branch";
-  addBtn.addEventListener("click", openCreateWorktreeModal);
-  heading.append(headingTitle, addBtn);
-  container.appendChild(heading);
-
-  for (const wt of wts) {
-    const label =
-      wt.branch ?? (wt.detached ? "(detached)" : wt.bare ? "(bare)" : "(no branch)");
-    const item = document.createElement("div");
-    item.className = "drag-item worktree-item" + (wt.current ? " current" : "");
-    item.dataset.mode = "opencode";
-    item.dataset.cwd = wt.path;
-    item.draggable = true;
-    item.title = [
-      wt.current ? "Current worktree" : "Worktree",
-      `${label} — ${wt.path}`,
-      "Click: opencode · Shift+click: raw shell · Drag to split",
-    ].join("\n");
-
-    const icon = document.createElement("span");
-    icon.className = "drag-icon";
-    icon.textContent = "⤴";
-    item.appendChild(icon);
-
-    const labelEl = document.createElement("span");
-    labelEl.className = "worktree-label";
-    const branchEl = document.createElement("span");
-    branchEl.className = "worktree-branch";
-    branchEl.textContent = label;
-    const pathEl = document.createElement("span");
-    pathEl.className = "worktree-path";
-    pathEl.textContent = wt.path;
-    labelEl.append(branchEl, pathEl);
-    item.appendChild(labelEl);
-
-    item.addEventListener("dragstart", (e) => {
-      const dt = e.dataTransfer;
-      if (!dt) return;
-      const payload = serializeDrag({ mode: "opencode", cwd: wt.path });
-      dt.setData(DND_MIME, payload);
-      dt.setData("text/plain", payload);
-      dt.effectAllowed = "copy";
-      const ghost = buildDragGhost({ icon: "⤴", label });
-      document.body.appendChild(ghost);
-      dt.setDragImage(ghost, 8, 8);
-      requestAnimationFrame(() => ghost.remove());
-    });
-
-    item.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest(".worktree-rm")) return;
-      // Click opens an agent right in this worktree; Shift+click a raw shell.
-      addPanelWithMode(e.shiftKey ? "raw" : "opencode", undefined, wt.path);
-    });
-
-    const rmBtn = document.createElement("button");
-    rmBtn.className = "worktree-rm";
-    rmBtn.type = "button";
-    rmBtn.textContent = "✕";
-    rmBtn.title = "Remove this worktree (fails while it has changes)";
-    rmBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void removeWorktree(wt.path);
-    });
-    item.appendChild(rmBtn);
-
-    container.appendChild(item);
-  }
-}
-
-/** Small modal asking for a branch name, then creates the worktree. */
-function openCreateWorktreeModal(): void {
+/**
+ * A small single-input modal. Resolves with the trimmed input on confirm
+ * (possibly empty), or `null` when cancelled.
+ */
+function openPromptModal(opts: PromptModalOptions): Promise<string | null> {
   document.querySelector(".settings-backdrop")?.remove();
 
-  const backdrop = document.createElement("div");
-  backdrop.className = "settings-backdrop";
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "settings-backdrop";
 
-  const modal = document.createElement("div");
-  modal.className = "settings-modal worktree-modal";
+    const modal = document.createElement("div");
+    modal.className = "settings-modal prompt-modal";
 
-  const header = document.createElement("div");
-  header.className = "settings-header";
-  const title = document.createElement("h1");
-  title.className = "settings-title";
-  title.textContent = "New worktree";
-  const closeBtn = document.createElement("button");
-  closeBtn.className = "settings-close";
-  closeBtn.type = "button";
-  closeBtn.textContent = "×";
-  closeBtn.addEventListener("click", () => backdrop.remove());
-  header.append(title, closeBtn);
-  modal.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "settings-body";
-  const label = document.createElement("label");
-  label.className = "settings-label";
-  label.textContent = "Branch name";
-  body.appendChild(label);
-  const input = document.createElement("input");
-  input.className = "settings-text";
-  input.placeholder = "feature/xyz";
-  input.autocomplete = "off";
-  body.appendChild(input);
-  const hint = document.createElement("div");
-  hint.className = "settings-hint";
-  hint.textContent = `Creates a sibling directory next to ${worktreeInfo.root ?? "this repo"} named <repo>-<branch>.`;
-  body.appendChild(hint);
-  modal.appendChild(body);
-
-  const footer = document.createElement("div");
-  footer.className = "settings-footer";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "settings-reset";
-  cancelBtn.type = "button";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.addEventListener("click", () => backdrop.remove());
-  const createBtn = document.createElement("button");
-  createBtn.className = "settings-done";
-  createBtn.type = "button";
-  createBtn.textContent = "Create";
-  createBtn.addEventListener("click", async () => {
-    const branch = input.value.trim();
-    if (!branch) return;
-    createBtn.disabled = true;
-    try {
-      const path = await invoke<string>("git_worktree_create", { branch });
+    const header = document.createElement("div");
+    header.className = "settings-header";
+    const title = document.createElement("h1");
+    title.className = "settings-title";
+    title.textContent = opts.title;
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "settings-close";
+    closeBtn.type = "button";
+    closeBtn.textContent = "×";
+    closeBtn.addEventListener("click", () => {
       backdrop.remove();
-      await refreshWorktrees();
-      // Drop the user straight into the new checkout.
-      addPanelWithMode("opencode", undefined, path);
-    } catch (err) {
-      console.error("failed to create worktree", err);
-      showToast(`Could not create worktree: ${err}`);
-      createBtn.disabled = false;
+      resolve(null);
+    });
+    header.append(title, closeBtn);
+    modal.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "settings-body";
+    const label = document.createElement("label");
+    label.className = "settings-label";
+    label.textContent = opts.label;
+    body.appendChild(label);
+    const input = document.createElement("input");
+    input.className = "settings-text";
+    input.placeholder = opts.placeholder ?? "";
+    input.autocomplete = "off";
+    input.value = opts.value ?? "";
+    body.appendChild(input);
+    if (opts.hint) {
+      const hint = document.createElement("div");
+      hint.className = "settings-hint";
+      hint.textContent = opts.hint;
+      body.appendChild(hint);
     }
-  });
-  footer.append(cancelBtn, createBtn);
-  modal.appendChild(footer);
+    modal.appendChild(body);
 
-  backdrop.appendChild(modal);
-  document.body.appendChild(backdrop);
-  input.focus();
-
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target === backdrop) backdrop.remove();
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") createBtn.click();
-    if (e.key === "Escape") backdrop.remove();
-  });
-}
-
-/** Prompt for a session name, auto-create the worktree, and open the agent. */
-function openWorktreeSessionModal(): void {
-  document.querySelector(".settings-backdrop")?.remove();
-
-  const backdrop = document.createElement("div");
-  backdrop.className = "settings-backdrop";
-
-  const modal = document.createElement("div");
-  modal.className = "settings-modal worktree-modal";
-
-  const header = document.createElement("div");
-  header.className = "settings-header";
-  const title = document.createElement("h1");
-  title.className = "settings-title";
-  title.textContent = "Worktree session";
-  const closeBtn = document.createElement("button");
-  closeBtn.className = "settings-close";
-  closeBtn.type = "button";
-  closeBtn.textContent = "×";
-  closeBtn.addEventListener("click", () => backdrop.remove());
-  header.append(title, closeBtn);
-  modal.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "settings-body";
-  const label = document.createElement("label");
-  label.className = "settings-label";
-  label.textContent = "Session name";
-  body.appendChild(label);
-  const input = document.createElement("input");
-  input.className = "settings-text";
-  input.placeholder = "e.g. fix-login";
-  input.autocomplete = "off";
-  body.appendChild(input);
-  const hint = document.createElement("div");
-  hint.className = "settings-hint";
-  const baseDir = getSettings().worktreeBaseDir.trim() || "/tmp";
-  hint.textContent = `Creates a worktree under ${baseDir} (change in Settings) and opens the agent there.`;
-  body.appendChild(hint);
-  modal.appendChild(body);
-
-  const footer = document.createElement("div");
-  footer.className = "settings-footer";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "settings-reset";
-  cancelBtn.type = "button";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.addEventListener("click", () => backdrop.remove());
-  const openBtn = document.createElement("button");
-  openBtn.className = "settings-done";
-  openBtn.type = "button";
-  openBtn.textContent = "Open";
-  openBtn.addEventListener("click", async () => {
-    const name = input.value.trim();
-    if (!name) return;
-    openBtn.disabled = true;
-    try {
-      const created = await invoke<AutoWorktree>("git_worktree_auto_create", {
-        name,
-        baseDir: getSettings().worktreeBaseDir.trim() || "/tmp",
-      });
+    const footer = document.createElement("div");
+    footer.className = "settings-footer";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "settings-reset";
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => {
       backdrop.remove();
-      await refreshWorktrees();
-      addPanelWithMode("opencode", undefined, created.path, name);
-    } catch (err) {
-      console.error("failed to create worktree session", err);
-      showToast(`Could not create worktree session: ${err}`);
-      openBtn.disabled = false;
-    }
-  });
-  footer.append(cancelBtn, openBtn);
-  modal.appendChild(footer);
+      resolve(null);
+    });
+    const doneBtn = document.createElement("button");
+    doneBtn.className = "settings-done";
+    doneBtn.type = "button";
+    doneBtn.textContent = opts.confirmText ?? "OK";
+    doneBtn.addEventListener("click", () => {
+      backdrop.remove();
+      resolve(input.value.trim());
+    });
+    footer.append(cancelBtn, doneBtn);
+    modal.appendChild(footer);
 
-  backdrop.appendChild(modal);
-  document.body.appendChild(backdrop);
-  input.focus();
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+    input.focus();
+    input.select();
 
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target === backdrop) backdrop.remove();
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") openBtn.click();
-    if (e.key === "Escape") backdrop.remove();
+    backdrop.addEventListener("mousedown", (e) => {
+      if (e.target === backdrop) {
+        backdrop.remove();
+        resolve(null);
+      }
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doneBtn.click();
+      if (e.key === "Escape") {
+        backdrop.remove();
+        resolve(null);
+      }
+    });
   });
 }
 
-/** Remove a worktree and close any sessions that were running inside it. */
-async function removeWorktree(path: string): Promise<void> {
-  try {
-    await invoke("git_worktree_remove", { path });
-  } catch (err) {
-    console.error("failed to remove worktree", err);
-    showToast(`Could not remove worktree: ${err}`);
-    return;
+/** Map a dockview tab DOM element back to its panel (for double-click rename). */
+function panelForTabElement(tabEl: HTMLElement): IDockviewPanel | undefined {
+  const groupEl = tabEl.closest(".dv-groupview");
+  if (!groupEl) return undefined;
+  const group = api.groups.find(
+    (g) => (g as unknown as { element: HTMLElement }).element === groupEl
+  );
+  if (!group) return undefined;
+  const tabs = Array.from(
+    groupEl.querySelectorAll<HTMLElement>(
+      ":scope > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab"
+    )
+  );
+  const idx = tabs.indexOf(tabEl);
+  if (idx < 0 || idx >= group.panels.length) return undefined;
+  return group.panels[idx];
+}
+
+/** Prompt to rename a tab; empty input reverts to automatic titles. */
+async function renamePanel(panel: IDockviewPanel): Promise<void> {
+  const st = panelStatus.get(panel.id);
+  const current = st?.baseTitle ?? panel.title ?? "";
+  const value = await openPromptModal({
+    title: "Rename tab",
+    label: "Tab title",
+    placeholder: "Name this tab",
+    value: current,
+    hint: "A custom name sticks and is no longer overwritten by the program. Leave empty and confirm to go back to automatic titles.",
+    confirmText: "Rename",
+  });
+  if (value === null) return;
+  const status = panelStatus.get(panel.id);
+  if (!status) return;
+  status.userTitle = value.length > 0;
+  if (status.userTitle) {
+    status.baseTitle = value;
+    panel.api.updateParameters({ userTitle: value });
+    renderTitle(panel.id);
+  } else {
+    // Revert: next OSC / input-line title wins again.
+    status.baseTitle = status.baseTitle;
+    panel.api.updateParameters({ userTitle: null });
+    renderTitle(panel.id);
   }
-  // Sessions started inside the removed worktree can no longer run — close
-  // their panels (which kills the shell). Fall back to pty_kill when the panel
-  // reference isn't wired up yet.
-  for (const [id, entry] of sessions) {
-    if (entry.cwd === path) {
-      if (entry.panel) entry.panel.api.close();
-      else invoke("pty_kill", { sessionId: id }).catch(() => {});
-    }
-  }
-  await refreshWorktrees();
 }
 
-/** Transient status toast for operation failures. */
-function showToast(message: string): void {
-  const toast = document.createElement("div");
-  toast.className = "hivefield-toast";
-  toast.textContent = message;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 3200);
-}
-
+/** Backend event wiring: PTY output/exit, plus the tab activity indicator. */
 async function registerGlobalListeners() {
   await listen<{ sessionId: number; data: string }>("pty://output", (event) => {
     const { sessionId, data } = event.payload;
     const entry = sessions.get(sessionId);
     if (entry) {
-      entry.terminal.write(data);
+      // Shell-integration markers drive the tab completion indicator; any
+      // remaining text is written to the terminal.
+      const { markers, text } = analyzeOutput(data);
+      if (text) entry.terminal.write(text);
+      const panel = entry.panel;
+      if (panel && panelStatus.has(panel.id) && !isPanelActive(panel.id)) {
+        if (markers.includes("D")) {
+          // Command finished (OSC 133;D): mark the tab done immediately.
+          clearIdle(panel.id);
+          setIndicator(panel.id, INDICATOR_DONE);
+        } else if (markers.includes("C")) {
+          // Command started: nothing to show yet.
+        } else if (text.length > 0) {
+          // Visible output in a background tab: activity, then "done" once
+          // the tab stays quiet.
+          setIndicator(panel.id, INDICATOR_ACTIVITY);
+          armIdle(panel.id);
+        }
+      }
       return;
     }
     const buf = pendingOutputs.get(sessionId) ?? [];
@@ -941,7 +1042,7 @@ async function init() {
   await loadSettings();
 
   // Keep every open terminal in sync with the settings, and let the whole UI
-  // use the chosen font family (sidebar, tabs, settings page).
+  // use the chosen font family + theme (sidebar, tabs, settings page).
   subscribe((settings) => {
     for (const [id, entry] of sessions) {
       applyTerminalSettings(entry.terminal, settings);
@@ -951,17 +1052,17 @@ async function init() {
       "--hivefield-font",
       `"${settings.fontFamily}", monospace`
     );
+    applyUiTheme(settings);
   });
 
   await registerGlobalListeners();
 
   buildSidebar();
-  void refreshWorktrees();
 
   api = createDockview(document.getElementById("terminal")!, {
     createComponent: createTerminalComponent,
     disableFloatingGroups: true,
-    theme: themeCatppuccinMocha,
+    theme: getTheme(getSettings().theme).dockview,
     dropOverlayModel: ({ location }) => {
       // Wider edge zones on the terminal content so dropping a session as a
       // split in a chosen direction is easy to hit (default is 20%).
@@ -969,6 +1070,7 @@ async function init() {
       return { activationSize: { value: 30, type: "percentage" } };
     },
   });
+  applyUiTheme(getSettings());
 
   // Accept our sidebar drags so dockview shows the drop-target overlay.
   api.onUnhandledDragOver((event) => {
@@ -1010,11 +1112,20 @@ async function init() {
     const entry = sessions.get(sessionId);
     if (entry) {
       invoke("pty_kill", { sessionId }).catch(() => {});
+      // Auto-created throwaway worktrees are torn down with the session.
+      if (entry.worktreePath) {
+        invoke("git_worktree_remove", {
+          path: entry.worktreePath,
+          force: true,
+        }).catch((err) => console.error("failed to remove session worktree", err));
+      }
       entry.terminal.dispose();
     }
     sessions.delete(sessionId);
     panelToSession.delete(panel.id);
     pendingOutputs.delete(sessionId);
+    clearIdle(panel.id);
+    panelStatus.delete(panel.id);
     // If the searched terminal just went away, move the highlights onto
     // whatever is active now (or clear them if nothing is).
     if (isSearchOpen()) rerunSearch();
@@ -1035,9 +1146,22 @@ async function init() {
   });
 
   // If the user switches panels while searching, move the highlights to the
-  // newly active terminal instead of leaving them stale on the old one.
+  // newly active terminal instead of leaving them stale on the old one, and
+  // clear any activity/completion indicator on the newly focused tab.
   api.onDidActivePanelChange(() => {
     if (isSearchOpen()) rerunSearch();
+    const panel = api.activePanel;
+    if (panel) clearIndicator(panel.id);
+  });
+
+  // Double-click a tab to rename it.
+  document.addEventListener("dblclick", (e) => {
+    const target = e.target as HTMLElement | null;
+    const tabEl = target?.closest?.(".dv-tab");
+    if (!tabEl || !(tabEl instanceof HTMLElement)) return;
+    e.preventDefault();
+    const panel = panelForTabElement(tabEl);
+    if (panel) void renamePanel(panel);
   });
 
   // Restore the saved per-cwd layout (no-op when nothing was saved). Restored
@@ -1083,22 +1207,55 @@ function setupKeyboard() {
       e.preventDefault();
       api.activePanel?.api.close();
     }
+    // Ctrl+Shift+R renames the active tab.
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "R" || e.key === "r")) {
+      e.preventDefault();
+      const panel = api.activePanel;
+      if (panel) void renamePanel(panel);
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === ",") {
       e.preventDefault();
       toggleSettings();
     }
   });
 
-  // Ctrl+H/J/K/L vim-style pane movement. Registered in the CAPTURE phase so
-  // the keys are intercepted before xterm sees them (otherwise Ctrl+H is
-  // backspace, Ctrl+J newline, Ctrl+K kill-line, Ctrl+L clear-screen). If
-  // there is no adjacent pane in that direction the key falls through to the
-  // terminal.
+  // Ctrl+H/J/K/L vim-style pane movement, plus font-size zoom (Ctrl+= / - / 0).
+  // Registered in the CAPTURE phase so the keys are intercepted before xterm
+  // sees them (otherwise Ctrl+H is backspace, Ctrl+J newline, Ctrl+K kill-line,
+  // Ctrl+L clear-screen). If there is no adjacent pane in that direction the
+  // key falls through to the terminal.
   window.addEventListener(
     "keydown",
     (e) => {
       if (uiOpen()) return;
       if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+        // Font-size zoom.
+        const zoomBy = (delta: number) => {
+          const s = getSettings();
+          const next =
+            delta === 0
+              ? DEFAULT_SETTINGS.fontSize
+              : Math.max(6, Math.min(48, s.fontSize + delta));
+          void updateSettings({ fontSize: next });
+        };
+        if (e.key === "=") {
+          e.preventDefault();
+          e.stopPropagation();
+          zoomBy(1);
+          return;
+        }
+        if (e.key === "-") {
+          e.preventDefault();
+          e.stopPropagation();
+          zoomBy(-1);
+          return;
+        }
+        if (e.key === "0") {
+          e.preventDefault();
+          e.stopPropagation();
+          zoomBy(0);
+          return;
+        }
         const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
         if (direction) {
           const group = api.activePanel?.group;
