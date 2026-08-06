@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DockviewApi, SerializedDockview } from "dockview";
+import type { DockviewApi, IDockviewPanel, SerializedDockview } from "dockview";
 
 /** Number of workspace slots (accessed with Ctrl+1 … Ctrl+0). */
 export const WORKSPACE_SLOTS = 10;
@@ -209,8 +209,17 @@ let switching = false;
  * layout, same as a launch restore). Returns true when a saved layout was
  * restored; false when the slot is empty and the caller should seed it (e.g.
  * with a fresh opencode panel). Switching to the current slot is a no-op.
+ *
+ * `beforeClear` runs once, immediately before the live panels are torn down,
+ * so a caller can park the outgoing sessions (keep them running in the
+ * background) only when a switch is actually happening. It receives the
+ * outgoing panels and the slot being left.
  */
-export async function switchWorkspace(api: DockviewApi, target: number): Promise<boolean> {
+export async function switchWorkspace(
+  api: DockviewApi,
+  target: number,
+  beforeClear?: (panels: IDockviewPanel[], leavingSlot: number) => void
+): Promise<boolean> {
   apiRef = api;
   if (target < 1 || target > WORKSPACE_SLOTS) return false;
   // A switch is already in flight: ignore the keypress (it would capture the
@@ -226,6 +235,7 @@ export async function switchWorkspace(api: DockviewApi, target: number): Promise
       data.layout = leaving;
       slots.set(currentSlot, data);
     }
+    const leavingSlot = currentSlot;
 
     currentSlot = target;
     await persist();
@@ -235,6 +245,7 @@ export async function switchWorkspace(api: DockviewApi, target: number): Promise
     const targetData = slots.get(target);
     restoring = true;
     try {
+      beforeClear?.(api.panels, leavingSlot);
       api.clear();
       if (targetData?.layout) {
         api.fromJSON(targetData.layout);

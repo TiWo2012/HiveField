@@ -294,6 +294,19 @@ interface SessionEntry {
 }
 
 /**
+ * A session parked in the background while its workspace slot is hidden.
+ * The PTY keeps running and the terminal element (scrollback included) is
+ * kept alive off-screen; it is moved back into the panel when the workspace
+ * is restored, so the session looks exactly as it was left.
+ */
+interface ParkedSession {
+  /** The workspace slot this session belongs to (to jump back to it). */
+  slot: number;
+  /** The terminal's content element, held off-screen while parked. */
+  element: HTMLElement;
+}
+
+/**
  * Per-panel tab-title state: the base title (OSC / input-line / user-renamed)
  * plus an activity/completion indicator prefix, and whether the user pinned a
  * custom name that overrides automatic titles.
@@ -308,6 +321,17 @@ interface PanelStatus {
 
 /** sessionId -> terminal entry. */
 const sessions = new Map<number, SessionEntry>();
+/** sessionId -> session kept running in the background (workspace hidden). */
+const parkedSessions = new Map<number, ParkedSession>();
+
+/**
+ * Status-map key for a parked session: unique per session, so it can never
+ * collide with a live panel's id (serialized layouts can carry the same panel
+ * id across slots/runs).
+ */
+function parkedKeyFor(sessionId: number): string {
+  return `parked:${sessionId}`;
+}
 /** panel id -> sessionId (panel ids are no longer the session ids). */
 const panelToSession = new Map<string, number>();
 /** Output buffered before the terminal for a session was registered. */
@@ -831,6 +855,71 @@ function createTerminalComponent(): IContentRenderer {
       // Let right-click handlers map a terminal back to its panel cheaply.
       element.dataset.panelId = panelApi.id;
 
+      // A restored layout may carry the sessionId of a session parked in the
+      // background when its workspace was left. Reuse that session: its PTY
+      // kept running and its terminal (scrollback and all) was kept alive
+      // off-screen — just move the element back into this panel. Input
+      // forwarding, OSC titles and the resize handlers were wired when the
+      // terminal was first created, so nothing else needs redoing.
+      const parked =
+        typeof params.sessionId === "number"
+          ? parkedSessions.get(params.sessionId)
+          : undefined;
+      if (parked) {
+        const parkedEntry = sessions.get(params.sessionId as number);
+        if (parkedEntry) {
+          const parkedKey = parkedKeyFor(params.sessionId as number);
+          // Move the parked title/notification status back under the panel's
+          // own id (it was re-keyed when the session was parked, so a live
+          // panel could not collide with it). Pending timers are re-armed by
+          // the next output event.
+          const parkedSt = panelStatus.get(parkedKey);
+          if (parkedSt) {
+            panelStatus.delete(parkedKey);
+            panelStatus.set(panelApi.id, parkedSt);
+            clearIdle(parkedKey);
+            clearNotify(parkedKey);
+            // Paint the tab with the status kept across the park (the
+            // serialized title may carry a stale indicator prefix).
+            renderTitle(panelApi.id);
+          }
+          parkedSessions.delete(params.sessionId as number);
+          sessionId = params.sessionId as number;
+          terminal = parkedEntry.terminal;
+          fitAddon = parkedEntry.fitAddon;
+          searchAddon = parkedEntry.searchAddon;
+          element.appendChild(parked.element);
+          panelToSession.set(panelApi.id, sessionId);
+          refreshSidebarRunning();
+          scheduleWorkspaceRefresh();
+          // The panel registers into its group only after this content
+          // component is initialized, so backfill the reference next tick
+          // (same as the fresh-spawn path below).
+          setTimeout(() => {
+            const panel = containerApi.getPanel(panelApi.id);
+            if (panel && sessions.has(sessionId!)) parkedEntry.panel = panel;
+          }, 0);
+          panelApi.onDidDimensionsChange(() => sync());
+          panelApi.onDidActiveChange(({ isActive }) => {
+            if (isActive) {
+              terminal?.focus();
+              clearIndicator(panelApi.id);
+            }
+          });
+          // The panel only gets its real size after it is laid out, so defer
+          // the first fit + pty resize until the next tick (like the fresh-
+          // spawn path, which relies on the async spawn timing).
+          setTimeout(() => {
+            sync();
+            terminal?.focus();
+          }, 0);
+          return;
+        }
+        // The parked session died in the background (exit event): fall
+        // through and spawn a fresh one, like any other restored layout.
+        parkedSessions.delete(params.sessionId as number);
+      }
+
       const created = createTerminal();
       terminal = created.terminal;
       fitAddon = created.fitAddon;
@@ -917,6 +1006,10 @@ function createTerminalComponent(): IContentRenderer {
           };
           sessions.set(id, entry);
           panelToSession.set(panelApi.id, id);
+          // Persist the sessionId in the panel params so the saved workspace
+          // layout can re-attach this session (instead of spawning a new one)
+          // when the workspace is restored while the session is still alive.
+          panelApi.updateParameters({ sessionId: id });
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
 
@@ -1213,7 +1306,7 @@ function refreshSidebarRunning(): void {
   sidebarRunningEl.replaceChildren();
 
   const panels = api?.panels ?? [];
-  if (panels.length === 0) {
+  if (panels.length === 0 && parkedSessions.size === 0) {
     const empty = document.createElement("div");
     empty.className = "sidebar-empty";
     empty.textContent = "No sessions — drag one in above";
@@ -1289,6 +1382,69 @@ function refreshSidebarRunning(): void {
 
     sidebarRunningEl.appendChild(item);
   }
+
+  // Background sessions: parked when their workspace was left, still running.
+  // Clicking one jumps back to the workspace slot it belongs to; ✕ kills it.
+  for (const [sessionId, parked] of parkedSessions) {
+    const entry = sessions.get(sessionId);
+    if (!entry) continue;
+    const parkedKey = parkedKeyFor(sessionId);
+    const st = panelStatus.get(parkedKey);
+    const baseTitle = st?.baseTitle ?? entry.panel?.title ?? modeLabel(entry.mode);
+    const { glyph, cls } = sessionStatusGlyph(parkedKey);
+
+    const item = document.createElement("div");
+    item.className = "sidebar-session background";
+    item.dataset.mode = entry.mode;
+    item.title =
+      `${baseTitle} — running in the background (workspace ${parked.slot})` +
+      (entry.cwd ? ` — ${entry.cwd}` : "");
+
+    const icon = document.createElement("span");
+    icon.className = "sidebar-session-icon";
+    icon.textContent = modeIcon(entry.mode);
+    item.appendChild(icon);
+
+    const body = document.createElement("div");
+    body.className = "sidebar-session-body";
+
+    const label = document.createElement("div");
+    label.className = "sidebar-session-title";
+    label.textContent = baseTitle.replace(/^[●✓] /, "");
+    body.appendChild(label);
+
+    if (entry.cwd) {
+      const dir = document.createElement("div");
+      dir.className = "sidebar-session-cwd";
+      dir.textContent = shortLabel(entry.cwd);
+      dir.title = entry.cwd;
+      body.appendChild(dir);
+    }
+    item.appendChild(body);
+
+    const status = document.createElement("span");
+    status.className = `sidebar-session-status${cls ? ` ${cls}` : " background"}`;
+    status.textContent = glyph || "◌";
+    status.title = `Background session (workspace ${parked.slot})`;
+    item.appendChild(status);
+
+    // Click jumps back to the workspace slot this session belongs to.
+    item.addEventListener("click", () => switchToWorkspace(parked.slot));
+
+    // Hover-only ✕ kills the background session.
+    const close = document.createElement("button");
+    close.className = "sidebar-session-close";
+    close.type = "button";
+    close.textContent = "×";
+    close.title = "Kill background session";
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      killParkedSession(sessionId);
+    });
+    item.appendChild(close);
+
+    sidebarRunningEl.appendChild(item);
+  }
 }
 
 /** Debounce re-fetching git/workspace info when several sessions change at once. */
@@ -1346,7 +1502,7 @@ function renderWorkspaceSection(): void {
   // "—" while the fetch is pending or when the launch dir isn't a git repo.
   addRow("Branch", gitRoot === undefined ? undefined : gitBranch ?? "detached");
   if (gitRoot !== undefined) addRow("Worktrees", String(gitWorktreeCount));
-  addRow("Sessions", String(api?.panels.length ?? 0));
+  addRow("Sessions", String((api?.panels.length ?? 0) + parkedSessions.size));
 }
 
 /** The sidebar's "New session" drag-sources container (rebuilt on demand). */
@@ -1512,12 +1668,94 @@ function buildSidebar() {
  * --------------------------------------------------------------------------- */
 
 /**
- * Jump to a workspace slot: save the current layout, restore the target
- * (closing live panels and respawning their sessions from the saved layout),
- * seed empty slots with a fresh opencode panel, and refresh the strip.
+ * Locate the terminal content element for a panel (it carries data-panel-id).
+ */
+function findTerminalElement(panelId: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `.terminal-panel[data-panel-id="${panelId}"]`
+  );
+}
+
+/**
+ * Park every live session of the current workspace before switching away: the
+ * PTYs keep running and the terminal elements (scrollback included) are kept
+ * off-screen, so the workspace can be restored intact later. The panel
+ * removals that follow (`api.clear`) see the sessions in `parkedSessions` and
+ * skip killing them; output keeps streaming into the hidden terminals and the
+ * tab indicator / agent-done notifications keep working.
+ *
+ * Runs via the `beforeClear` hook of `switchWorkspace`, so it only fires when
+ * a switch is actually in flight and `slot` is the workspace being left.
+ *
+ * The panel's title/notification status is re-keyed under `parked:<id>` so it
+ * can never collide with a live panel that happens to reuse the same panel id
+ * (serialized layouts can carry identical ids across slots/runs).
+ */
+function parkWorkspaceSessions(slot: number): void {
+  for (const panel of api.panels) {
+    const sessionId = panelToSession.get(panel.id);
+    if (sessionId === undefined) continue;
+    const entry = sessions.get(sessionId);
+    if (!entry) continue;
+    const element = findTerminalElement(panel.id);
+    if (!element) continue;
+    const parkedKey = parkedKeyFor(sessionId);
+    const st = panelStatus.get(panel.id);
+    if (st) {
+      panelStatus.set(parkedKey, st);
+      panelStatus.delete(panel.id);
+    }
+    // Pending idle/notify timers were armed under the panel id and would
+    // no-op now that the status moved; the next output event re-arms them
+    // under the parked key.
+    clearIdle(panel.id);
+    clearNotify(panel.id);
+    parkedSessions.set(sessionId, { slot, element });
+  }
+}
+
+/**
+ * Kill a session parked in the background (sidebar ✕): the shell dies, the
+ * terminal is disposed, and the parked record is dropped. The workspace's
+ * saved layout still lists the panel, so restoring it spawns a fresh session.
+ */
+function killParkedSession(sessionId: number): void {
+  const entry = sessions.get(sessionId);
+  if (entry) {
+    invoke("pty_kill", { sessionId }).catch(() => {});
+    // Auto-created throwaway worktrees are torn down with the session.
+    if (entry.worktreePath) {
+      invoke("git_worktree_remove", {
+        path: entry.worktreePath,
+        force: true,
+      }).catch((err) => console.error("failed to remove session worktree", err));
+    }
+    entry.terminal.dispose();
+  }
+  const parked = parkedSessions.get(sessionId);
+  sessions.delete(sessionId);
+  parkedSessions.delete(sessionId);
+  if (parked) {
+    const parkedKey = parkedKeyFor(sessionId);
+    clearIdle(parkedKey);
+    clearNotify(parkedKey);
+    panelStatus.delete(parkedKey);
+  }
+  refreshSidebarRunning();
+  scheduleWorkspaceRefresh();
+}
+
+/**
+ * Jump to a workspace slot: park the current layout's sessions so they keep
+ * running in the background, save the layout, restore the target (closing the
+ * live panels and re-attaching the target's parked sessions or respawning from
+ * its saved layout), seed empty slots with a fresh opencode panel, and refresh
+ * the strip.
  */
 function switchToWorkspace(slot: number): void {
-  void switchWorkspace(api, slot).then((restored) => {
+  void switchWorkspace(api, slot, (_panels, leavingSlot) =>
+    parkWorkspaceSessions(leavingSlot)
+  ).then((restored) => {
     // Restored panels carry serialized ids like `panel-1`, so bump the
     // counter past them before any new panel is added (avoids duplicates).
     for (const panel of api.panels) {
@@ -1931,38 +2169,46 @@ async function registerGlobalListeners() {
       // remaining text is written to the terminal.
       const { markers, text } = analyzeOutput(data);
       if (text) writeToTerminal(entry.terminal, text);
-      const panel = entry.panel;
-      if (panel && panelStatus.has(panel.id)) {
-        // Agent-done notifications run for every panel (active or not): a
+      // Parked (background-workspace) sessions keep a status under a unique
+      // `parked:<id>` key so they can never collide with a live panel that
+      // happens to reuse the same panel id.
+      const statusKey = parkedSessions.has(sessionId)
+        ? parkedKeyFor(sessionId)
+        : entry.panel && panelStatus.has(entry.panel.id)
+          ? entry.panel.id
+          : undefined;
+      if (statusKey) {
+        // Agent-done notifications run for every session (active or not): a
         // completion signal (OSC 133;D or a quiet window after output)
         // reports "done"; notifyAgentDone decides whether the user is
         // actually watching and skips if so.
-        const st = panelStatus.get(panel.id);
+        const st = panelStatus.get(statusKey);
         if (st && isAgentMode(entry.mode)) {
           if (markers.includes("D")) {
-            clearNotify(panel.id);
-            notifyAgentDone(panel.id, entry);
+            clearNotify(statusKey);
+            notifyAgentDone(statusKey, entry);
           } else if (markers.includes("C") || text.length > 0) {
             // New command started / visible output: a fresh completion
             // episode, so the next "done" may notify again.
             st.notified = false;
-            if (text.length > 0) armNotify(panel.id, entry);
+            if (text.length > 0) armNotify(statusKey, entry);
           }
         }
         // The tab activity/completion indicator only applies to background
-        // tabs; the active one is already in view.
-        if (!isPanelActive(panel.id)) {
+        // tabs; the active one is already in view. Parked sessions are never
+        // active.
+        if (!isPanelActive(entry.panel?.id ?? "")) {
           if (markers.includes("D")) {
             // Command finished (OSC 133;D): mark the tab done immediately.
-            clearIdle(panel.id);
-            setIndicator(panel.id, INDICATOR_DONE);
+            clearIdle(statusKey);
+            setIndicator(statusKey, INDICATOR_DONE);
           } else if (markers.includes("C")) {
             // Command started: nothing to show yet.
           } else if (text.length > 0) {
             // Visible output in a background tab: activity, then "done" once
             // the tab stays quiet.
-            setIndicator(panel.id, INDICATOR_ACTIVITY);
-            armIdle(panel.id);
+            setIndicator(statusKey, INDICATOR_ACTIVITY);
+            armIdle(statusKey);
           }
         }
       }
@@ -1978,6 +2224,21 @@ async function registerGlobalListeners() {
     pendingOutputs.delete(sessionId);
     const entry = sessions.get(sessionId);
     if (entry) {
+      if (parkedSessions.has(sessionId)) {
+        // The session finished while its workspace was hidden: no panel
+        // removal will come to clean it up, so do it here. (The "[process
+        // exited]" note would only land in an off-screen terminal.)
+        parkedSessions.delete(sessionId);
+        sessions.delete(sessionId);
+        entry.terminal.dispose();
+        const parkedKey = parkedKeyFor(sessionId);
+        clearIdle(parkedKey);
+        clearNotify(parkedKey);
+        panelStatus.delete(parkedKey);
+        refreshSidebarRunning();
+        scheduleWorkspaceRefresh();
+        return;
+      }
       writeToTerminal(entry.terminal, `\r\n[process exited with code ${code}]\r\n`);
     }
   });
@@ -2082,22 +2343,30 @@ async function init() {
     if (sessionId === undefined) return;
     const entry = sessions.get(sessionId);
     if (entry) {
-      invoke("pty_kill", { sessionId }).catch(() => {});
-      // Auto-created throwaway worktrees are torn down with the session.
-      if (entry.worktreePath) {
-        invoke("git_worktree_remove", {
-          path: entry.worktreePath,
-          force: true,
-        }).catch((err) => console.error("failed to remove session worktree", err));
+      if (parkedSessions.has(sessionId)) {
+        // Workspace switch-away: parkWorkspaceSessions() already moved the
+        // terminal off-screen. Keep the session running in the background —
+        // it is re-attached when this workspace comes back. The session
+        // entry, panel status and timers are deliberately kept so the tab
+        // indicator / agent-done notifications keep working while hidden.
+      } else {
+        invoke("pty_kill", { sessionId }).catch(() => {});
+        // Auto-created throwaway worktrees are torn down with the session.
+        if (entry.worktreePath) {
+          invoke("git_worktree_remove", {
+            path: entry.worktreePath,
+            force: true,
+          }).catch((err) => console.error("failed to remove session worktree", err));
+        }
+        entry.terminal.dispose();
+        sessions.delete(sessionId);
+        pendingOutputs.delete(sessionId);
+        clearIdle(panel.id);
+        clearNotify(panel.id);
+        panelStatus.delete(panel.id);
       }
-      entry.terminal.dispose();
     }
-    sessions.delete(sessionId);
     panelToSession.delete(panel.id);
-    pendingOutputs.delete(sessionId);
-    clearIdle(panel.id);
-    clearNotify(panel.id);
-    panelStatus.delete(panel.id);
     refreshSidebarRunning();
     scheduleWorkspaceRefresh();
     renderWorkspaceStrip();

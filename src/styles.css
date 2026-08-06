@@ -319,6 +319,19 @@ body {
   color: var(--hf-green);
 }
 
+/* Background sessions (parked while their workspace is hidden). */
+.sidebar-session.background {
+  opacity: 0.85;
+}
+
+.sidebar-session.background .sidebar-session-title {
+  color: var(--hf-subtext0);
+}
+
+.sidebar-session-status.background {
+  color: var(--hf-overlay0);
+}
+
 .sidebar-session-close {
   display: none;
   flex: none;

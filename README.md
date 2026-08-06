@@ -21,9 +21,15 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 - **Ten workspace slots (`Ctrl+1`…`Ctrl+9`, `Ctrl+0`)**: keep up to ten
   independent tab/split layouts per launch directory. Press **`Ctrl+1`…`Ctrl+9`
   / `Ctrl+0`** to jump to workspace slots 1…10 — the current layout is saved
-  into the slot you're leaving and the target slot's saved layout is restored
-  (sessions respawn from it, exactly like a launch restore). Pressing a digit on
-  an empty slot starts a fresh workspace there. The **Workspaces** section in the
+  into the slot you're leaving and the target slot's saved layout is restored.
+  Sessions you leave behind stay **running in the background**: their agents
+  keep working and their terminals keep their scrollback, and switching back
+  re-attaches them exactly as you left them (a session that finished while
+  hidden is replaced by a fresh one from the saved layout). Background sessions
+  show up in the sidebar **Running** list with a `◌` marker — click one to jump
+  back to its workspace, hover to kill it. A background agent that finishes
+  still fires the usual completion notification. Pressing a digit on an empty
+  slot starts a fresh workspace there. The **Workspaces** section in the
   sidebar shows all ten slots (the active one is highlighted, a green dot marks
   slots with a saved layout): click to switch, double-click to rename. Every
   slot also appears in the command palette (`Ctrl+Shift+P`).
