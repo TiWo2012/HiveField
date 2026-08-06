@@ -32,6 +32,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # tauri::generate_context!() embeds the frontend and fails if ../dist
+      # does not exist, so build it before running cargo test.
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend
+        run: bun run build
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
