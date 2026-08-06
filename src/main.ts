@@ -33,6 +33,13 @@ import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
 import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
 import { bindWorkspaceSave, restoreWorkspace } from "./workspace";
 import { initFileDrop, registerTerminalRoot } from "./file-drop";
+import {
+  closeContextMenu,
+  isContextMenuOpen,
+  showContextMenu,
+  type ContextMenuItem,
+} from "./context-menu";
+import { copyText, readClipboardText } from "./clipboard";
 import "./styles.css";
 
 /** What a session auto-runs: a coding agent (opencode / pi), or a plain shell. */
@@ -750,6 +757,8 @@ function createTerminalComponent(): IContentRenderer {
 
       // Track this panel's tab title (OSC / input-line / user override).
       const st = ensurePanelStatus(panelApi.id, panelApi.title ?? "", userTitle);
+      // Let right-click handlers map a terminal back to its panel cheaply.
+      element.dataset.panelId = panelApi.id;
 
       const created = createTerminal();
       terminal = created.terminal;
@@ -1551,6 +1560,199 @@ async function renamePanel(panel: IDockviewPanel): Promise<void> {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Right-click context menu: new sessions / splits, copy & paste, and
+ * per-panel actions (find, rename, close).
+ * ------------------------------------------------------------------------- */
+
+/** Split directions offered by the "New split" submenu. */
+const SPLIT_DIRECTIONS: Array<{
+  dir: "left" | "right" | "above" | "below";
+  label: string;
+  icon: string;
+}> = [
+  { dir: "right", label: "Right", icon: "→" },
+  { dir: "left", label: "Left", icon: "←" },
+  { dir: "above", label: "Up", icon: "↑" },
+  { dir: "below", label: "Down", icon: "↓" },
+];
+
+/** Session modes offered by the context menu. */
+const MENU_MODES: Array<{ mode: Mode; label: string; icon: string }> = [
+  { mode: "opencode", label: "opencode", icon: "✦" },
+  { mode: "pi", label: "pi agent", icon: "π" },
+  { mode: "raw", label: "raw term", icon: "$" },
+];
+
+/**
+ * The "New split" submenu: one entry per session mode, each with the four
+ * split directions. The new session opens adjacent to `referencePanel`.
+ */
+function newSplitMenuItems(referencePanel: IDockviewPanel): ContextMenuItem[] {
+  return MENU_MODES.map(({ mode, label, icon }) => ({
+    label,
+    icon,
+    submenu: SPLIT_DIRECTIONS.map(({ dir, label: dLabel, icon: dIcon }) => ({
+      label: dLabel,
+      icon: dIcon,
+      run: () => addPanelWithMode(mode, { direction: dir, referencePanel }),
+    })),
+  }));
+}
+
+/** Copy the right-clicked terminal's selection, when there is one. */
+function copyTerminalSelection(panel: IDockviewPanel): void {
+  const sessionId = panelToSession.get(panel.id);
+  const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
+  const text = entry?.terminal.getSelection();
+  if (text) {
+    void copyText(text).catch((err) => console.error("copy failed", err));
+  }
+}
+
+/** Paste the system clipboard into the right-clicked terminal. */
+function pasteIntoTerminal(panel: IDockviewPanel): void {
+  const sessionId = panelToSession.get(panel.id);
+  const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
+  if (!entry) return;
+  void readClipboardText()
+    .then((text) => {
+      // terminal.paste() keeps bracketed-paste mode intact, like Ctrl+Shift+V.
+      if (text) entry.terminal.paste(text);
+    })
+    .catch((err) => console.error("paste failed", err));
+}
+
+/** Context menu for a right-clicked terminal pane. */
+function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
+  const sessionId = panelToSession.get(panel.id);
+  const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
+  const hasSelection = entry?.terminal.hasSelection() ?? false;
+
+  return [
+    ...MENU_MODES.map(({ mode, label, icon }) => ({
+      label: `New ${label} tab`,
+      icon,
+      run: () => addPanelWithMode(mode),
+    })),
+    { separator: true },
+    { label: "New split", icon: "▣", submenu: newSplitMenuItems(panel) },
+    { separator: true },
+    {
+      label: "Copy",
+      icon: "⧉",
+      disabled: !hasSelection,
+      run: () => copyTerminalSelection(panel),
+    },
+    { label: "Paste", icon: "⎘", run: () => pasteIntoTerminal(panel) },
+    { separator: true },
+    {
+      label: "Find",
+      icon: "⌕",
+      shortcut: "Ctrl+Shift+F",
+      run: () => openSearch(),
+    },
+    {
+      label: "Rename tab",
+      icon: "✎",
+      shortcut: "Ctrl+Shift+R",
+      run: () => void renamePanel(panel),
+    },
+    { separator: true },
+    {
+      label: "Close panel",
+      icon: "✕",
+      shortcut: "Ctrl+Shift+W",
+      danger: true,
+      run: () => panel.api.close(),
+    },
+  ];
+}
+
+/** Context menu for a right-clicked tab (or a group's tab bar). */
+function buildTabContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
+  return [
+    { label: "New split", icon: "▣", submenu: newSplitMenuItems(panel) },
+    { separator: true },
+    {
+      label: "Rename tab",
+      icon: "✎",
+      shortcut: "Ctrl+Shift+R",
+      run: () => void renamePanel(panel),
+    },
+    {
+      label: "Close tab",
+      icon: "✕",
+      shortcut: "Ctrl+Shift+W",
+      danger: true,
+      run: () => panel.api.close(),
+    },
+  ];
+}
+
+/** Map a dockview tab element back to its panel (for right-click menus). */
+function panelForGroupElement(groupEl: HTMLElement): IDockviewPanel | undefined {
+  const group = api.groups.find(
+    (g) => (g as unknown as { element: HTMLElement }).element === groupEl
+  );
+  return group?.activePanel ?? group?.panels[0];
+}
+
+/**
+ * Right-click handling across the terminal workspace (capture phase, before
+ * xterm or dockview see the event): terminal panes, tabs, and split gutters
+ * each get their own menu; anything else keeps the default behavior.
+ */
+function setupContextMenu(): void {
+  document.addEventListener(
+    "contextmenu",
+    (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest) return;
+
+      // Tab bar: rename / close / split relative to that tab's panel.
+      const tabEl = target.closest(".dv-tab");
+      if (tabEl instanceof HTMLElement) {
+        const panel = panelForTabElement(tabEl);
+        if (panel) {
+          e.preventDefault();
+          showContextMenu(buildTabContextMenu(panel), e.clientX, e.clientY);
+        }
+        return;
+      }
+
+      // Terminal content: full menu; the pane becomes active so Copy/Paste
+      // and any subsequent typing target the right-clicked session.
+      const paneEl = target.closest(".terminal-panel");
+      if (paneEl instanceof HTMLElement) {
+        const id = paneEl.dataset.panelId;
+        const panel = id ? api.getPanel(id) : undefined;
+        if (panel) {
+          e.preventDefault();
+          panel.api.setActive();
+          const sid = panelToSession.get(panel.id);
+          const entry = sid !== undefined ? sessions.get(sid) : undefined;
+          entry?.terminal.focus();
+          showContextMenu(buildPaneContextMenu(panel), e.clientX, e.clientY);
+        }
+        return;
+      }
+
+      // Group chrome (tab bar background / split gutters): act on the
+      // group's active panel so splits land in the right group.
+      const groupEl = target.closest(".dv-groupview");
+      if (groupEl instanceof HTMLElement) {
+        const panel = panelForGroupElement(groupEl);
+        if (panel) {
+          e.preventDefault();
+          showContextMenu(buildTabContextMenu(panel), e.clientX, e.clientY);
+        }
+      }
+    },
+    true
+  );
+}
+
 /** Backend event wiring: PTY output/exit, plus the tab activity indicator. */
 async function registerGlobalListeners() {
   await listen<{ sessionId: number; data: string }>("pty://output", (event) => {
@@ -1727,6 +1929,7 @@ async function init() {
   });
 
   setupKeyboard();
+  setupContextMenu();
 
   initDictation(() => {
     const panel = api.activePanel;
@@ -1936,7 +2139,8 @@ function setupKeyboard() {
   const settingsOpen = () => document.querySelector(".settings-backdrop") !== null;
   // While the search bar or command palette is up, keystrokes belong to their
   // inputs, so the global shortcuts below must not fire.
-  const uiOpen = () => settingsOpen() || isSearchOpen() || isPaletteOpen();
+  const uiOpen = () =>
+    settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
 
   // Ctrl+Shift+T spawns an opencode tab, Ctrl+Shift+W closes the active panel.
   // Bubble phase is fine here: these combos are not printable terminal keys.

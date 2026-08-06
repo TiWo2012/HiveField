@@ -48,6 +48,13 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   clobbers `Ctrl+C`'s SIGINT); `Ctrl+Shift+V` pastes the clipboard into the
   active terminal (bracketed-paste aware). `Ctrl+V` / `Ctrl+C` keep their
   native webview behavior.
+- **Right-click context menu**: right-click a terminal pane for a styled,
+  keyboard-navigable menu — new opencode/pi/raw tabs, a nested **New split**
+  submenu with all four split directions (relative to the right-clicked
+  pane), **Copy** (only when there is a selection) / **Paste**, plus **Find**,
+  **Rename tab**, and **Close panel**. Right-clicking a tab (or a split
+  gutter) offers split / rename / close for that tab. `↑`/`↓` navigate,
+  `→`/`Enter` open/activate, `←`/`Esc` go back.
 - **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
   open pane (jump straight to it) and common actions (new opencode/pi/raw tab
   or split, find, focus panes, rename, close, settings). Type to fuzzy-filter with

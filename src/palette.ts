@@ -1,5 +1,6 @@
 import { fuzzyMatch, type FuzzyResult } from "./fuzzy";
 import { closeSearch, isSearchOpen } from "./search";
+import { closeContextMenu } from "./context-menu";
 
 /**
  * Command palette: a fuzzy finder over open panes and app actions.
@@ -277,7 +278,9 @@ export function openPalette(): void {
   // Never pop the palette over the settings modal.
   if (document.querySelector(".settings-backdrop")) return;
   if (!context) return;
-  // Give the palette full keyboard focus: close the search bar if it's up.
+  // Give the palette full keyboard focus: dismiss any open context menu and
+  // close the search bar if it's up.
+  closeContextMenu();
   if (isSearchOpen()) closeSearch();
   items = context.getItems();
   rendered = [];

@@ -957,6 +957,133 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Context menu (right-click): panes, tabs, split gutters
+ * ------------------------------------------------------------------------- */
+
+.ctx-menu-root {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  pointer-events: none;
+}
+
+.ctx-menu {
+  position: absolute;
+  min-width: 210px;
+  max-width: 280px;
+  padding: 4px;
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  user-select: none;
+  pointer-events: auto;
+  animation: ctx-menu-in 0.1s ease-out;
+}
+
+@keyframes ctx-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ctx-menu-item.active {
+  background: var(--hf-accent);
+  color: var(--hf-accent-fg);
+}
+
+.ctx-menu-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ctx-menu-item.danger .ctx-menu-label,
+.ctx-menu-item.danger .ctx-menu-icon {
+  color: var(--hf-red);
+}
+
+.ctx-menu-item.danger.active {
+  background: color-mix(in srgb, var(--hf-red) 22%, var(--hf-surface0));
+}
+
+.ctx-menu-item.danger.active .ctx-menu-label,
+.ctx-menu-item.danger.active .ctx-menu-icon {
+  color: var(--hf-red);
+}
+
+.ctx-menu-icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--hf-subtext0);
+}
+
+.ctx-menu-item.active .ctx-menu-icon {
+  color: var(--hf-accent-fg);
+}
+
+.ctx-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ctx-menu-shortcut {
+  flex: none;
+  font-family: var(--hivefield-font);
+  font-size: 10px;
+  color: var(--hf-subtext0);
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.ctx-menu-item.active .ctx-menu-shortcut {
+  color: var(--hf-accent-fg);
+  background: transparent;
+  border-color: transparent;
+}
+
+.ctx-menu-arrow {
+  flex: none;
+  color: var(--hf-subtext0);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ctx-menu-item.active .ctx-menu-arrow {
+  color: var(--hf-accent-fg);
+}
+
+.ctx-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--hf-surface2);
+}
+
+/* ---------------------------------------------------------------------------
  * Dictation status badge
  * ------------------------------------------------------------------------- */
 
