@@ -99,9 +99,11 @@ function toggleCase(): void {
   runSearch("next");
 }
 
-function openSearch(): void {
-  // Never pop the bar over the settings modal.
+export function openSearch(): void {
+  // Never pop the bar over the settings modal or the command palette.
   if (document.querySelector(".settings-backdrop")) return;
+  const palette = document.querySelector<HTMLElement>(".palette-backdrop");
+  if (palette && !palette.hidden) return;
   open = true;
   bar.hidden = false;
   input.focus();
@@ -109,7 +111,7 @@ function openSearch(): void {
   if (input.value) runSearch("next");
 }
 
-function closeSearch(): void {
+export function closeSearch(): void {
   if (!open) return;
   open = false;
   bar.hidden = true;

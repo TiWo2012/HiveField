@@ -27,7 +27,8 @@ import {
 } from "./settings";
 import { toggleSettings } from "./settings-ui";
 import { initDictation } from "./dictation";
-import { initSearch, isSearchOpen, rerunSearch } from "./search";
+import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
+import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
 import { bindWorkspaceSave, restoreWorkspace } from "./workspace";
 import "./styles.css";
 
@@ -184,6 +185,8 @@ function generateSessionName(): string {
 }
 
 interface SessionEntry {
+  /** What this session auto-runs ("opencode" agent or "raw" shell). */
+  mode: Mode;
   terminal: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
@@ -636,6 +639,7 @@ function createTerminalComponent(): IContentRenderer {
           }
           sessionId = id;
           const entry: SessionEntry = {
+            mode,
             terminal: terminal!,
             fitAddon: fitAddon!,
             searchAddon: searchAddon!,
@@ -709,6 +713,23 @@ function activeSessionEntry(): SessionEntry | undefined {
   const sessionId = panelToSession.get(panel.id);
   if (sessionId === undefined) return undefined;
   return sessions.get(sessionId);
+}
+
+/**
+ * Move focus to the pane adjacent in `direction` (vim-style), if one exists.
+ * Returns true when the focus moved; false lets the caller pass the key
+ * through to the shell (so Ctrl+L still clears the screen when there is no
+ * pane to the right).
+ */
+function movePaneFocus(direction: GroupNavigationDirection): boolean {
+  const group = api.activePanel?.group;
+  if (!group) return false;
+  const adjacent = api.adjacentGroupInDirection(group, direction);
+  if (!adjacent) return false;
+  // Activate the group via its active panel; our component's
+  // onDidActiveChange handler then focuses the terminal there.
+  adjacent.activePanel?.api.setActive();
+  return true;
 }
 
 /**
@@ -1145,6 +1166,12 @@ async function init() {
     getActive: () => activeSessionEntry(),
   });
 
+  // Command palette (Ctrl+Shift+P): fuzzy finder over panes and actions.
+  initPalette({
+    getItems: buildPaletteItems,
+    onClose: () => activeSessionEntry()?.terminal.focus(),
+  });
+
   // If the user switches panels while searching, move the highlights to the
   // newly active terminal instead of leaving them stale on the old one, and
   // clear any activity/completion indicator on the newly focused tab.
@@ -1189,11 +1216,126 @@ const MOVEMENT_KEYS: Record<string, GroupNavigationDirection> = {
   l: "right",
 };
 
+/**
+ * Build the command palette's item list: every open pane (with its rendered
+ * title, mode icon, and cwd detail) followed by the available actions. Called
+ * fresh every time the palette opens so the list reflects the live layout.
+ */
+function buildPaletteItems(): PaletteItem[] {
+  const items: PaletteItem[] = [];
+
+  for (const panel of api.panels) {
+    const params = panel.api.getParameters() as Record<string, unknown>;
+    const mode: Mode = params.mode === "raw" ? "raw" : "opencode";
+    const sessionId = panelToSession.get(panel.id);
+    const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
+    const cwd =
+      entry?.cwd ?? (typeof params.cwd === "string" ? params.cwd : undefined);
+    const detail = [
+      isPanelActive(panel.id) ? "active" : null,
+      cwd ? shortLabel(cwd) : null,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(" · ");
+    items.push({
+      id: panel.id,
+      label: panel.title ?? "…",
+      detail,
+      icon: mode === "opencode" ? "✦" : "$",
+      group: "Panes",
+      run: () => {
+        panel.api.setActive();
+        const sid = panelToSession.get(panel.id);
+        const e = sid !== undefined ? sessions.get(sid) : undefined;
+        e?.terminal.focus();
+      },
+    });
+  }
+
+  const actions: Array<{
+    label: string;
+    detail?: string;
+    icon?: string;
+    run: () => void;
+  }> = [
+    {
+      label: "New opencode tab",
+      detail: "Ctrl+Shift+T",
+      icon: "✦",
+      run: () => addPanelWithMode("opencode"),
+    },
+    {
+      label: "New raw term tab",
+      icon: "$",
+      run: () => addPanelWithMode("raw"),
+    },
+    {
+      label: "New opencode split",
+      icon: "✦",
+      run: () => addPanelWithMode("opencode", { direction: "right" }),
+    },
+    {
+      label: "New raw term split",
+      icon: "$",
+      run: () => addPanelWithMode("raw", { direction: "right" }),
+    },
+    {
+      label: "Find in terminal",
+      detail: "Ctrl+Shift+F",
+      icon: "⌕",
+      run: () => openSearch(),
+    },
+    {
+      label: "Focus pane left",
+      detail: "Ctrl+H",
+      run: () => movePaneFocus("left"),
+    },
+    {
+      label: "Focus pane right",
+      detail: "Ctrl+L",
+      run: () => movePaneFocus("right"),
+    },
+    {
+      label: "Focus pane up",
+      detail: "Ctrl+K",
+      run: () => movePaneFocus("up"),
+    },
+    {
+      label: "Focus pane down",
+      detail: "Ctrl+J",
+      run: () => movePaneFocus("down"),
+    },
+    {
+      label: "Rename active tab",
+      detail: "Ctrl+Shift+R",
+      run: () => {
+        const panel = api.activePanel;
+        if (panel) void renamePanel(panel);
+      },
+    },
+    {
+      label: "Close active panel",
+      detail: "Ctrl+Shift+W",
+      run: () => api.activePanel?.api.close(),
+    },
+    {
+      label: "Settings",
+      detail: "Ctrl+,",
+      icon: "⚙",
+      run: () => toggleSettings(),
+    },
+  ];
+  for (const action of actions) {
+    items.push({ id: `action-${action.label}`, group: "Actions", ...action });
+  }
+  return items;
+}
+
 function setupKeyboard() {
   const settingsOpen = () => document.querySelector(".settings-backdrop") !== null;
-  // While the search bar is up, keystrokes belong to its input, so the global
-  // shortcuts below must not fire.
-  const uiOpen = () => settingsOpen() || isSearchOpen();
+  // While the search bar or command palette is up, keystrokes belong to their
+  // inputs, so the global shortcuts below must not fire.
+  const uiOpen = () => settingsOpen() || isSearchOpen() || isPaletteOpen();
 
   // Ctrl+Shift+T spawns an opencode tab, Ctrl+Shift+W closes the active panel.
   // Bubble phase is fine here: these combos are not printable terminal keys.
@@ -1257,18 +1399,9 @@ function setupKeyboard() {
           return;
         }
         const direction = MOVEMENT_KEYS[e.key.toLowerCase()];
-        if (direction) {
-          const group = api.activePanel?.group;
-          if (group) {
-            const adjacent = api.adjacentGroupInDirection(group, direction);
-            if (adjacent) {
-              e.preventDefault();
-              e.stopPropagation();
-              // Activate the group via its active panel; our component's
-              // onDidActiveChange handler then focuses the terminal there.
-              adjacent.activePanel?.api.setActive();
-            }
-          }
+        if (direction && movePaneFocus(direction)) {
+          e.preventDefault();
+          e.stopPropagation();
         }
       }
     },

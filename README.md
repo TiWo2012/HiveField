@@ -34,6 +34,11 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   - **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is
     never overwritten by program/OSC titles, and clearing it reverts to
     automatic titles
+- **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
+  open pane (jump straight to it) and common actions (new opencode/raw tab or
+  split, find, focus panes, rename, close, settings). Type to fuzzy-filter with
+  live match highlighting, `↑`/`↓` (or `Ctrl+P` / `Ctrl+N`, or `Ctrl+K` /
+  `Ctrl+J`) to move, `Enter` to jump/run, `Esc` to close.
 - **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
   scrollback. Matches highlight live as you type; `Enter` / `Shift+Enter` jump
   to the next / previous match, `Alt+C` toggles case sensitivity, and `Esc`
