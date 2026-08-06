@@ -1,0 +1,63 @@
+name: Tests
+
+# Runs on any push / merge to `dev`, and can be invoked from other
+# workflows (release.yml runs it before building Linux executables).
+on:
+  push:
+    branches: [dev]
+  workflow_call: {}
+
+jobs:
+  frontend:
+    name: Frontend (bundle + typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bundle frontend
+        run: bun run build
+
+      - name: Typecheck frontend
+        run: bunx tsc --noEmit
+
+  backend:
+    name: Backend (cargo test)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev
+
+      # The vosk crate links against a prebuilt libvosk.so (it is not built
+      # from source), so the library must be present before cargo runs.
+      - name: Install libvosk
+        run: |
+          curl -fsSL -o /tmp/vosk.zip https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip
+          sudo unzip -oq /tmp/vosk.zip -d /opt/vosk
+          sudo cp /opt/vosk/vosk-linux-x86_64-0.3.45/libvosk.so /usr/local/lib/
+          sudo ldconfig
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test

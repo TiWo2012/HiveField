@@ -1,0 +1,91 @@
+name: Release
+
+# Builds Linux executables and publishes a GitHub release, but only on
+# pushes / merges to `master`. Tests run first via the shared test workflow.
+on:
+  push:
+    branches: [master]
+
+jobs:
+  tests:
+    name: Run tests
+    uses: ./.github/workflows/test.yml
+
+  build-linux:
+    name: Build Linux executables
+    needs: tests
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake curl wget file \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            libfuse2
+
+      # The vosk crate links against a prebuilt libvosk.so (it is not built
+      # from source), so the library must be present before cargo runs.
+      - name: Install libvosk
+        run: |
+          curl -fsSL -o /tmp/vosk.zip https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip
+          sudo unzip -oq /tmp/vosk.zip -d /opt/vosk
+          sudo cp /opt/vosk/vosk-linux-x86_64-0.3.45/libvosk.so /usr/local/lib/
+          sudo ldconfig
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Linux bundles (deb, rpm, AppImage)
+        run: bun run tauri build --bundles deb,appimage,rpm
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp src-tauri/target/release/hivefield release-artifacts/
+          cp src-tauri/target/release/bundle/deb/*.deb release-artifacts/
+          cp src-tauri/target/release/bundle/rpm/*.rpm release-artifacts/
+          cp src-tauri/target/release/bundle/appimage/*.AppImage release-artifacts/
+          ls -lh release-artifacts/
+          APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hivefield-linux
+          path: release-artifacts
+
+      # A new tag is minted per master push (version + build number) so every
+      # release lands without manual tag management; bump the version in
+      # tauri.conf.json / Cargo.toml to start a new version series.
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
+          name: hiveField Terminal v${{ env.APP_VERSION }} (build ${{ github.run_number }})
+          body: |
+            Automated Linux release built from `master` at `${{ github.sha }}`.
+
+            - Raw executable
+            - `.deb` package
+            - `.rpm` package
+            - AppImage
+          files: release-artifacts/*
