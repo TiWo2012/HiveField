@@ -137,11 +137,12 @@ fn git_worktree_create(branch: String, path: Option<String>) -> Result<String, S
 
 /// IPC command: remove the worktree at `path` from the repo containing the
 /// launch directory. Fails (surfacing git's error) when the worktree has
-/// uncommitted or untracked files.
+/// uncommitted or untracked files; pass `force` (default false) to run
+/// `git worktree remove --force`, which also deletes the working tree.
 #[tauri::command]
-fn git_worktree_remove(path: String) -> Result<(), String> {
+fn git_worktree_remove(path: String, force: Option<bool>) -> Result<(), String> {
     let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
-    git::remove(&dir, &path)
+    git::remove(&dir, &path, force.unwrap_or(false))
 }
 
 /// IPC command: auto-create a throwaway worktree for a session. `name` is
@@ -152,6 +153,50 @@ fn git_worktree_remove(path: String) -> Result<(), String> {
 fn git_worktree_auto_create(name: String, base_dir: String) -> Result<git::AutoWorktree, String> {
     let dir = workspace::resolve_cwd().map(std::path::PathBuf::from)?;
     git::auto_create(&dir, &name, &base_dir)
+}
+
+/// IPC command: whether the given path exists on disk as a directory. Used by
+/// the frontend to decide whether a restored session's saved worktree path is
+/// still valid before reusing it.
+#[tauri::command]
+fn dir_exists(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
+/// Only schemes the terminal should ever hand to the OS opener.
+fn allowed_url_scheme(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:")
+}
+
+/// IPC command: open a URL in the system's default browser / handler.
+/// Only `http`, `https` and `mailto` schemes are accepted.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !allowed_url_scheme(trimmed) {
+        return Err(format!("refusing to open URL with disallowed scheme: {trimmed}"));
+    }
+    use std::process::Command;
+    if cfg!(target_os = "macos") {
+        Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("failed to launch 'open': {e}"))?;
+    } else if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .args(["/C", "start", "", trimmed])
+            .spawn()
+            .map_err(|e| format!("failed to launch 'start': {e}"))?;
+    } else {
+        Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("failed to launch xdg-open: {e}"))?;
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -173,6 +218,8 @@ pub fn run() {
             git_worktree_create,
             git_worktree_remove,
             git_worktree_auto_create,
+            dir_exists,
+            open_url,
             fonts::list_system_fonts,
             dictation::dictation_start,
             dictation::dictation_stop,
@@ -221,5 +268,31 @@ mod tests {
             all.extend(h.join().unwrap());
         }
         assert_eq!(all.len(), 800, "fetch_add must hand out unique ids");
+    }
+
+    #[test]
+    fn open_url_accepts_http_https_mailto() {
+        for url in [
+            "https://example.com",
+            "http://example.com/path?q=1",
+            "mailto:dev@example.com",
+            "  https://trimmed.example.com  ",
+        ] {
+            assert!(allowed_url_scheme(url.trim()), "{url:?} should be allowed");
+        }
+    }
+
+    #[test]
+    fn open_url_rejects_other_schemes() {
+        for url in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,<b>hi</b>",
+            "ftp://example.com",
+            "HTTPS-not-a-url",
+            "",
+        ] {
+            assert!(!allowed_url_scheme(url.trim()), "{url:?} should be rejected");
+        }
     }
 }

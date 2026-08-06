@@ -185,17 +185,22 @@ pub fn create(dir: &Path, branch: &str, path: Option<&str>) -> Result<PathBuf, S
 /// Remove the worktree at `path` from the repo containing `dir`.
 ///
 /// Plain removal: a worktree with untracked or modified files is refused by
-/// git, and that error is surfaced to the caller (the UI shows it).
-pub fn remove(dir: &Path, path: &str) -> Result<(), String> {
+/// git, and that error is surfaced to the caller (the UI shows it). When
+/// `force` is true, `git worktree remove --force` is used, which also deletes
+/// the working tree — this is what auto-created throwaway session worktrees
+/// get on close.
+pub fn remove(dir: &Path, path: &str, force: bool) -> Result<(), String> {
     let root = repo_root(dir).ok_or_else(|| "not inside a git repository".to_string())?;
     if path.trim().is_empty() {
         return Err("worktree path must not be empty".to_string());
     }
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&root)
-        .args(["worktree", "remove"])
-        .arg(path.trim())
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(&root).arg("worktree").arg("remove");
+    if force {
+        cmd.arg("--force");
+    }
+    cmd.arg(path.trim());
+    let status = cmd
         .status()
         .map_err(|e| format!("failed to run git worktree remove: {e}"))?;
     if !status.success() {
