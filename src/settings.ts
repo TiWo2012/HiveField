@@ -7,6 +7,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { AGENTS, AGENT_MODES } from "./agents";
 import { DEFAULT_THEME_ID, getTheme } from "./themes";
 
 export type FontWeightValue = "normal" | "bold";
@@ -41,6 +42,11 @@ export interface AppSettings {
   ntfyTopic: string;
   /** Optional ntfy access token (sent as Authorization: Bearer; stored unencrypted). */
   ntfyToken: string;
+  /**
+   * Agent mode ids offered as new-session sources (sidebar / context menu /
+   * palette). Empty array hides every agent (the raw shell is always shown).
+   */
+  visibleAgents: string[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -63,6 +69,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ntfyServer: "https://ntfy.sh",
   ntfyTopic: "",
   ntfyToken: "",
+  visibleAgents: AGENTS.map((a) => a.id),
 };
 
 const STORAGE_KEY = "hivefield.settings";
@@ -93,6 +100,15 @@ function normalize(value: unknown): AppSettings {
       : fallback;
   const pickBool = (key: string, fallback: boolean): boolean =>
     typeof v[key] === "boolean" ? (v[key] as boolean) : fallback;
+  const pickAgents = (key: string, fallback: string[]): string[] => {
+    // Missing key (older settings files) → fall back to "all agents". An
+    // explicit array is kept as-is (even empty = hide every agent), only
+    // dropping ids that are no longer in the registry.
+    if (!Array.isArray(v[key])) return fallback;
+    return (v[key] as unknown[]).filter(
+      (x): x is string => typeof x === "string" && AGENT_MODES.includes(x)
+    );
+  };
 
   return {
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
@@ -122,6 +138,7 @@ function normalize(value: unknown): AppSettings {
     ntfyServer: pickStr("ntfyServer", DEFAULT_SETTINGS.ntfyServer),
     ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),
     ntfyToken: pickStr("ntfyToken", DEFAULT_SETTINGS.ntfyToken),
+    visibleAgents: pickAgents("visibleAgents", DEFAULT_SETTINGS.visibleAgents),
   };
 }
 

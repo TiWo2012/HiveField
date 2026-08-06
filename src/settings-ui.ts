@@ -6,6 +6,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { AGENTS } from "./agents";
 import { THEMES } from "./themes";
 import {
   getSettings,
@@ -162,6 +163,37 @@ function toggleField(value: boolean, onChange?: (v: boolean) => void): HTMLEleme
   input.checked = value;
   input.addEventListener("change", () => onChange?.(input.checked));
   return input;
+}
+
+/**
+ * A checkbox per registered agent, controlling which ones are offered as
+ * new-session sources. Unchecking an agent hides it from the sidebar, the
+ * context menu and the palette (existing sessions keep running).
+ */
+function agentChecklist(): HTMLElement {
+  const wrap = el("div", "settings-agents");
+  const visible = new Set(getSettings().visibleAgents);
+  for (const agent of AGENTS) {
+    const item = el("label", "settings-agent");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "settings-toggle";
+    cb.checked = visible.has(agent.id);
+    cb.addEventListener("change", () => {
+      const next = new Set(getSettings().visibleAgents);
+      if (cb.checked) next.add(agent.id);
+      else next.delete(agent.id);
+      // Keep registry order so the sidebar/menu order stays stable.
+      void updateSettings({
+        visibleAgents: AGENTS.filter((a) => next.has(a.id)).map((a) => a.id),
+      });
+    });
+    const name = el("span", "settings-agent-name");
+    name.textContent = `${agent.icon} ${agent.label}`;
+    item.append(cb, name);
+    wrap.appendChild(item);
+  }
+  return wrap;
 }
 
 function section(title: string): HTMLElement {
@@ -322,6 +354,18 @@ function buildOverlay(): HTMLElement {
     )
   );
   body.appendChild(renderSection);
+
+  /* --- Agents --- */
+  const agentsSection = section("Agents");
+  const agentsLabel = el("span", "settings-label");
+  agentsLabel.textContent = "Show in sidebar";
+  agentsSection.appendChild(agentsLabel);
+  agentsSection.appendChild(agentChecklist());
+  const agentsHint = el("span", "settings-hint");
+  agentsHint.textContent =
+    "Which coding agents are offered as new-session sources (sidebar, context menu, palette). The raw shell is always available.";
+  agentsSection.appendChild(agentsHint);
+  body.appendChild(agentsSection);
 
   /* --- Worktrees --- */
   const worktreeSection = section("Worktrees");

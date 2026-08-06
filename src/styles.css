@@ -971,6 +971,35 @@ body {
   accent-color: var(--hf-accent);
 }
 
+/* Agent visibility checklist (which agents appear as new-session sources). */
+.settings-agents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 2px 14px;
+  margin: 8px 0 2px;
+}
+
+.settings-agent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--hf-text);
+  font-size: 12px;
+}
+
+.settings-agent:hover {
+  background: var(--hf-surface1);
+}
+
+.settings-agent-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .settings-preview {
   margin: 4px 0 8px;
   padding: 10px 12px;

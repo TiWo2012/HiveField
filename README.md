@@ -29,9 +29,12 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   terminal area — it opens there as a **split** (drop near an edge to choose
   the split direction, drop in the middle to split to the right). Agent
   sessions auto-run the agent CLI; `raw` sessions are a plain shell. Use
-  `Ctrl+Shift+T` to open a session as a tab instead. Adding a new agent is a
-  one-line change in the frontend registry (`AGENTS` in `src/main.ts`); the
-  backend auto-runs any non-`raw` mode as its command.
+  `Ctrl+Shift+T` to open a session as a tab instead. Which agents are offered
+  is configurable in **Settings → Agents** (uncheck an agent to hide it from
+  the sidebar, context menu and palette; the raw shell is always available).
+  Adding a new agent is a one-line change in the frontend registry (`AGENTS`
+  in `src/agents.ts`); the backend auto-runs any non-`raw` mode as its
+  command.
 - **Live sidebar info**: below the drag sources the sidebar shows a
   **Running** section — every open session with its mode icon, tab title,
   working directory, and a status glyph (active / ● producing output /

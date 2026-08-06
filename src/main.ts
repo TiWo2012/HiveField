@@ -28,6 +28,16 @@ import {
   type AppSettings,
 } from "./settings";
 import { toggleSettings } from "./settings-ui";
+import {
+  AGENTS,
+  KNOWN_MODES,
+  RAW_MODE,
+  agentForMode,
+  isAgentMode,
+  modeCommand,
+  modeIcon,
+  modeLabel,
+} from "./agents";
 import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, openSearch, rerunSearch } from "./search";
 import { initPalette, isPaletteOpen, type PaletteItem } from "./palette";
@@ -52,79 +62,22 @@ import "./styles.css";
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */
 type Mode = string;
 
-/** A coding-agent CLI this terminal can launch as a session. */
-interface AgentDef {
-  /** Stable mode id (also the default launch command). */
-  id: string;
-  /** Human-readable label for the sidebar / menus / notifications. */
-  label: string;
-  /** Icon glyph for the sidebar, tabs, context menu and palette. */
-  icon: string;
-  /** The exact command to auto-run when it differs from `id`. */
-  command?: string;
-}
-
-/**
- * The major coding-agent CLIs, in sidebar order. Sessions auto-run the agent
- * in an isolated worktree; add a new agent by appending to this list (and a
- * `command` when the CLI binary differs from the id).
- */
-const AGENTS: readonly AgentDef[] = [
-  { id: "opencode", label: "opencode", icon: "✦" },
-  { id: "pi", label: "pi agent", icon: "π" },
-  { id: "codex", label: "Codex", icon: "◈" },
-  { id: "copilot", label: "Copilot", icon: "◎" },
-  { id: "claude", label: "Claude Code", icon: "✳" },
-  { id: "gemini", label: "Gemini CLI", icon: "✧" },
-  { id: "aider", label: "Aider", icon: "⚒" },
-  { id: "cursor", label: "Cursor Agent", icon: "▸", command: "cursor-agent" },
-  { id: "amp", label: "Amp", icon: "⚡" },
-  { id: "qwen", label: "Qwen Code", icon: "❖", command: "qwen-code" },
-  { id: "goose", label: "Goose", icon: "❉" },
-  { id: "crush", label: "Crush", icon: "✿" },
-  { id: "cody", label: "Cody", icon: "⬡" },
-  { id: "openhands", label: "OpenHands", icon: "☛" },
-];
-
-/** The plain-shell mode: never auto-runs an agent. */
-const RAW_MODE: Mode = "raw";
-
 /** Default session mode when none is requested (the first agent). */
 const DEFAULT_MODE: Mode = AGENTS[0].id;
 
-/** Every session mode the sidebar / menus can start. */
-const KNOWN_MODES: readonly Mode[] = [...AGENTS.map((a) => a.id), RAW_MODE];
-
-/** Modes that auto-run a coding agent (vs. a plain shell). */
-const AGENT_MODES: readonly Mode[] = AGENTS.map((a) => a.id);
-
-/** All session modes offered in the sidebar / menus (agents + raw term). */
-const SESSION_MODES: ReadonlyArray<{ mode: Mode; label: string; icon: string }> = [
-  ...AGENTS.map((a) => ({ mode: a.id, label: a.label, icon: a.icon })),
-  { mode: RAW_MODE, label: "raw term", icon: "$" },
-];
-
-/** Registry lookup for an agent by mode id; undefined for raw/unknown. */
-function agentForMode(mode: Mode): AgentDef | undefined {
-  return AGENTS.find((a) => a.id === mode);
-}
-
-/** The command a mode auto-runs in the shell, or undefined for raw. */
-function modeCommand(mode: Mode): string | undefined {
-  const agent = agentForMode(mode);
-  return agent ? (agent.command ?? agent.id) : undefined;
-}
-
-/** Display label for a mode (the agent label, or "raw term"). */
-function modeLabel(mode: Mode): string {
-  if (mode === RAW_MODE) return "raw term";
-  return agentForMode(mode)?.label ?? mode;
-}
-
-/** Icon glyph for a mode. */
-function modeIcon(mode: Mode): string {
-  if (mode === RAW_MODE) return "$";
-  return agentForMode(mode)?.icon ?? "✦";
+/**
+ * The session modes currently offered as new-session sources (sidebar, context
+ * menu, palette): the agents enabled in the `visibleAgents` setting (all of
+ * them by default), plus the raw shell which is always offered.
+ */
+function sessionModes(): ReadonlyArray<{ mode: Mode; label: string; icon: string }> {
+  const visible = new Set(getSettings().visibleAgents);
+  const agents = AGENTS.filter((a) => visible.has(a.id)).map((a) => ({
+    mode: a.id,
+    label: a.label,
+    icon: a.icon,
+  }));
+  return [...agents, { mode: RAW_MODE, label: "raw term", icon: "$" }];
 }
 
 /** Result of the `git_worktree_auto_create` IPC command. */
@@ -142,11 +95,6 @@ interface SessionDrag {
 
 /** Custom MIME type used to drag sidebar entries into the dockview layout. */
 const DND_MIME = "application/x-hivefield-session";
-
-/** Whether `mode` auto-runs a coding agent (and gets an isolated worktree). */
-function isAgentMode(mode: Mode): boolean {
-  return AGENT_MODES.includes(mode);
-}
 
 /** Serialize a session drag payload (JSON, so it carries the optional cwd). */
 function serializeDrag(drag: SessionDrag): string {
@@ -1316,14 +1264,6 @@ function refreshSidebarRunning(): void {
     const status = document.createElement("span");
     status.className = `sidebar-session-status${cls ? ` ${cls}` : ""}`;
     status.textContent = glyph;
-    status.title =
-      cls === "active"
-        ? "Active session"
-        : cls === "activity"
-          ? "Producing output"
-          : cls === "done"
-            ? "Output finished"
-            : "";
     item.appendChild(status);
 
     // Click focuses the pane and its terminal.
@@ -1339,7 +1279,6 @@ function refreshSidebarRunning(): void {
     close.className = "sidebar-session-close";
     close.type = "button";
     close.textContent = "×";
-    close.title = "Close session";
     close.addEventListener("click", (e) => {
       e.stopPropagation();
       panel.api.close();
@@ -1408,17 +1347,27 @@ function renderWorkspaceSection(): void {
   addRow("Sessions", String(api?.panels.length ?? 0));
 }
 
-function buildSidebar() {
-  const sidebar = document.getElementById("sidebar")!;
+/** The sidebar's "New session" drag-sources container (rebuilt on demand). */
+let sidebarSourcesEl: HTMLElement | null = null;
+
+/** Last visible-agent selection, to detect when the sidebar sources need rebuilding. */
+let lastVisibleAgents = getSettings().visibleAgents.join(",");
+
+/**
+ * (Re)build the drag sources at the top of the sidebar from the currently
+ * visible session modes. Re-run whenever the `visibleAgents` setting changes
+ * so hidden agents leave the sidebar immediately.
+ */
+function buildSidebarSources(): void {
+  if (!sidebarSourcesEl) return;
+  sidebarSourcesEl.replaceChildren();
 
   const title = document.createElement("div");
   title.className = "sidebar-title";
   title.textContent = "New session";
-  sidebar.appendChild(title);
+  sidebarSourcesEl.appendChild(title);
 
-  const sources = SESSION_MODES;
-
-  for (const source of sources) {
+  for (const source of sessionModes()) {
     const item = document.createElement("div");
     item.className = "drag-item";
     item.dataset.mode = source.mode;
@@ -1483,8 +1432,20 @@ function buildSidebar() {
       lastSidebarDragOver = undefined;
     });
 
-    sidebar.appendChild(item);
+    sidebarSourcesEl.appendChild(item);
   }
+}
+
+function buildSidebar() {
+  const sidebar = document.getElementById("sidebar")!;
+
+  // Drag sources live in their own container so the visible-agent setting can
+  // rebuild just this section (see buildSidebarSources).
+  const sourcesSection = document.createElement("div");
+  sourcesSection.className = "sidebar-sources";
+  sidebar.appendChild(sourcesSection);
+  sidebarSourcesEl = sourcesSection;
+  buildSidebarSources();
 
   // Live list of running sessions (rebuilds as panes come and go).
   const runningSection = document.createElement("div");
@@ -1539,7 +1500,6 @@ function buildSidebar() {
   const settingsBtn = document.createElement("button");
   settingsBtn.className = "sidebar-settings";
   settingsBtn.type = "button";
-  settingsBtn.title = "Settings (Ctrl+,)";
   settingsBtn.textContent = "⚙";
   settingsBtn.addEventListener("click", toggleSettings);
   sidebar.appendChild(settingsBtn);
@@ -1591,11 +1551,6 @@ function renderWorkspaceStrip(): void {
     dot.className = "workspace-slot-dot";
     if (ws.hasLayout) dot.classList.add("filled");
 
-    const shortcut = ws.slot === 10 ? "Ctrl+0" : `Ctrl+${ws.slot}`;
-    row.title =
-      `Workspace ${ws.slot}${ws.name ? ` (${ws.name})` : ""} — ${shortcut}` +
-      (ws.slot === current ? " (current)" : "") +
-      ". Click to switch, double-click to rename.";
     row.append(num, label, dot);
     row.addEventListener("click", () => switchToWorkspace(ws.slot));
     row.addEventListener("dblclick", (e) => {
@@ -1795,7 +1750,7 @@ const SPLIT_DIRECTIONS: Array<{
  * split directions. The new session opens adjacent to `referencePanel`.
  */
 function newSplitMenuItems(referencePanel: IDockviewPanel): ContextMenuItem[] {
-  return SESSION_MODES.map(({ mode, label, icon }) => ({
+  return sessionModes().map(({ mode, label, icon }) => ({
     label,
     icon,
     submenu: SPLIT_DIRECTIONS.map(({ dir, label: dLabel, icon: dIcon }) => ({
@@ -1837,11 +1792,11 @@ function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
 
   return [
     {
-      // One submenu for every session mode (all agents + raw term), so the
-      // menu stays compact now that many agents are supported.
+      // One submenu for every visible session mode (enabled agents + raw
+      // term), so the menu stays compact now that many agents are supported.
       label: "New session",
       icon: "✦",
-      submenu: SESSION_MODES.map(({ mode, label, icon }) => ({
+      submenu: sessionModes().map(({ mode, label, icon }) => ({
         label,
         icon,
         run: () => addPanelWithMode(mode),
@@ -2049,6 +2004,15 @@ async function init() {
       `"${settings.fontFamily}", monospace`
     );
     applyUiTheme(settings);
+
+    // Rebuild the sidebar's drag sources when the visible-agent selection
+    // changes, so hidden agents disappear (and re-enabled ones reappear)
+    // without restarting the app.
+    const visibleKey = settings.visibleAgents.join(",");
+    if (visibleKey !== lastVisibleAgents) {
+      lastVisibleAgents = visibleKey;
+      buildSidebarSources();
+    }
   });
 
   await registerGlobalListeners();
@@ -2267,13 +2231,13 @@ function buildPaletteItems(): PaletteItem[] {
   }> = [
     // One "new tab" and one "new split" action per session mode; the fuzzy
     // finder keeps 30 actions navigable (type "cop" to jump to Copilot).
-    ...SESSION_MODES.map(({ mode, label, icon }) => ({
+    ...sessionModes().map(({ mode, label, icon }) => ({
       label: `New ${label} tab`,
       detail: mode === DEFAULT_MODE ? "Ctrl+Shift+T" : undefined,
       icon,
       run: () => addPanelWithMode(mode),
     })),
-    ...SESSION_MODES.map(({ mode, label, icon }) => ({
+    ...sessionModes().map(({ mode, label, icon }) => ({
       label: `New ${label} split`,
       icon,
       run: () => addPanelWithMode(mode, { direction: "right" }),
