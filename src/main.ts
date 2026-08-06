@@ -254,6 +254,16 @@ let windowFocused = true;
 let api: DockviewApi;
 let panelCounter = 0;
 
+/** Sidebar live sections (populated by buildSidebar). */
+let sidebarRunningEl: HTMLElement | null = null;
+let sidebarWorkspaceEl: HTMLElement | null = null;
+
+/** Cached workspace info shown in the sidebar's Workspace section. */
+let launchCwd: string | undefined;
+let gitRoot: string | undefined;
+let gitBranch: string | undefined;
+let gitWorktreeCount = 0;
+
 /**
  * True while one of our sidebar sessions is being dragged. WebKitGTK does not
  * expose drag payloads through `dataTransfer.getData()` during `dragover`
@@ -419,6 +429,8 @@ function renderTitle(panelId: string): void {
   const st = panelStatus.get(panelId);
   const panel = api?.getPanel(panelId);
   if (st && panel) panel.api.setTitle(st.indicator + st.baseTitle);
+  // The sidebar's Running list mirrors tab titles/indicators live.
+  refreshSidebarRunning();
 }
 
 /** Update the base (indicator-free) title, keeping the indicator prefix. */
@@ -431,7 +443,9 @@ function setBaseTitle(panelId: string, title: string): void {
 
 function setIndicator(panelId: string, indicator: string): void {
   const st = panelStatus.get(panelId);
-  if (!st) return;
+  // Skip redundant updates: output arrives in bursts, and every background
+  // chunk would otherwise re-render the sidebar list for no visible change.
+  if (!st || st.indicator === indicator) return;
   st.indicator = indicator;
   renderTitle(panelId);
 }
@@ -753,6 +767,8 @@ function createTerminalComponent(): IContentRenderer {
           };
           sessions.set(id, entry);
           panelToSession.set(panelApi.id, id);
+          refreshSidebarRunning();
+          scheduleWorkspaceRefresh();
 
           const pending = pendingOutputs.get(id);
           if (pending) {
@@ -928,6 +944,184 @@ function setupDropFallback() {
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * Sidebar live sections: running sessions + workspace info. The Running list
+ * mirrors the dockview layout (titles, indicators, active panel); Workspace
+ * shows the launch directory, git branch/worktrees, and session count.
+ * ------------------------------------------------------------------------- */
+
+/** Short uppercase section header ("RUNNING", "WORKSPACE"). */
+function sidebarSectionTitle(text: string): HTMLElement {
+  const t = document.createElement("div");
+  t.className = "sidebar-section-title";
+  t.textContent = text;
+  return t;
+}
+
+/** Status glyph for a sidebar session row (active / busy / done). */
+function sessionStatusGlyph(panelId: string): { glyph: string; cls: string } {
+  const st = panelStatus.get(panelId);
+  const indicator = st?.indicator ?? "";
+  if (isPanelActive(panelId)) return { glyph: "▮", cls: "active" };
+  if (indicator === INDICATOR_ACTIVITY) return { glyph: "●", cls: "activity" };
+  if (indicator === INDICATOR_DONE) return { glyph: "✓", cls: "done" };
+  return { glyph: "", cls: "" };
+}
+
+/**
+ * Rebuild the "Running" sidebar list from the live dockview layout. The list
+ * is small, so it's fine to re-render on every title/indicator/active-panel
+ * change (renderTitle/setIndicator and the panel lifecycle hooks keep it in
+ * sync). Newest session first.
+ */
+function refreshSidebarRunning(): void {
+  if (!sidebarRunningEl) return;
+  sidebarRunningEl.replaceChildren();
+
+  const panels = api?.panels ?? [];
+  if (panels.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "sidebar-empty";
+    empty.textContent = "No sessions — drag one in above";
+    sidebarRunningEl.appendChild(empty);
+    return;
+  }
+
+  for (const panel of [...panels].reverse()) {
+    const params = panel.api.getParameters() as Record<string, unknown>;
+    const mode: Mode =
+      params.mode === "pi" ? "pi" : params.mode === "raw" ? "raw" : "opencode";
+    const sessionId = panelToSession.get(panel.id);
+    const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
+    const cwd =
+      entry?.cwd ?? (typeof params.cwd === "string" ? params.cwd : undefined);
+    const { glyph, cls } = sessionStatusGlyph(panel.id);
+
+    const item = document.createElement("div");
+    item.className = "sidebar-session";
+    item.dataset.mode = mode;
+    if (cls === "active") item.classList.add("active");
+    item.title = (panel.title ?? "") + (cwd ? ` — ${cwd}` : "");
+
+    const icon = document.createElement("span");
+    icon.className = "sidebar-session-icon";
+    icon.textContent = modeIcon(mode);
+    item.appendChild(icon);
+
+    const body = document.createElement("div");
+    body.className = "sidebar-session-body";
+
+    // The tab title carries the ●/✓ indicator prefix; our own status glyph
+    // shows it, so strip it here to avoid double-indicating.
+    const label = document.createElement("div");
+    label.className = "sidebar-session-title";
+    label.textContent = (panel.title ?? "").replace(/^[●✓] /, "");
+    body.appendChild(label);
+
+    if (cwd) {
+      const dir = document.createElement("div");
+      dir.className = "sidebar-session-cwd";
+      dir.textContent = shortLabel(cwd);
+      dir.title = cwd;
+      body.appendChild(dir);
+    }
+    item.appendChild(body);
+
+    const status = document.createElement("span");
+    status.className = `sidebar-session-status${cls ? ` ${cls}` : ""}`;
+    status.textContent = glyph;
+    status.title =
+      cls === "active"
+        ? "Active session"
+        : cls === "activity"
+          ? "Producing output"
+          : cls === "done"
+            ? "Output finished"
+            : "";
+    item.appendChild(status);
+
+    // Click focuses the pane and its terminal.
+    item.addEventListener("click", () => {
+      panel.api.setActive();
+      const sid = panelToSession.get(panel.id);
+      const e = sid !== undefined ? sessions.get(sid) : undefined;
+      e?.terminal.focus();
+    });
+
+    // Hover-only ✕ closes the session (same as Ctrl+Shift+W on its tab).
+    const close = document.createElement("button");
+    close.className = "sidebar-session-close";
+    close.type = "button";
+    close.textContent = "×";
+    close.title = "Close session";
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      panel.api.close();
+    });
+    item.appendChild(close);
+
+    sidebarRunningEl.appendChild(item);
+  }
+}
+
+/** Debounce re-fetching git/workspace info when several sessions change at once. */
+let workspaceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleWorkspaceRefresh(): void {
+  if (workspaceRefreshTimer !== undefined) clearTimeout(workspaceRefreshTimer);
+  workspaceRefreshTimer = setTimeout(() => {
+    workspaceRefreshTimer = undefined;
+    void refreshWorkspaceInfo();
+  }, 250);
+}
+
+/**
+ * Fetch the launch directory + git worktree info and re-render the Workspace
+ * section. Best-effort: on backend errors the section keeps its placeholders.
+ */
+async function refreshWorkspaceInfo(): Promise<void> {
+  try {
+    if (launchCwd === undefined) {
+      launchCwd = await invoke<string>("workspace_cwd");
+    }
+    const info = await invoke<{
+      root: string | null;
+      worktrees: Array<{ branch: string | null; current: boolean }>;
+    }>("git_worktrees");
+    gitRoot = info.root ?? undefined;
+    gitBranch = info.worktrees.find((w) => w.current)?.branch ?? undefined;
+    gitWorktreeCount = info.worktrees.length;
+  } catch {
+    // Backend unavailable — keep whatever we rendered before.
+  }
+  renderWorkspaceSection();
+}
+
+/** Re-render the cached workspace info into the sidebar. */
+function renderWorkspaceSection(): void {
+  if (!sidebarWorkspaceEl) return;
+  sidebarWorkspaceEl.replaceChildren();
+
+  const addRow = (label: string, value: string | undefined, title?: string) => {
+    const row = document.createElement("div");
+    row.className = "workspace-row";
+    const lab = document.createElement("span");
+    lab.className = "workspace-row-label";
+    lab.textContent = label;
+    const val = document.createElement("span");
+    val.className = "workspace-row-value";
+    val.textContent = value ?? "—";
+    if (title) val.title = title;
+    row.append(lab, val);
+    sidebarWorkspaceEl!.appendChild(row);
+  };
+
+  addRow("Directory", launchCwd ? shortLabel(launchCwd) : "…", launchCwd);
+  // "—" while the fetch is pending or when the launch dir isn't a git repo.
+  addRow("Branch", gitRoot === undefined ? undefined : gitBranch ?? "detached");
+  if (gitRoot !== undefined) addRow("Worktrees", String(gitWorktreeCount));
+  addRow("Sessions", String(api?.panels.length ?? 0));
+}
+
 function buildSidebar() {
   const sidebar = document.getElementById("sidebar")!;
 
@@ -988,6 +1182,43 @@ function buildSidebar() {
 
     sidebar.appendChild(item);
   }
+
+  // Live list of running sessions (rebuilds as panes come and go).
+  const runningSection = document.createElement("div");
+  runningSection.className = "sidebar-section running";
+  runningSection.appendChild(sidebarSectionTitle("Running"));
+  const runningList = document.createElement("div");
+  runningList.className = "sidebar-running-list";
+  runningSection.appendChild(runningList);
+  sidebarRunningEl = runningList;
+  sidebar.appendChild(runningSection);
+
+  // Workspace info: launch dir, git branch/worktrees, session count.
+  const wsSection = document.createElement("div");
+  wsSection.className = "sidebar-section workspace";
+  wsSection.appendChild(sidebarSectionTitle("Workspace"));
+  const wsBody = document.createElement("div");
+  wsBody.className = "sidebar-workspace-body";
+  wsSection.appendChild(wsBody);
+  sidebarWorkspaceEl = wsBody;
+  sidebar.appendChild(wsSection);
+
+  // Handy shortcut reminders.
+  const shortcuts = document.createElement("div");
+  shortcuts.className = "sidebar-shortcuts";
+  for (const [keys, label] of [
+    ["Ctrl+Shift+T", "new tab"],
+    ["Ctrl+Shift+P", "palette"],
+    ["Ctrl+Shift+F", "find"],
+  ] as const) {
+    const row = document.createElement("div");
+    const kbd = document.createElement("kbd");
+    kbd.textContent = keys;
+    row.appendChild(kbd);
+    row.appendChild(document.createTextNode(` ${label}`));
+    shortcuts.appendChild(row);
+  }
+  sidebar.appendChild(shortcuts);
 
   const settingsBtn = document.createElement("button");
   settingsBtn.className = "sidebar-settings";
@@ -1239,6 +1470,8 @@ async function init() {
   await registerGlobalListeners();
 
   buildSidebar();
+  refreshSidebarRunning();
+  void refreshWorkspaceInfo();
 
   api = createDockview(document.getElementById("terminal")!, {
     createComponent: createTerminalComponent,
@@ -1308,6 +1541,8 @@ async function init() {
     clearIdle(panel.id);
     clearNotify(panel.id);
     panelStatus.delete(panel.id);
+    refreshSidebarRunning();
+    scheduleWorkspaceRefresh();
     // If the searched terminal just went away, move the highlights onto
     // whatever is active now (or clear them if nothing is).
     if (isSearchOpen()) rerunSearch();
@@ -1338,6 +1573,7 @@ async function init() {
   // clear any activity/completion indicator on the newly focused tab.
   api.onDidActivePanelChange(() => {
     if (isSearchOpen()) rerunSearch();
+    refreshSidebarRunning();
     const panel = api.activePanel;
     if (panel) clearIndicator(panel.id);
   });

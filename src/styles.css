@@ -194,6 +194,215 @@ body {
   line-height: 1;
 }
 
+/* Sidebar section headers ("RUNNING", "WORKSPACE"). */
+.sidebar-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hf-overlay0);
+  margin: 2px 0 4px;
+}
+
+.sidebar-section.running {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.sidebar-running-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+
+.sidebar-empty {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--hf-overlay0);
+  padding: 6px 2px;
+}
+
+.sidebar-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--hf-surface0);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.sidebar-session:hover {
+  background: var(--hf-surface1);
+  border-color: var(--hf-surface2);
+}
+
+.sidebar-session.active {
+  border-color: var(--hf-accent);
+}
+
+.sidebar-session-icon {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--hf-subtext0);
+}
+
+.sidebar-session[data-mode="opencode"] .sidebar-session-icon {
+  color: var(--hf-green);
+}
+
+.sidebar-session[data-mode="pi"] .sidebar-session-icon {
+  color: var(--hf-yellow);
+}
+
+.sidebar-session[data-mode="raw"] .sidebar-session-icon {
+  color: var(--hf-teal);
+}
+
+.sidebar-session-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-session-title {
+  font-size: 12px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-session-cwd {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--hf-overlay0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-session-status {
+  flex: none;
+  min-width: 12px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--hf-overlay0);
+}
+
+.sidebar-session-status.active {
+  color: var(--hf-accent);
+}
+
+.sidebar-session-status.activity {
+  color: var(--hf-yellow);
+}
+
+.sidebar-session-status.done {
+  color: var(--hf-green);
+}
+
+.sidebar-session-close {
+  display: none;
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--hf-overlay0);
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sidebar-session:hover .sidebar-session-close {
+  display: block;
+}
+
+.sidebar-session-close:hover {
+  color: var(--hf-red);
+  background: var(--hf-surface2);
+}
+
+/* Workspace info rows. */
+.sidebar-section.workspace {
+  margin-top: 8px;
+}
+
+.sidebar-workspace-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workspace-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.workspace-row-label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hf-overlay0);
+}
+
+.workspace-row-value {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hf-subtext0);
+}
+
+/* Shortcut reminders. */
+.sidebar-shortcuts {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hf-surface2);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--hf-overlay0);
+}
+
+.sidebar-shortcuts > div {
+  display: flex;
+  align-items: baseline;
+}
+
+.sidebar-shortcuts kbd {
+  font-family: var(--hivefield-font);
+  font-size: 9px;
+  color: var(--hf-subtext0);
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 6px;
+}
+
 /* ---------------------------------------------------------------------------
  * Toast
  * ------------------------------------------------------------------------- */

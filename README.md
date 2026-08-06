@@ -17,6 +17,14 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   middle to split to the right). `opencode` and `pi` sessions auto-run the
   agent; `raw` sessions are a plain shell. Use `Ctrl+Shift+T` to open a
   session as a tab instead.
+- **Live sidebar info**: below the drag sources the sidebar shows a
+  **Running** section — every open session with its mode icon, tab title,
+  working directory, and a status glyph (active / ● producing output /
+  ✓ finished), kept in sync as tabs are added, renamed, closed, or produce
+  output. Click a row to focus that session; hover to close it with ✕. A
+  **Workspace** section shows the launch directory, the git branch of the
+  launch dir, the number of repo worktrees, and the open session count.
+  Keyboard-shortcut reminders sit at the bottom.
 - **Isolated sessions**: every agent session (`opencode` / `pi`) automatically
   gets its own throwaway git worktree (branch + directory minted from a
   codename, checked out under the **Worktree base dir** setting, default
