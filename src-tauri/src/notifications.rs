@@ -38,7 +38,7 @@ pub fn notify_desktop(app: tauri::AppHandle, title: String, body: String) -> Res
 /// disabled; errors when the server or topic is missing or the HTTP request
 /// fails (non-2xx status included).
 #[tauri::command]
-pub fn ntfy_send(app: tauri::AppHandle, title: String, message: String) -> Result<(), String> {
+pub fn ntfy_send(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
     let store = crate::settings::SettingsStore::load(&app)?;
     let settings = store.read();
 
@@ -76,7 +76,7 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, message: String) -> Resul
     }
 
     let response = request
-        .send_string(&message)
+        .send_string(&body)
         .map_err(|e| format!("ntfy request failed: {e}"))?;
     let status = response.status();
     if !(200..300).contains(&status) {
@@ -87,8 +87,6 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, message: String) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Build the ntfy publish URL from a configured server + topic (mirrors
     /// the production code path, which reads these from the settings store).
     fn publish_url(server: &str, topic: &str) -> String {

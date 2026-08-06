@@ -438,7 +438,7 @@ function buildOverlay(): HTMLElement {
           test(pushBtn, () =>
             invoke("ntfy_send", {
               title: "hiveField test",
-              message: "Push notifications are working!",
+              body: "Push notifications are working!",
             })
           )
         );
