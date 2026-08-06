@@ -78,7 +78,14 @@ function serializeDrag(drag: SessionDrag): string {
  */
 function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | undefined {
   if (!dt) return undefined;
-  const raw = dt.getData(DND_MIME) || dt.getData("text/plain");
+  let raw: string;
+  try {
+    raw = dt.getData(DND_MIME) || dt.getData("text/plain");
+  } catch {
+    // Some WebKitGTK builds throw on getData() for foreign MIME types;
+    // the in-memory drag payload covers those cases.
+    return undefined;
+  }
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as { mode?: unknown; cwd?: unknown };
@@ -101,6 +108,16 @@ function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | und
     : undefined;
 }
 
+/** Safely read the MIME types a drag exposes (WebKitGTK can hide/null them). */
+function dataTransferTypes(dt: DataTransfer | null | undefined): string[] {
+  if (!dt || !dt.types) return [];
+  try {
+    return Array.from(dt.types);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * True while one of our sidebar sessions is being dragged over a drop
  * target. The module-level flag is authoritative (payloads are unreadable
@@ -111,7 +128,7 @@ function readDragPayload(dt: DataTransfer | null | undefined): SessionDrag | und
 function isHiveFieldDrag(dt: DataTransfer | null | undefined): boolean {
   if (sidebarDragActive) return true;
   if (!dt) return false;
-  const types = Array.from(dt.types);
+  const types = dataTransferTypes(dt);
   if (types.includes(DND_MIME)) return true;
   return types.includes("text/plain") && readDragPayload(dt) !== undefined;
 }
@@ -123,7 +140,26 @@ function isHiveFieldDrag(dt: DataTransfer | null | undefined): boolean {
  * stale payload is never applied to an unrelated drop.
  */
 function resolveDragPayload(dt: DataTransfer | null | undefined): SessionDrag | undefined {
-  return readDragPayload(dt) ?? (sidebarDragActive ? pendingSessionDrag : undefined);
+  const live = readDragPayload(dt);
+  if (live) return live;
+
+  // Fall back to the payload captured at `dragstart`: WebKitGTK strips the
+  // transfer entirely (getData returns "" and `types` is empty), and it can
+  // also deliver the `drop` *after* `dragend`. The in-memory copy stays
+  // resolvable for a short grace window, refreshed while the drag hovers.
+  if (Date.now() > pendingSessionExpiresAt) return undefined;
+  if (!dt) return pendingSessionDrag;
+  try {
+    if (dt.getData(DND_MIME) || dt.getData("text/plain")) {
+      // The transfer is readable but didn't parse as a session — a foreign
+      // drag (external text, a file), not one of ours.
+      return undefined;
+    }
+  } catch {
+    // getData threw: treat like a stripped WebKitGTK transfer.
+  }
+  if (dataTransferTypes(dt).includes("Files")) return undefined;
+  return pendingSessionDrag;
 }
 
 /** Small floating label used as the custom drag image for sidebar entries. */
@@ -280,6 +316,31 @@ let sidebarDragActive = false;
  * MIME types (and `text/plain`) from the transfer.
  */
 let pendingSessionDrag: SessionDrag | undefined;
+
+/**
+ * The payload above stays resolvable until this timestamp. WebKitGTK can
+ * deliver the final `drop` after `dragend` (or never deliver it at all), so
+ * the in-memory payload lives a short grace window past the drag instead of
+ * dying at `dragend`. Refreshed on every `dragover` so long drags never
+ * expire mid-flight.
+ */
+let pendingSessionExpiresAt = 0;
+const DRAG_GRACE_MS = 1000;
+
+/** True once a `drop` for this drag was delivered anywhere in the app. */
+let dragSawDrop = false;
+
+/** True once a session was actually opened for this drag. */
+let dragOpenedSession = false;
+
+/**
+ * Most recent pointer position (client coords) while the sidebar drag hovered
+ * inside the terminal workspace; undefined when it never entered it (or left
+ * again). WebKitGTK occasionally swallows the final `drop` entirely after
+ * showing the drop overlay, so this is the position used to open the session
+ * from the sidebar's `dragend` instead.
+ */
+let lastSidebarDragOver: { clientX: number; clientY: number } | undefined;
 
 function nextPanelId(): string {
   return `panel-${++panelCounter}`;
@@ -858,82 +919,157 @@ function movePaneFocus(direction: GroupNavigationDirection): boolean {
 }
 
 /**
- * WebKitGTK workaround: dockview's own drop targets sometimes lose the final
- * `drop` near the top/bottom edges of a pane (the preview overlay still shows
- * while hovering — only the release is dropped on the floor). This catches the
- * `drop` at the document level and, when dockview did not already open a
- * session, computes the target pane and split direction from the pointer
- * position and opens it here instead.
+ * Open a session at the given client coordinates, mirroring dockview's own
+ * drop-target zones: split the hovered group by edge quadrant, dock to the
+ * outer layout edge, or (fallback) split the active panel to the right.
+ * Returns true when a session was opened.
  */
-function setupDropFallback() {
+function openSessionAtPoint(
+  clientX: number,
+  clientY: number,
+  drag: SessionDrag
+): boolean {
   const terminalEl = document.getElementById("terminal")!;
+  const rect = terminalEl.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return false;
+
   // Same edge-zone ratio as the dropOverlayModel above (30%).
   const EDGE = 0.3;
   // dockview's outer-layout edge overlay activates within this many px.
   const OUTER_EDGE_PX = 10;
 
-  const complete = (clientX: number, clientY: number, drag: SessionDrag, before: number) => {
-    // dockview handles drops synchronously inside the same event dispatch, so
-    // when a session already opened by the time this runs, it handled the drop.
-    setTimeout(() => {
-      if (api.panels.length > before) return;
+  const el = document.elementFromPoint(clientX, clientY);
+  const groupEl = el?.closest(".dv-groupview");
+  const group = groupEl
+    ? api.groups.find(
+        (g) => (g as unknown as { element: HTMLElement }).element === groupEl
+      )
+    : undefined;
 
-      const rect = terminalEl.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const y = clientY - rect.top;
-      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+  let position: AddPanelPositionOptions | undefined;
+  if (group && groupEl) {
+    const contentEl = groupEl.querySelector<HTMLElement>(
+      ":scope > .dv-content-container"
+    );
+    if (contentEl) {
+      const cr = contentEl.getBoundingClientRect();
+      const xp = (clientX - cr.left) / cr.width;
+      const yp = (clientY - cr.top) / cr.height;
+      let direction: "above" | "below" | "left" | "right" | "within";
+      if (xp < EDGE) direction = "left";
+      else if (xp > 1 - EDGE) direction = "right";
+      else if (yp < EDGE) direction = "above";
+      else if (yp > 1 - EDGE) direction = "below";
+      else direction = "right"; // center -> split right (kitty-style)
+      position = { direction, referenceGroup: group };
+    }
+  } else {
+    // Outer layout edge — mirror dockview's root edge drop target.
+    let direction: "above" | "below" | "left" | "right" | undefined;
+    if (x < OUTER_EDGE_PX) direction = "left";
+    else if (x > rect.width - OUTER_EDGE_PX) direction = "right";
+    else if (y < OUTER_EDGE_PX) direction = "above";
+    else if (y > rect.height - OUTER_EDGE_PX) direction = "below";
+    if (direction) position = { direction };
+  }
 
-      const el = document.elementFromPoint(clientX, clientY);
-      const groupEl = el?.closest(".dv-groupview");
-      const group = groupEl
-        ? api.groups.find(
-            (g) => (g as unknown as { element: HTMLElement }).element === groupEl
-          )
-        : undefined;
+  if (position) {
+    addPanelWithMode(drag.mode, position, drag.cwd);
+  } else {
+    // The pointer is inside the terminal but not over a group or an
+    // outer-edge zone (e.g. a gutter between groups). Default to
+    // splitting the active panel to the right so a released session
+    // never silently disappears.
+    const active = api.activePanel;
+    addPanelWithMode(
+      drag.mode,
+      active ? { direction: "right", referencePanel: active } : undefined,
+      drag.cwd
+    );
+  }
+  return true;
+}
 
-      let position: AddPanelPositionOptions | undefined;
-      if (group && groupEl) {
-        const contentEl = groupEl.querySelector<HTMLElement>(
-          ":scope > .dv-content-container"
-        );
-        if (contentEl) {
-          const cr = contentEl.getBoundingClientRect();
-          const xp = (clientX - cr.left) / cr.width;
-          const yp = (clientY - cr.top) / cr.height;
-          let direction: "above" | "below" | "left" | "right" | "within";
-          if (xp < EDGE) direction = "left";
-          else if (xp > 1 - EDGE) direction = "right";
-          else if (yp < EDGE) direction = "above";
-          else if (yp > 1 - EDGE) direction = "below";
-          else direction = "right"; // center -> split right (kitty-style)
-          position = { direction, referenceGroup: group };
-        }
-      } else {
-        // Outer layout edge — mirror dockview's root edge drop target.
-        let direction: "above" | "below" | "left" | "right" | undefined;
-        if (x < OUTER_EDGE_PX) direction = "left";
-        else if (x > rect.width - OUTER_EDGE_PX) direction = "right";
-        else if (y < OUTER_EDGE_PX) direction = "above";
-        else if (y > rect.height - OUTER_EDGE_PX) direction = "below";
-        if (direction) position = { direction };
-      }
+/**
+ * Remove any drop-target overlay dockview left behind. WebKitGTK can swallow
+ * the `drop`/`dragleave` that would normally clear it, leaving a grey
+ * highlight stuck on the workspace after the mouse is released.
+ */
+function clearStuckDropOverlay(): void {
+  for (const dropzone of document.querySelectorAll<HTMLElement>(
+    ".dv-drop-target-dropzone"
+  )) {
+    dropzone.parentElement?.classList.remove("dv-drop-target");
+    dropzone.remove();
+  }
+}
 
-      if (position) {
-        addPanelWithMode(drag.mode, position, drag.cwd);
-      } else {
-        // The pointer is inside the terminal but not over a group or an
-        // outer-edge zone (e.g. a gutter between groups). Default to
-        // splitting the active panel to the right so a released session
-        // never silently disappears.
-        const active = api.activePanel;
-        addPanelWithMode(
-          drag.mode,
-          active ? { direction: "right", referencePanel: active } : undefined,
-          drag.cwd
-        );
-      }
-    }, 0);
+/**
+ * WebKitGTK workaround: dockview's own drop targets sometimes lose the final
+ * `drop` (the preview overlay still shows while hovering — only the release
+ * is dropped on the floor) or deliver it late. This layer makes the sidebar
+ * drag resilient:
+ *
+ * - `dragover` records the last hovered workspace position and preventDefaults
+ *   so WebKitGTK reliably fires the `drop`, and keeps the in-memory payload
+ *   fresh for long drags;
+ * - a capture-phase `drop` opens the session itself when dockview did not
+ *   already (its overlay state can be missing at the release point);
+ * - `dragend` on the sidebar recovers a swallowed `drop` by opening the
+ *   session at the last hovered position;
+ * - a `mouseup` net covers the worst case where even `dragend` never fires.
+ */
+function setupSidebarDndFallback() {
+  const terminalEl = document.getElementById("terminal")!;
+  const inTerminal = (clientX: number, clientY: number) => {
+    const r = terminalEl.getBoundingClientRect();
+    return (
+      clientX >= r.left && clientX <= r.right &&
+      clientY >= r.top && clientY <= r.bottom
+    );
   };
+
+  // Track where a sidebar drag hovers so a swallowed `drop` can still open
+  // the session from `dragend`. Cleared when the pointer leaves the workspace
+  // so a release over the sidebar stays a cancel.
+  document.addEventListener(
+    "dragover",
+    (e) => {
+      if (!isHiveFieldDrag(e.dataTransfer)) return;
+      // Keep the in-memory payload fresh for arbitrarily long drags.
+      pendingSessionExpiresAt = Date.now() + DRAG_GRACE_MS;
+      if (inTerminal(e.clientX, e.clientY)) {
+        // preventDefault so WebKitGTK reliably delivers the final `drop`.
+        e.preventDefault();
+        lastSidebarDragOver = { clientX: e.clientX, clientY: e.clientY };
+      } else {
+        lastSidebarDragOver = undefined;
+      }
+    },
+    true
+  );
+
+  // Worst-case recovery: if a sidebar drag produced neither a `drop` nor a
+  // `dragend` (WebKitGTK can lose the drag state machine after showing the
+  // overlay), the first `mouseup` is the release — open the session at the
+  // last hovered position.
+  document.addEventListener(
+    "mouseup",
+    () => {
+      if (!sidebarDragActive || dragOpenedSession) return;
+      if (!lastSidebarDragOver || !pendingSessionDrag) return;
+      const { clientX, clientY } = lastSidebarDragOver;
+      if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
+        dragOpenedSession = true;
+      }
+      clearStuckDropOverlay();
+      sidebarDragActive = false;
+      lastSidebarDragOver = undefined;
+    },
+    true
+  );
 
   // Capture phase: this runs before dockview's own handlers and only acts if
   // they ended up not opening a session.
@@ -942,8 +1078,17 @@ function setupDropFallback() {
     (e) => {
       const drag = resolveDragPayload(e.dataTransfer);
       if (!drag) return;
+      dragSawDrop = true;
       e.preventDefault(); // don't let the webview insert/paste the payload
-      complete(e.clientX, e.clientY, drag, api.panels.length);
+      const before = api.panels.length;
+      // dockview handles drops synchronously inside the same event dispatch, so
+      // when a session already opened by the time this runs, it handled the drop.
+      setTimeout(() => {
+        if (api.panels.length > before) return;
+        if (openSessionAtPoint(e.clientX, e.clientY, drag)) {
+          dragOpenedSession = true;
+        }
+      }, 0);
     },
     true
   );
@@ -1163,6 +1308,10 @@ function buildSidebar() {
       const drag: SessionDrag = { mode: source.mode };
       sidebarDragActive = true;
       pendingSessionDrag = drag;
+      pendingSessionExpiresAt = Date.now() + DRAG_GRACE_MS;
+      dragSawDrop = false;
+      dragOpenedSession = false;
+      lastSidebarDragOver = undefined;
       // Advertise the session under our own MIME type *and* as plain text:
       // some WebKitGTK builds only surface the text/plain target across a
       // drag. JSON carries the mode plus an optional worktree cwd.
@@ -1178,11 +1327,28 @@ function buildSidebar() {
       requestAnimationFrame(() => ghost.remove());
     });
 
-    // `dragend` fires whether the drag was dropped or cancelled, so the
-    // sidebar-drag state never leaks into later, unrelated drags.
+    // `dragend` fires whether the drag was dropped or cancelled. WebKitGTK
+    // sometimes swallows the final `drop` (the overlay was shown, the release
+    // did nothing): if no drop was delivered and no session opened, release
+    // the session at the last hovered workspace position instead. The
+    // in-memory payload stays resolvable for a grace window so a `drop` that
+    // arrives after `dragend` still opens its session.
     item.addEventListener("dragend", () => {
       sidebarDragActive = false;
-      pendingSessionDrag = undefined;
+      if (
+        !dragOpenedSession &&
+        !dragSawDrop &&
+        lastSidebarDragOver &&
+        pendingSessionDrag
+      ) {
+        const { clientX, clientY } = lastSidebarDragOver;
+        if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
+          dragOpenedSession = true;
+        }
+      }
+      // Clear any drop overlay dockview never got a chance to remove.
+      clearStuckDropOverlay();
+      lastSidebarDragOver = undefined;
     });
 
     sidebar.appendChild(item);
@@ -1507,23 +1673,30 @@ async function init() {
     const drag = resolveDragPayload((event.nativeEvent as DragEvent).dataTransfer);
     if (!drag) return;
 
-    const direction = positionToDirection(event.position);
-    const splitDirection = direction === "within" ? "right" : direction;
-    let position: AddPanelPositionOptions | undefined;
-    if (event.panel) {
-      position = { direction: splitDirection, referencePanel: event.panel };
-    } else if (event.group) {
-      position = { direction: splitDirection, referenceGroup: event.group };
-    } else {
-      position = { direction: splitDirection };
-    }
+    try {
+      const direction = positionToDirection(event.position);
+      const splitDirection = direction === "within" ? "right" : direction;
+      let position: AddPanelPositionOptions | undefined;
+      if (event.panel) {
+        position = { direction: splitDirection, referencePanel: event.panel };
+      } else if (event.group) {
+        position = { direction: splitDirection, referenceGroup: event.group };
+      } else {
+        position = { direction: splitDirection };
+      }
 
-    addPanelWithMode(drag.mode, position, drag.cwd);
+      addPanelWithMode(drag.mode, position, drag.cwd);
+      dragOpenedSession = true;
+    } catch (err) {
+      // A bad position must not swallow the drop: the document-level
+      // fallback opens the session at the pointer instead.
+      console.error("drop failed to open session", err);
+    }
   });
 
-  // WebKitGTK can drop the final `drop` near pane top/bottom edges; make sure a
-  // released session still opens even when dockview misses it.
-  setupDropFallback();
+  // WebKitGTK can drop the final `drop` near pane top/bottom edges, deliver
+  // it late, or swallow it entirely; make sure a released session still opens.
+  setupSidebarDndFallback();
 
   api.onDidRemovePanel((panel: IDockviewPanel) => {
     const sessionId = panelToSession.get(panel.id);
