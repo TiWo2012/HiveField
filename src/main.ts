@@ -70,6 +70,7 @@ import {
   panelStatus,
   panelToSession,
   parkedSessions,
+  pendingOutputs,
   sessions,
   setApi,
   setSidebarHooks,
@@ -206,6 +207,7 @@ async function init() {
         entry.terminal.dispose();
         sessions.delete(sessionId);
         discardSession(sessionId);
+        pendingOutputs.delete(sessionId);
         clearIndicator(panel.id);
         panelStatus.delete(panel.id);
       }

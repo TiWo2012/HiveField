@@ -81,6 +81,8 @@ export function parkedKeyFor(sessionId: number): string {
 }
 /** panel id -> sessionId (panel ids are no longer the session ids). */
 export const panelToSession = new Map<string, number>();
+/** Output buffered before the terminal for a session was registered. */
+export const pendingOutputs = new Map<number, string[]>();
 /** panel id -> title/indicator state. */
 export const panelStatus = new Map<string, PanelStatus>();
 /** panel id -> idle timer id (activity → "done" after inactivity). */

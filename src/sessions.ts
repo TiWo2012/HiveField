@@ -32,6 +32,7 @@ import {
   setFollowing,
   syncSize,
   syncTerminalCursorFocus,
+  writeToTerminal,
 } from "./terminal";
 import {
   clearIdle,
@@ -49,6 +50,7 @@ import {
   panelToSession,
   parkedKeyFor,
   parkedSessions,
+  pendingOutputs,
   refreshSidebarRunning,
   scheduleWorkspaceRefresh,
   sessions,
@@ -370,6 +372,12 @@ export function createTerminalComponent(): IContentRenderer {
           panelApi.updateParameters({ sessionId: id });
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
+
+          const pending = pendingOutputs.get(id);
+          if (pending) {
+            for (const chunk of pending) terminal && writeToTerminal(terminal, chunk);
+            pendingOutputs.delete(id);
+          }
 
           // The panel is registered into its group only after this content
           // component is initialized, so backfill the reference next tick.
