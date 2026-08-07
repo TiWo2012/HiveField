@@ -69,16 +69,18 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, body: String) -> Result<(
     let url = format!("{}/{}", server.trim_end_matches('/'), topic);
 
     let mut request = ureq::post(&url)
-        .set("X-Title", &title)
-        .set("X-Tags", "computer");
+        .header("X-Title", &title)
+        .header("X-Tags", "computer")
+        // ureq 2's send_string() set this implicitly; keep the wire format stable.
+        .header("Content-Type", "text/plain; charset=utf-8");
     if !token.is_empty() {
-        request = request.set("Authorization", &format!("Bearer {token}"));
+        request = request.header("Authorization", &format!("Bearer {token}"));
     }
 
     let response = request
-        .send_string(&body)
+        .send(&body)
         .map_err(|e| format!("ntfy request failed: {e}"))?;
-    let status = response.status();
+    let status = response.status().as_u16();
     if !(200..300).contains(&status) {
         return Err(format!("ntfy server responded with status {status}"));
     }

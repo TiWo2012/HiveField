@@ -20,12 +20,25 @@ serde_json = "1"
 log = "0.4"
 portable-pty = "0.9"
 fontdb = "0.24.0"
-ureq = { version = "2", features = ["tls"] }
+# ureq v3 — v2 is unmaintained upstream. TLS (rustls) is a default feature
+# in v3 (the old `tls` feature no longer exists). v3 dropped `Error::Status`,
+# so HTTP status handling uses the per-request `http_status_as_error(false)`
+# config instead (see dictation.rs).
+ureq = "3"
 cpal = "0.18.1"
 rubato = "4.0.0"
+# whisper-rs is a binding to whisper.cpp and 0.16 is its newest crate release;
+# it pins a specific whisper.cpp revision, so bump deliberately — the bundled
+# binary format must stay compatible with the ggml-base.en.bin model downloaded
+# from MODEL_URL in dictation.rs.
 whisper-rs = "0.16"
+# vosk is a thin FFI wrapper over a *prebuilt* libvosk.so (not built from
+# source). 0.3.1 must stay in lockstep with the libvosk.so installed on dev
+# machines and in CI (.github/workflows/*.yml installs vosk-api 0.3.45).
 vosk = "0.3.1"
-zip = "0.6"
+# zip v2 — the extraction API used in dictation.rs (ZipArchive::new/extract)
+# is unchanged from 0.6, so this is a pure safety/feature bump.
+zip = "2"
 
 [dev-dependencies]
 tempfile = "3"

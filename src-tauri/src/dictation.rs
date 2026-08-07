@@ -488,25 +488,29 @@ fn transcribe_cloud(samples: &[f32], input_rate: u32, api_key: &str) -> Result<S
     let wav = encode_wav_pcm16(&f32_to_i16(&audio));
     let body = build_transcriptions_multipart(&wav);
 
-    let response = ureq::post(CLOUD_API_URL)
-        .set("Authorization", &format!("Bearer {api_key}"))
-        .set(
+    // Keep 4xx/5xx responses as Ok so the API error body can be surfaced
+    // (ureq v3 drops the body when it converts a status to `Error::StatusCode`).
+    let mut response = ureq::post(CLOUD_API_URL)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .header("Authorization", &format!("Bearer {api_key}"))
+        .header(
             "Content-Type",
             &format!("multipart/form-data; boundary={MULTIPART_BOUNDARY}"),
         )
-        .send_bytes(&body);
+        .send(&body)
+        .map_err(|e| format!("cloud transcription request failed: {e}"))?;
 
-    let response = match response {
-        Ok(response) => response,
-        Err(ureq::Error::Status(code, response)) => {
-            let body = response.into_string().unwrap_or_default();
-            return Err(format!("cloud transcription returned HTTP {code}: {body}"));
-        }
-        Err(e) => return Err(format!("cloud transcription request failed: {e}")),
-    };
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        let error_body = response.body_mut().read_to_string().unwrap_or_default();
+        return Err(format!("cloud transcription returned HTTP {status}: {error_body}"));
+    }
 
     let text = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| format!("failed to read cloud response: {e}"))?;
     let json: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| format!("failed to parse cloud response: {e}"))?;
@@ -533,13 +537,15 @@ fn download_with_progress(app: &AppHandle, url: &str, dest: &Path) -> Result<(),
         .map_err(|e| format!("download request failed: {e}"))?;
 
     let total: u64 = response
-        .header("Content-Length")
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
     let mut file = fs::File::create(dest).map_err(|e| format!("failed to create temp file: {e}"))?;
 
-    let mut reader = response.into_reader();
+    let mut reader = response.into_body().into_reader();
     let mut buf = [0u8; 256 * 1024];
     let mut downloaded: u64 = 0;
     let mut last_percent = 0u8;
