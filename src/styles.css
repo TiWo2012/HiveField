@@ -1337,6 +1337,23 @@ body {
   cursor: default;
 }
 
+/* Warning row shown when the backend failed to persist settings to disk:
+ * the change is applied in this window and cached in localStorage, but the
+ * on-disk settings.json is stale until the next successful save. */
+.settings-persist-status {
+  padding: 8px 18px;
+  border-top: 1px solid var(--hf-surface2);
+  background: color-mix(in srgb, var(--hf-yellow) 12%, transparent);
+  color: var(--hf-yellow);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-persist-status[hidden] {
+  display: none;
+}
+
 .settings-actions {
   display: flex;
   align-items: center;

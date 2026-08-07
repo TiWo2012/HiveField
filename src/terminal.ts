@@ -19,14 +19,22 @@ import {
 } from "./state";
 import { handleBell } from "./bell";
 
+/** Number of scrollback lines each terminal keeps (xterm option). */
+const SCROLLBACK_LINES = 10_000;
+
+/** Max matches the search addon highlights at once (SearchAddon option). */
+const SEARCH_HIGHLIGHT_LIMIT = 2000;
+
 const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
   // Colors come from the active theme via applyTerminalSettings().
   cursorBlink: true,
   // Inactive panes get an outlined cursor; syncTerminalCursorFocus() keeps
   // xterm's own focus bookkeeping aligned with the active panel.
   cursorInactiveStyle: "outline",
-  scrollback: 10000,
-  allowProposedApi: true,
+  scrollback: SCROLLBACK_LINES,
+  // No experimental xterm API surface is used (nothing reads `terminal._core`
+  // or registers decorations), so `allowProposedApi` stays off: the proposed
+  // surface can break on minor xterm upgrades without notice.
 };
 
 /** Convert a #rrggbb hex color to an rgba() string with the given alpha. */
@@ -144,7 +152,7 @@ export function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; sear
   terminal.loadAddon(new Unicode11Addon());
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
-  const searchAddon = new SearchAddon({ highlightLimit: 2000 });
+  const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
   terminal.loadAddon(searchAddon);
   setupLinks(terminal);
   // BEL (0x07): play a bell tone and notify when the session isn't visible.

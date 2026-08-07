@@ -143,9 +143,7 @@ function buildTabContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
 
 /** Map a dockview tab element back to its panel (for right-click menus). */
 function panelForGroupElement(groupEl: HTMLElement): IDockviewPanel | undefined {
-  const group = getApi().groups.find(
-    (g) => (g as unknown as { element: HTMLElement }).element === groupEl
-  );
+  const group = getApi().groups.find((g) => g.element === groupEl);
   return group?.activePanel ?? group?.panels[0];
 }
 

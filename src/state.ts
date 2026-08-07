@@ -81,14 +81,40 @@ export function parkedKeyFor(sessionId: number): string {
 }
 /** panel id -> sessionId (panel ids are no longer the session ids). */
 export const panelToSession = new Map<string, number>();
-/** Output buffered before the terminal for a session was registered. */
-export const pendingOutputs = new Map<number, string[]>();
 /** panel id -> title/indicator state. */
 export const panelStatus = new Map<string, PanelStatus>();
 /** panel id -> idle timer id (activity → "done" after inactivity). */
 export const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** panel id -> notification timer id (agent done after a quiet window). */
 export const notifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * sessionId -> a session that was torn down (panel closed / session killed /
+ * shell exited). The backend can still deliver one in-flight `pty://output`
+ * chunk after teardown (it was already emitted when the reader thread ended),
+ * and that output legitimately has no session entry anymore. This set keeps
+ * those from tripping the unregistered-output guard in listeners.ts. Bounded
+ * to the most recent ids — backend session ids come from a monotonic counter,
+ * so a live session never collides with a discarded one.
+ */
+const discardedSessions = new Set<number>();
+const DISCARDED_SESSION_LIMIT = 200;
+
+/** Remember a torn-down session id so late output for it stays quiet. */
+export function discardSession(sessionId: number): void {
+  discardedSessions.add(sessionId);
+  if (discardedSessions.size > DISCARDED_SESSION_LIMIT) {
+    for (const id of discardedSessions) {
+      discardedSessions.delete(id);
+      if (discardedSessions.size <= DISCARDED_SESSION_LIMIT) break;
+    }
+  }
+}
+
+/** Whether output for this session id should be dropped silently. */
+export function isDiscardedSession(sessionId: number): boolean {
+  return discardedSessions.has(sessionId);
+}
 
 /**
  * Terminal → sessionId. Set when a PTY attaches to a terminal (both the

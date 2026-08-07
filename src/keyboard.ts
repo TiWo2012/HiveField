@@ -7,7 +7,7 @@
 
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { matchesKeybind, type KeybindAction } from "./keybinds";
-import { getSettings, updateSettings } from "./settings";
+import { getSettings, updateSettings, FONT_SIZE_MAX, FONT_SIZE_MIN } from "./settings";
 import { toggleSettings } from "./settings-ui";
 import { activeSessionEntry, addPanelWithMode, movePaneFocus } from "./sessions";
 import { renamePanel } from "./titles";
@@ -22,7 +22,7 @@ import { getApi } from "./state";
 /** Bump the global terminal font size by `delta` (persisted in settings). */
 export function zoomBy(delta: number): void {
   const s = getSettings();
-  const next = Math.max(6, Math.min(48, s.fontSize + delta));
+  const next = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, s.fontSize + delta));
   void updateSettings({ fontSize: next });
 }
 

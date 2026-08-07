@@ -19,11 +19,12 @@ import {
   INDICATOR_DONE,
 } from "./titles";
 import {
+  discardSession,
+  isDiscardedSession,
   isPanelActive,
   panelStatus,
   parkedKeyFor,
   parkedSessions,
-  pendingOutputs,
   refreshSidebarRunning,
   scheduleWorkspaceRefresh,
   sessions,
@@ -83,14 +84,24 @@ export async function registerGlobalListeners() {
       }
       return;
     }
-    const buf = pendingOutputs.get(sessionId) ?? [];
-    buf.push(data);
-    pendingOutputs.set(sessionId, buf);
+    // No session entry for this output yet. The Rust backend buffers each
+    // session's output until the frontend first contacts it (pty_write /
+    // pty_resize), and the frontend registers the session entry before that
+    // first contact, so output never arrives ahead of its terminal. A second,
+    // frontend-side buffer would only re-order/drop output across session
+    // handoffs. Output for a session already torn down is expected (one
+    // in-flight chunk can land after teardown); anything else is an ordering
+    // regression — log loudly instead of buffering it away silently.
+    if (isDiscardedSession(sessionId)) return;
+    console.warn(
+      `pty://output for unregistered session ${sessionId}; dropping ${data.length} bytes`,
+      data.slice(0, 200)
+    );
   });
 
   await listen<{ sessionId: number; code: number }>("pty://exit", (event) => {
     const { sessionId, code } = event.payload;
-    pendingOutputs.delete(sessionId);
+    discardSession(sessionId);
     const entry = sessions.get(sessionId);
     if (entry) {
       if (parkedSessions.has(sessionId)) {

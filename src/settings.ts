@@ -172,10 +172,54 @@ export const DEFAULT_SETTINGS: AppSettings = {
   promptSnippets: DEFAULT_PROMPT_SNIPPETS,
 };
 
+/**
+ * Bounds for numeric settings, shared by validation (normalize) and every
+ * UI control that clamps input (settings page number fields, zoomBy).
+ */
+export const FONT_SIZE_MIN = 6;
+export const FONT_SIZE_MAX = 48;
+export const LINE_HEIGHT_MIN = 0.5;
+export const LINE_HEIGHT_MAX = 3;
+export const LETTER_SPACING_MIN = -2;
+export const LETTER_SPACING_MAX = 8;
+export const CONTRAST_RATIO_MIN = 1;
+export const CONTRAST_RATIO_MAX = 21;
+export const OPACITY_MIN = 0.25;
+export const OPACITY_MAX = 1;
+
 const STORAGE_KEY = "hivefield.settings";
 
 let current: AppSettings = { ...DEFAULT_SETTINGS };
 const listeners = new Set<(settings: AppSettings) => void>();
+
+/**
+ * The most recent error from the backend `settings_set` write, or undefined
+ * when the last write succeeded (or none was attempted). The frontend applies
+ * and localStorage-caches every change regardless, so a failing backend write
+ * would silently leave the disk copy stale — this state exposes that so the
+ * UI can tell the user instead of letting frontend and disk diverge.
+ */
+let lastPersistError: string | undefined;
+const persistErrorListeners = new Set<(err: string | undefined) => void>();
+
+export function getPersistError(): string | undefined {
+  return lastPersistError;
+}
+
+/** Subscribe to backend-persistence failures (Settings UI shows a status row). */
+export function subscribePersistError(
+  listener: (err: string | undefined) => void
+): () => void {
+  persistErrorListeners.add(listener);
+  listener(lastPersistError);
+  return () => persistErrorListeners.delete(listener);
+}
+
+function setPersistError(err: string | undefined): void {
+  if (err === lastPersistError) return;
+  lastPersistError = err;
+  for (const l of persistErrorListeners) l(err);
+}
 
 export function getSettings(): AppSettings {
   return current;
@@ -301,19 +345,19 @@ function normalize(value: unknown): AppSettings {
   const known: AppSettings = {
     schemaVersion,
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
-    fontSize: Math.max(6, Math.min(48, pickNum("fontSize", DEFAULT_SETTINGS.fontSize))),
-    lineHeight: Math.max(0.5, Math.min(3, pickNum("lineHeight", DEFAULT_SETTINGS.lineHeight))),
-    letterSpacing: Math.max(-2, Math.min(8, pickNum("letterSpacing", DEFAULT_SETTINGS.letterSpacing))),
+    fontSize: Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, pickNum("fontSize", DEFAULT_SETTINGS.fontSize))),
+    lineHeight: Math.max(LINE_HEIGHT_MIN, Math.min(LINE_HEIGHT_MAX, pickNum("lineHeight", DEFAULT_SETTINGS.lineHeight))),
+    letterSpacing: Math.max(LETTER_SPACING_MIN, Math.min(LETTER_SPACING_MAX, pickNum("letterSpacing", DEFAULT_SETTINGS.letterSpacing))),
     fontWeight: v.fontWeight === "bold" ? "bold" : "normal",
     fontWeightBold: v.fontWeightBold === "bold" ? "bold" : "normal",
     unicodeVersion: v.unicodeVersion === "6" ? "6" : "11",
-    minimumContrastRatio: Math.max(1, Math.min(21, pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio))),
+    minimumContrastRatio: Math.max(CONTRAST_RATIO_MIN, Math.min(CONTRAST_RATIO_MAX, pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio))),
     cursorBlink: pickBool("cursorBlink", DEFAULT_SETTINGS.cursorBlink),
     fontLigatures: pickBool("fontLigatures", DEFAULT_SETTINGS.fontLigatures),
     theme: getTheme(
       typeof v.theme === "string" ? (v.theme as string) : undefined
     ).id,
-    backgroundOpacity: Math.max(0.25, Math.min(1, pickNum("backgroundOpacity", DEFAULT_SETTINGS.backgroundOpacity))),
+    backgroundOpacity: Math.max(OPACITY_MIN, Math.min(OPACITY_MAX, pickNum("backgroundOpacity", DEFAULT_SETTINGS.backgroundOpacity))),
     dictationEngine:
       v.dictationEngine === "vosk" || v.dictationEngine === "cloud"
         ? v.dictationEngine
@@ -388,8 +432,13 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
   for (const listener of listeners) listener(next);
   try {
     await invoke("settings_set", { settings: next });
-  } catch {
-    // backend persistence is best-effort; localStorage still has it
+    setPersistError(undefined);
+  } catch (err) {
+    // The in-memory and localStorage copies stay in sync, but the backend's
+    // on-disk settings.json is now stale. Surface the failure instead of
+    // swallowing it: a silent diverge is exactly the bug this guard exists for.
+    setPersistError(String(err));
+    console.error("failed to persist settings to disk", err);
   }
   return next;
 }

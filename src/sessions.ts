@@ -32,7 +32,6 @@ import {
   setFollowing,
   syncSize,
   syncTerminalCursorFocus,
-  writeToTerminal,
 } from "./terminal";
 import {
   clearIdle,
@@ -44,12 +43,12 @@ import {
 } from "./titles";
 import { trackInputLine, sanitizeTitle, inputLineToTitle, type InputLineState } from "./input-line";
 import {
+  discardSession,
   getApi,
   panelStatus,
   panelToSession,
   parkedKeyFor,
   parkedSessions,
-  pendingOutputs,
   refreshSidebarRunning,
   scheduleWorkspaceRefresh,
   sessions,
@@ -372,12 +371,6 @@ export function createTerminalComponent(): IContentRenderer {
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
 
-          const pending = pendingOutputs.get(id);
-          if (pending) {
-            for (const chunk of pending) terminal && writeToTerminal(terminal, chunk);
-            pendingOutputs.delete(id);
-          }
-
           // The panel is registered into its group only after this content
           // component is initialized, so backfill the reference next tick.
           setTimeout(() => {
@@ -488,9 +481,7 @@ export function openSessionAtPoint(
   const el = document.elementFromPoint(clientX, clientY);
   const groupEl = el?.closest(".dv-groupview");
   const group = groupEl
-    ? getApi().groups.find(
-        (g) => (g as unknown as { element: HTMLElement }).element === groupEl
-      )
+    ? getApi().groups.find((g) => g.element === groupEl)
     : undefined;
 
   let position: AddPanelPositionOptions | undefined;
@@ -558,6 +549,7 @@ export function killParkedSession(sessionId: number): void {
   const parked = parkedSessions.get(sessionId);
   sessions.delete(sessionId);
   parkedSessions.delete(sessionId);
+  discardSession(sessionId);
   if (parked) {
     const parkedKey = parkedKeyFor(sessionId);
     clearIdle(parkedKey);

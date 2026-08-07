@@ -171,9 +171,7 @@ export function panelModeLabel(panel: IDockviewPanel): string {
 export function panelForTabElement(tabEl: HTMLElement): IDockviewPanel | undefined {
   const groupEl = tabEl.closest(".dv-groupview");
   if (!groupEl) return undefined;
-  const group = getApi().groups.find(
-    (g) => (g as unknown as { element: HTMLElement }).element === groupEl
-  );
+  const group = getApi().groups.find((g) => g.element === groupEl);
   if (!group) return undefined;
   const tabs = Array.from(
     groupEl.querySelectorAll<HTMLElement>(

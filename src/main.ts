@@ -65,11 +65,11 @@ import {
 } from "./dnd";
 import {
   bumpPanelCounter,
+  discardSession,
   getApi,
   panelStatus,
   panelToSession,
   parkedSessions,
-  pendingOutputs,
   sessions,
   setApi,
   setSidebarHooks,
@@ -205,7 +205,7 @@ async function init() {
         }
         entry.terminal.dispose();
         sessions.delete(sessionId);
-        pendingOutputs.delete(sessionId);
+        discardSession(sessionId);
         clearIndicator(panel.id);
         panelStatus.delete(panel.id);
       }

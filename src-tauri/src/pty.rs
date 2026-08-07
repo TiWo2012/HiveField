@@ -54,9 +54,17 @@ pub struct PtySession<R: tauri::Runtime = tauri::Wry> {
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
     app: AppHandle<R>,
-    /// Set once the frontend has contacted the backend (first write/resize).
-    /// Until then, shell output is buffered so the initial prompt is not lost
-    /// while the webview is still registering its event listeners.
+    /// Set once the frontend has contacted the backend for this session (first
+    /// write/resize). Until then, shell output is buffered so the initial
+    /// prompt is not lost while the webview is still registering its event
+    /// listeners.
+    ///
+    /// This is the *single* output-buffering point in the app. The frontend
+    /// registers its session entry *before* that first contact (the first
+    /// `pty_resize` only fires after the session is registered), so every
+    /// `pty://output` event is delivered to a terminal that already exists —
+    /// the frontend must never re-buffer output on its side, or it would
+    /// re-order/drop it across session handoffs.
     ready: Arc<AtomicBool>,
     /// Output buffered before the frontend was ready.
     buffer: Arc<Mutex<Vec<String>>>,
@@ -181,8 +189,8 @@ pub fn spawn<R: Runtime>(
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
-        rows: 30,
-        cols: 120,
+        rows: INITIAL_PTY_ROWS,
+        cols: INITIAL_PTY_COLS,
         pixel_width: 0,
         pixel_height: 0,
     })?;
@@ -235,7 +243,7 @@ pub fn spawn<R: Runtime>(
     let reader_app = app.clone();
     std::thread::spawn(move || {
         let mut decoder = Utf8StreamDecoder::new();
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; READ_BUF_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
@@ -300,7 +308,7 @@ pub fn spawn<R: Runtime>(
         let bytes = format!("{cmd}\r\n").into_bytes();
         let autorun_app = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(AUTORUN_DELAY_MS));
             let state = autorun_app.state::<crate::PtyState<R>>();
             let mut guard = state.sessions.lock().unwrap();
             if let Some(session) = guard.get_mut(&session_id) {
@@ -312,6 +320,16 @@ pub fn spawn<R: Runtime>(
 
     Ok(())
 }
+
+/// Initial PTY size until the frontend's first resize lands.
+const INITIAL_PTY_ROWS: u16 = 30;
+const INITIAL_PTY_COLS: u16 = 120;
+
+/// Size of each raw read from the PTY master.
+const READ_BUF_SIZE: usize = 4096;
+
+/// How long after spawn the agent auto-run command is typed into the shell.
+const AUTORUN_DELAY_MS: u64 = 500;
 
 /// Map a session mode to the command auto-run in its shell.
 ///

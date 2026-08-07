@@ -17,9 +17,20 @@ import {
 } from "./agents";
 import { THEMES } from "./themes";
 import {
+  CONTRAST_RATIO_MAX,
+  CONTRAST_RATIO_MIN,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  LETTER_SPACING_MAX,
+  LETTER_SPACING_MIN,
+  LINE_HEIGHT_MAX,
+  LINE_HEIGHT_MIN,
+  OPACITY_MAX,
+  OPACITY_MIN,
   getSettings,
   resetSettings,
   subscribe,
+  subscribePersistError,
   updateSettings,
 } from "./settings";
 import {
@@ -480,21 +491,21 @@ function buildGeneralTab(): HTMLElement {
   fontSection.appendChild(
     controlRow(
       "Font size",
-      numberField(s.fontSize, 6, 48, 1, (fontSize) => updateSettings({ fontSize })),
+      numberField(s.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX, 1, (fontSize) => updateSettings({ fontSize })),
       "px"
     )
   );
   fontSection.appendChild(
     controlRow(
       "Line height",
-      numberField(s.lineHeight, 0.5, 3, 0.1, (lineHeight) => updateSettings({ lineHeight })),
+      numberField(s.lineHeight, LINE_HEIGHT_MIN, LINE_HEIGHT_MAX, 0.1, (lineHeight) => updateSettings({ lineHeight })),
       "× cell height"
     )
   );
   fontSection.appendChild(
     controlRow(
       "Letter spacing",
-      numberField(s.letterSpacing, -2, 8, 0.5, (letterSpacing) => updateSettings({ letterSpacing })),
+      numberField(s.letterSpacing, LETTER_SPACING_MIN, LETTER_SPACING_MAX, 0.5, (letterSpacing) => updateSettings({ letterSpacing })),
       "px"
     )
   );
@@ -567,7 +578,7 @@ function buildGeneralTab(): HTMLElement {
   themeSection.appendChild(
     controlRow(
       "Background opacity",
-      numberField(s.backgroundOpacity, 0.25, 1, 0.05, (backgroundOpacity) =>
+      numberField(s.backgroundOpacity, OPACITY_MIN, OPACITY_MAX, 0.05, (backgroundOpacity) =>
         updateSettings({ backgroundOpacity })
       ),
       "Below 1 the terminal background becomes translucent with a blur"
@@ -586,7 +597,7 @@ function buildGeneralTab(): HTMLElement {
   renderSection.appendChild(
     controlRow(
       "Minimum contrast ratio",
-      numberField(s.minimumContrastRatio, 1, 21, 0.5, (minimumContrastRatio) =>
+      numberField(s.minimumContrastRatio, CONTRAST_RATIO_MIN, CONTRAST_RATIO_MAX, 0.5, (minimumContrastRatio) =>
         updateSettings({ minimumContrastRatio })
       ),
       "Boost foreground text contrast against the background (1 = off)"
@@ -1009,6 +1020,19 @@ function buildOverlay(): HTMLElement {
   doneBtn.addEventListener("click", closeSettings);
   footer.append(resetBtn, doneBtn);
   modal.appendChild(footer);
+
+  // Backend-persistence failures are otherwise invisible: the frontend keeps
+  // applying changes and localStorage caches them, so a dead settings.json
+  // write would silently diverge from what the user sees. Surface it here.
+  const persistStatus = el("div", "settings-persist-status");
+  persistStatus.hidden = true;
+  persistStatus.textContent =
+    "Saved in this window only — writing to disk failed.";
+  subscribePersistError((err) => {
+    persistStatus.hidden = err === undefined;
+    persistStatus.title = err ?? "";
+  });
+  modal.appendChild(persistStatus);
 
   backdrop.appendChild(modal);
   return backdrop;
