@@ -70,8 +70,11 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   runs `$EDITOR` (resolved at spawn, honoring a profile-set value with `vi` /
   `notepad` as fallback) and runs in the launch directory instead of a
   throwaway worktree so edited files are never swallowed. Adding a built-in
-  agent is still a one-line change in the frontend registry (`AGENTS` in
-  `src/agents.ts`); the backend auto-runs any non-`raw` mode as its command.
+  agent is one entry in the shared registry (`src/agents.json`, imported by
+  `src/agents.ts`); the backend auto-runs any non-`raw` mode as its command,
+  and CI guards the contract — unit tests on both sides (see **Testing**)
+  keep the Rust PTY layer and the README in sync with the registry. A new
+  CLI needs no release at all: add it as a **Custom agent** in Settings.
 - **Live sidebar info**: below the drag sources the sidebar shows a
   **Running** section — every open session with its mode icon, tab title,
   working directory, and a status glyph (active / ● producing output /
@@ -196,6 +199,32 @@ bun install           # install frontend deps (in repo root)
 cargo build           # in src-tauri/
 bun run tauri dev     # build frontend + launch the app window
 ```
+
+## Testing
+
+```sh
+bun test              # frontend unit tests + docs-drift guards (repo root)
+bun run typecheck     # tsc --noEmit over src/
+cargo test            # in src-tauri/ — Rust unit tests
+```
+
+CI (`.github/workflows/test.yml`) runs all four on every push to `dev`: the
+bundle, the typecheck, `bun test`, and `cargo test`.
+
+Frontend tests cover the pure, dependency-free modules (the agent registry in
+`src/agents.ts` + `src/agents.json`, fuzzy scoring in `src/fuzzy.ts`, keybind
+parsing in `src/keybinds.ts`) plus two docs-drift guards: the README must
+mention every built-in agent, and `AGENTS.md` / `docs/FEATURE_PLAN.md` must
+agree the merge target is `dev`. `src/main.ts` (the ~3.4k-line dockview/PTY
+wiring) is DOM/Tauri-bound and is deliberately not unit-tested; keep new
+logic in small satellite modules so it stays testable.
+
+The built-in agent registry lives in exactly one place — `src/agents.json` —
+guarded on both sides: the frontend test requires the README to mention every
+registered agent, and a Rust test (`registered_agent_modes_are_safe_bare_commands`
+in `src-tauri/src/pty.rs`) requires every mode id to be a safe bare command
+word. Adding an agent is one JSON entry (plus a README mention); no Rust
+change.
 
 ## Build a release bundle
 

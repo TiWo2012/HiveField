@@ -4,13 +4,20 @@
  * the settings UI (the "Show agents" checklist, and the custom-agent editor).
  *
  * The registry is two-tier:
- *  - `AGENTS`: the built-in coding-agent CLIs, hardcoded here.
+ *  - `AGENTS`: the built-in coding-agent CLIs, defined once in
+ *    `src/agents.json` (the single source of truth) and imported here. The
+ *    Rust PTY layer and the README are guarded against it by unit tests on
+ *    each side, so the two sides cannot silently disagree.
  *  - `customAgents`: user-defined agents, stored in the `customAgents`
  *    setting. They are merged with the built-ins at runtime — every
  *    `*All` helper below takes the custom list and resolves against the
  *    combined registry, so a custom agent behaves exactly like a built-in
  *    (sidebar entry, palette/context-menu source, worktree, notifications).
+ *    Adding a new CLI therefore never needs a release: define it here as a
+ *    custom agent, or (for a built-in) add one entry to `src/agents.json`.
  */
+
+import builtinAgents from "./agents.json";
 
 /** A coding-agent CLI this terminal can launch as a session. */
 export interface AgentDef {
@@ -53,30 +60,16 @@ export const RAW_MODE = "raw";
 export const EDITOR_CMD = "$EDITOR";
 
 /**
- * The major coding-agent CLIs, in sidebar order. Sessions auto-run the agent
- * in an isolated worktree; add a new agent by appending to this list (and a
- * `command` when the CLI binary differs from the id). Which of these are
- * offered as new-session sources is controlled by the `visibleAgents` setting.
+ * The major coding-agent CLIs, in sidebar order, imported from the shared
+ * `src/agents.json` registry (single source of truth — the Rust PTY layer
+ * reads the same file in a contract test, and a docs-drift test requires the
+ * README to mention every agent). Sessions auto-run the agent in an isolated
+ * worktree; add a new built-in by appending one entry to `src/agents.json`
+ * (plus a `command` when the CLI binary differs from the id). Which of these
+ * are offered as new-session sources is controlled by the `visibleAgents`
+ * setting.
  */
-export const AGENTS: readonly AgentDef[] = [
-  { id: "opencode", label: "opencode", icon: "✦" },
-  { id: "pi", label: "pi agent", icon: "π" },
-  { id: "codex", label: "Codex", icon: "◈" },
-  { id: "copilot", label: "Copilot", icon: "◎" },
-  { id: "claude", label: "Claude Code", icon: "✳" },
-  { id: "gemini", label: "Gemini CLI", icon: "✧" },
-  { id: "aider", label: "Aider", icon: "⚒" },
-  { id: "cursor", label: "Cursor Agent", icon: "▸", command: "cursor-agent" },
-  { id: "amp", label: "Amp", icon: "⚡" },
-  { id: "qwen", label: "Qwen Code", icon: "❖", command: "qwen-code" },
-  { id: "goose", label: "Goose", icon: "❉" },
-  { id: "crush", label: "Crush", icon: "✿" },
-  { id: "cody", label: "Cody", icon: "⬡" },
-  { id: "openhands", label: "OpenHands", icon: "☛" },
-  // Runs $EDITOR (resolved via editor_command at spawn). No worktree: an
-  // editor edits real files, and a throwaway checkout would swallow them.
-  { id: "editor", label: "Editor", icon: "✎", command: EDITOR_CMD, worktree: false },
-];
+export const AGENTS: readonly AgentDef[] = builtinAgents;
 
 /** All built-in agent mode ids (everything the app can auto-run as a session). */
 export const AGENT_MODES: readonly string[] = AGENTS.map((a) => a.id);

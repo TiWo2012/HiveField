@@ -1,0 +1,24 @@
+[
+  { "id": "opencode", "label": "opencode", "icon": "✦" },
+  { "id": "pi", "label": "pi agent", "icon": "π" },
+  { "id": "codex", "label": "Codex", "icon": "◈" },
+  { "id": "copilot", "label": "Copilot", "icon": "◎" },
+  { "id": "claude", "label": "Claude Code", "icon": "✳" },
+  { "id": "gemini", "label": "Gemini CLI", "icon": "✧" },
+  { "id": "aider", "label": "Aider", "icon": "⚒" },
+  { "id": "cursor", "label": "Cursor Agent", "icon": "▸", "command": "cursor-agent" },
+  { "id": "amp", "label": "Amp", "icon": "⚡" },
+  { "id": "qwen", "label": "Qwen Code", "icon": "❖", "command": "qwen-code" },
+  { "id": "goose", "label": "Goose", "icon": "❉" },
+  { "id": "crush", "label": "Crush", "icon": "✿" },
+  { "id": "cody", "label": "Cody", "icon": "⬡" },
+  { "id": "openhands", "label": "OpenHands", "icon": "☛" },
+  {
+    "id": "editor",
+    "label": "Editor",
+    "icon": "✎",
+    "command": "$EDITOR",
+    "worktree": false,
+    "note": "Runs $EDITOR (resolved via editor_command at spawn). No worktree: an editor edits real files, and a throwaway checkout would swallow them."
+  }
+]

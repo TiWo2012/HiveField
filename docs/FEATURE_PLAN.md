@@ -3,10 +3,20 @@
 A shortlist of five new features, scoped to the existing architecture
 (Tauri v2 backend + xterm.js/dockview frontend, single `src/main.ts` app
 module with small satellite modules). Each feature is independently
-implementable, lands as its own branch merged back to `master`, and follows
+implementable, lands as its own branch merged back to `dev`, and follows
 the existing patterns: IPC command in `src-tauri/src/lib.rs`, keybinding in
 `src/keybinds.ts`, palette/context-menu wiring in `src/main.ts`, settings in
 `src/settings.ts` + `src/settings-ui.ts`.
+
+> **Status (audited 2026-08):** all five features below are **unstarted** —
+> no broadcast/zoom/reopen/transcript/regex-search code exists in the tree
+> today, so this is a forward-looking backlog, not a changelog. The
+> architecture claims (dockview maximize API on `DockviewPanelApi`, the
+> search addon's `regex`/`wholeWord` options) were verified against the
+> installed typings. Line-number references are intentionally avoided — the
+> file moved — so search by symbol name instead. Each feature lands as its
+> own branch → rebase onto `dev` → `--ff-only` merge → branch/worktree
+> cleanup, per `AGENTS.md`.
 
 Ordered by size: **5 → 2 → 3 → 1 → 4**. (1 and 4 are the biggest; 5 is a
 couple of hours.)
@@ -27,7 +37,7 @@ iTerm2-style "send input to all sessions" toggle.
   ("Toggle broadcast input to all panes"), and a status-bar button (see
   below). Toggle state is per window (module scope), not persisted.
 - While enabled, a capture-phase `window` keydown listener (registered next to
-  the existing global-shortcut handler around `main.ts:3028`) intercepts keys
+  the existing global-shortcut handler in `src/main.ts`) intercepts keys
   **before xterm's own handlers** and, instead of letting only the active
   terminal translate them:
   1. Translates the `KeyboardEvent` into the byte sequence xterm would have
@@ -86,15 +96,17 @@ survives workspace switches but resets on window close.
 
 **Problem.** With several splits open there's no quick way to temporarily make
 one pane fill the window (tmux `Ctrl-b z`, iTerm "Zoom"). Dockview 7 already
-supports this on the group/panel API (`maximize()` / `isMaximized()`); we
-just never exposed it.
+supports this on `DockviewPanelApi` / `DockviewGroupPanelApi`
+(`maximize()` / `isMaximized()` / `exitMaximized()` — verified against the
+installed `dockview-core@7.0.4` typings); we just never exposed it.
 
 **Design.**
 
 - New keybind **Zoom pane** (`Ctrl+Shift+M`, group "Layout") toggles the
   active panel: `panel.api.maximize()` / un-maximize when already maximized.
-  (Verify exact method names against the installed `dockview-core@7.0.4`
-  typings — `PanelApi` and the group API both expose maximize helpers.)
+  (Verified against the installed `dockview-core@7.0.4` typings:
+  `DockviewPanelApi`/`DockviewGroupPanelApi` expose `maximize()`,
+  `isMaximized()` and `exitMaximized()`.)
 - Add the same action to the **context menu** (top-level entry, and on
   right-clicking a tab) and the **command palette** ("Zoom / unzoom pane").
 - When a pane is maximized, hide the other panes' tabs? No — dockview handles
@@ -137,7 +149,7 @@ exists.
 
 - Keep a per-window stack (module-level, cap ~10) of recently closed
   sessions: `{ mode, cwd, title, worktreeWasAuto }`. Record on every teardown
-  path — the `onDidRemovePanel` hook in `main.ts:2824`, and the parked-session
+  path — the `api.onDidRemovePanel` hook in `src/main.ts`, and the parked-session
   kill path (`killParkedSession`).
 - **Reopen** (`Ctrl+Shift+Z`, palette action "Reopen last closed session",
   maybe a "Reopen session…" sub-picker listing the stack like "Insert
@@ -185,7 +197,7 @@ reading the DOM buffer can miss early output.
 **Design.**
 
 - **Accumulate a per-session transcript in the frontend**, appended in
-  `writeToTerminal` (`main.ts:637`) where every `pty://output` chunk already
+  `writeToTerminal` (`src/main.ts`) where every `pty://output` chunk already
   lands. Bound it (e.g. 2 MB per session, drop oldest chunks) so memory stays
   flat; store as a rolling array of strings to avoid repeated concatenation.
   (Frontend-side accumulation means the Rust backend needs no changes for
@@ -274,8 +286,8 @@ xterm SearchAddon also supports `regex` and `wholeWord` options
 5. **Save/copy transcript (4)** — adds the dialog plugin dependency; do it
    last so the dependency lands once.
 
-Each lands as its own branch → rebase onto `master` → `--ff-only` merge →
-branch/worktree cleanup, per the repo workflow.
+Each lands as its own branch → rebase onto `dev` → `--ff-only` merge →
+branch/worktree cleanup, per the repo workflow (`AGENTS.md`).
 
 ## Non-goals (explicitly out of scope for now)
 

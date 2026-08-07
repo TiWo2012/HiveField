@@ -26,6 +26,9 @@ jobs:
       - name: Typecheck frontend
         run: bunx tsc --noEmit
 
+      - name: Frontend unit tests + docs-drift guards
+        run: bun test
+
   backend:
     name: Backend (cargo test)
     runs-on: ubuntu-24.04

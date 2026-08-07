@@ -6,6 +6,8 @@
   "description": "A basic terminal built with Tauri and xterm.js",
   "scripts": {
     "build": "tsc --noEmit && bun build src/main.ts --outdir dist && cp index.html dist/",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
     "dev": "bun run build",
     "dev:no-reload": "tauri dev --no-watch --no-dev-server"
   },
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/bun": "^1.3.14",
     "typescript": "^5"
   }
 }

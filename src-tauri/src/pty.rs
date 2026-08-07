@@ -605,6 +605,58 @@ mod tests {
         assert_eq!(autorun_command("custom-x", Some("   ")), None);
     }
 
+    // ---- built-in agent registry contract (shared with the frontend) ----
+
+    #[test]
+    fn registered_agent_modes_are_safe_bare_commands() {
+        // The backend deliberately does not embed the built-in agent registry:
+        // `spawn` auto-runs any non-`raw` mode as its command so new agents
+        // work without a Rust change. This test is the contract that keeps
+        // the two sides from silently disagreeing — it reads the single
+        // source of truth (../src/agents.json, imported by the frontend) and
+        // verifies every registered mode id stays runnable and safe.
+        let registry_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/agents.json");
+        let text = std::fs::read_to_string(&registry_path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read the shared agent registry at {}: {e} — the frontend registry must live at src/agents.json",
+                registry_path.display()
+            )
+        });
+        let entries: serde_json::Value =
+            serde_json::from_str(&text).expect("src/agents.json is not valid JSON");
+        let agents = entries
+            .as_array()
+            .expect("src/agents.json must be a JSON array of agent definitions");
+        assert!(!agents.is_empty(), "src/agents.json has no built-in agents");
+
+        let mut ids = std::collections::BTreeSet::new();
+        for entry in agents {
+            let id = entry
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("every agent in src/agents.json needs an \"id\": {entry}"));
+            assert_ne!(
+                id, "raw",
+                "the plain-shell mode \"raw\" must never be registered as an agent"
+            );
+            assert!(
+                ids.insert(id),
+                "duplicate agent mode id in src/agents.json: {id}"
+            );
+            // The mode id is the fallback command when no `command` override
+            // exists, so it must be a bare command word: no whitespace or
+            // shell metacharacters (see `autorun_command`).
+            let safe = !id.is_empty()
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            assert!(
+                safe,
+                "agent mode id {id:?} is not a safe bare command word — fix the id or give the agent a `command` override"
+            );
+        }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn editor_command_returns_shell_expandable_on_unix() {
