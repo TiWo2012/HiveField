@@ -519,6 +519,50 @@ body {
   user-select: none;
 }
 
+/* Git changes-since-launch summary toast (see scheduleGitDiffReport). */
+.git-diff-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-diff-icon {
+  color: var(--hf-accent);
+}
+
+.git-diff-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.git-diff-add {
+  color: var(--hf-green);
+  font-weight: 600;
+}
+
+.git-diff-del {
+  color: var(--hf-red);
+  font-weight: 600;
+}
+
+.git-diff-dismiss {
+  background: none;
+  border: none;
+  color: var(--hf-subtext0);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.git-diff-dismiss:hover {
+  color: var(--hf-text);
+  background: var(--hf-surface1);
+}
+
 /* ---------------------------------------------------------------------------
  * Terminal panels
  * ------------------------------------------------------------------------- */
