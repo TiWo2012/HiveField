@@ -70,20 +70,33 @@ impl GitLaunchState {
 /// reports total files changed plus added/deleted lines. Returns `null` when
 /// the app did not launch inside a git repository, when the invoking window
 /// is on a different repository, or when git is unavailable.
+///
+/// Async + `spawn_blocking`: the git queries shell out to the `git` binary and
+/// must not block the main thread; results are cached briefly in [`git::GitCache`]
+/// so the frequent worktree/diff refreshes spawn processes only on misses.
 #[tauri::command]
-fn git_diff_summary(
-    state: State<'_, GitLaunchState>,
+async fn git_diff_summary(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-) -> Option<git::DiffSummary> {
-    let launch_root = state.repo_root.as_ref()?;
-    let dir = window_cwd(&window).map(std::path::PathBuf::from).ok()?;
-    let root = git::repo_root(&dir)?;
-    // Only meaningful while the window is on the repo the app launched from.
-    if root != *launch_root {
-        return None;
-    }
-    let base = state.commit.as_ref()?;
-    git::diff_summary(&root, base)
+) -> Result<Option<git::DiffSummary>, String> {
+    // Async commands cannot borrow `State` from the IPC message; resolve the
+    // launch snapshot from the app handle inside the task instead.
+    let launch_state = app.state::<GitLaunchState>();
+    let Some(launch_root) = launch_state.repo_root.clone() else {
+        return Ok(None);
+    };
+    let Some(base) = launch_state.commit.clone() else {
+        return Ok(None);
+    };
+    let Ok(dir) = window_cwd(&window).map(std::path::PathBuf::from) else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let cache = app.state::<git::GitCache>();
+        cache.cached_diff_summary(&dir, &launch_root, &base)
+    })
+    .await
+    .map_err(|e| format!("git diff summary task failed: {e}"))
 }
 
 /// The directory a command's window resolves its "launch directory" to: the
@@ -276,27 +289,43 @@ async fn window_new(
 
 /// IPC command: list the git worktrees of the repo containing the invoking
 /// window's launch directory. `root` is `null` when the launch dir is not
-/// inside a git repo, in which case `worktrees` is empty.
+/// inside a git repo, in which case `worktrees` is empty. Served from the
+/// [`git::GitCache`] (async, never blocks the main thread).
 #[tauri::command]
-fn git_worktrees(window: tauri::WebviewWindow) -> git::WorktreesInfo {
-    match window_cwd(&window).map(std::path::PathBuf::from) {
-        Ok(dir) => git::list(&dir),
-        Err(_) => git::WorktreesInfo { root: None, worktrees: Vec::new() },
-    }
+async fn git_worktrees(app: tauri::AppHandle, window: tauri::WebviewWindow) -> git::WorktreesInfo {
+    let dir = match window_cwd(&window).map(std::path::PathBuf::from) {
+        Ok(dir) => dir,
+        Err(_) => return git::WorktreesInfo { root: None, worktrees: Vec::new() },
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let cache = app.state::<git::GitCache>();
+        cache.cached_worktrees(&dir)
+    })
+    .await
+    .unwrap_or_else(|_| git::WorktreesInfo { root: None, worktrees: Vec::new() })
 }
 
 /// IPC command: create a worktree on a new branch in the repo containing the
 /// invoking window's launch directory. `path` is optional — when omitted the
 /// worktree is created in a sibling directory named `<repo dir>-<branch>`.
-/// Returns the absolute path of the new worktree.
+/// Returns the absolute path of the new worktree. Invalidates the git cache
+/// for that repo so the next listing reflects the new worktree.
 #[tauri::command]
-fn git_worktree_create(
+async fn git_worktree_create(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     branch: String,
     path: Option<String>,
 ) -> Result<String, String> {
     let dir = window_cwd(&window).map(std::path::PathBuf::from)?;
-    git::create(&dir, &branch, path.as_deref()).map(|p| p.to_string_lossy().into_owned())
+    tauri::async_runtime::spawn_blocking(move || {
+        let created = git::create(&dir, &branch, path.as_deref());
+        app.state::<git::GitCache>().invalidate(&dir);
+        created
+    })
+    .await
+    .map_err(|e| format!("git worktree create task failed: {e}"))?
+    .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// IPC command: remove the worktree at `path` from the repo containing the
@@ -304,13 +333,20 @@ fn git_worktree_create(
 /// worktree has uncommitted or untracked files; pass `force` (default false)
 /// to run `git worktree remove --force`, which also deletes the working tree.
 #[tauri::command]
-fn git_worktree_remove(
+async fn git_worktree_remove(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     path: String,
     force: Option<bool>,
 ) -> Result<(), String> {
     let dir = window_cwd(&window).map(std::path::PathBuf::from)?;
-    git::remove(&dir, &path, force.unwrap_or(false))
+    tauri::async_runtime::spawn_blocking(move || {
+        let removed = git::remove(&dir, &path, force.unwrap_or(false));
+        app.state::<git::GitCache>().invalidate(&dir);
+        removed
+    })
+    .await
+    .map_err(|e| format!("git worktree remove task failed: {e}"))?
 }
 
 /// IPC command: auto-create a throwaway worktree for a session. `name` is
@@ -318,13 +354,20 @@ fn git_worktree_remove(
 /// and checked out under `base_dir` (the global "worktree base dir" setting,
 /// defaults to `/tmp`). Returns the new checkout's path and branch.
 #[tauri::command]
-fn git_worktree_auto_create(
+async fn git_worktree_auto_create(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     name: String,
     base_dir: String,
 ) -> Result<git::AutoWorktree, String> {
     let dir = window_cwd(&window).map(std::path::PathBuf::from)?;
-    git::auto_create(&dir, &name, &base_dir)
+    tauri::async_runtime::spawn_blocking(move || {
+        let created = git::auto_create(&dir, &name, &base_dir);
+        app.state::<git::GitCache>().invalidate(&dir);
+        created
+    })
+    .await
+    .map_err(|e| format!("git worktree auto-create task failed: {e}"))?
 }
 
 /// IPC command: whether the given path exists on disk as a directory. Used by
@@ -385,6 +428,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(PtyState::<tauri::Wry>::default())
         .manage(windows::WindowState::default())
+        .manage(git::GitCache::default())
         .manage(dictation::DictationState::default())
         .manage(launch_state)
         .invoke_handler(tauri::generate_handler![

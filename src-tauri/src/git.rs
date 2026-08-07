@@ -6,12 +6,100 @@
 //! not inside a git repository yields an empty worktree list rather than an
 //! error, so the UI can render nothing and no one has to special-case it.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+
+use crate::Unpoisoned;
+
+/// How long a cached worktree listing stays fresh. The frontend refreshes
+/// workspace info on every session change (debounced to ~250 ms); without a
+/// cache each refresh spawns fresh `git` processes, so misses are cheap and
+/// hits must be the common case.
+const WORKTREES_TTL: Duration = Duration::from_secs(5);
+
+/// How long a cached diff summary stays fresh. Diffs change as the user edits,
+/// but the sidebar / report only needs coarse, infrequent updates.
+const DIFF_TTL: Duration = Duration::from_secs(10);
+
+/// TTL cache for expensive git queries (each of which shells out to the `git`
+/// binary). Managed as Tauri state so the hot IPC paths — worktree listing and
+/// diff summaries — are served from memory most of the time. Mutating
+/// operations (worktree create/remove) invalidate the affected entries.
+pub struct GitCache {
+    worktrees: Mutex<HashMap<String, (Instant, WorktreesInfo)>>,
+    diffs: Mutex<HashMap<(String, String), (Instant, Option<DiffSummary>)>>,
+}
+
+impl Default for GitCache {
+    fn default() -> Self {
+        Self {
+            worktrees: Mutex::new(HashMap::new()),
+            diffs: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl GitCache {
+    /// Worktree listing for the repo containing `dir`, cached per query dir
+    /// for [`WORKTREES_TTL`]. Cache misses run the real git queries.
+    pub fn cached_worktrees(&self, dir: &Path) -> WorktreesInfo {
+        let key = dir.to_string_lossy().into_owned();
+        if let Some((at, info)) = self.worktrees.lock_unpoisoned().get(&key) {
+            if at.elapsed() < WORKTREES_TTL {
+                return info.clone();
+            }
+        }
+        let info = list(dir);
+        self.worktrees
+            .lock_unpoisoned()
+            .insert(key, (Instant::now(), info.clone()));
+        info
+    }
+
+    /// Diff summary of the repo containing `dir` against `base`, cached for
+    /// [`DIFF_TTL`]. `launch_root` gates the result: the diff is only reported
+    /// while `dir` resolves to the repo the app launched from (matching the
+    /// `git_diff_summary` semantics). A cached `None` (not that repo, bad
+    /// base, git unavailable) is stored too, so a flaky git call is not
+    /// retried on every poll.
+    pub fn cached_diff_summary(
+        &self,
+        dir: &Path,
+        launch_root: &Path,
+        base: &str,
+    ) -> Option<DiffSummary> {
+        let key = (dir.to_string_lossy().into_owned(), base.to_string());
+        if let Some((at, summary)) = self.diffs.lock_unpoisoned().get(&key) {
+            if at.elapsed() < DIFF_TTL {
+                return summary.clone();
+            }
+        }
+        let root = repo_root(dir)?;
+        let summary = if root == launch_root {
+            diff_summary(&root, base)
+        } else {
+            None
+        };
+        self.diffs
+            .lock_unpoisoned()
+            .insert(key, (Instant::now(), summary.clone()));
+        summary
+    }
+
+    /// Drop cached entries keyed by `dir` after a mutating git operation
+    /// (worktree create/remove) so the next query observes the new state.
+    pub fn invalidate(&self, dir: &Path) {
+        let key = dir.to_string_lossy().into_owned();
+        self.worktrees.lock_unpoisoned().remove(&key);
+        self.diffs.lock_unpoisoned().retain(|(d, _), _| d != &key);
+    }
+}
 
 /// A single worktree as reported by `git worktree list --porcelain`.
 #[derive(Clone, Debug, Serialize)]
@@ -67,7 +155,7 @@ pub fn repo_root(dir: &Path) -> Option<PathBuf> {
 
 /// A summary of the changes between a base commit and the current working
 /// tree: how many files were touched, plus the total added/deleted lines.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffSummary {
     /// Number of files that changed (modified, added, deleted, renamed).
@@ -577,6 +665,37 @@ prunable gitdir file
             assert!(!out.ends_with(['-', '.']), "{name:?} -> {out:?}");
             assert!(!out.is_empty(), "{name:?} must fall back, not stay empty");
         }
+    }
+
+    // ---- GitCache (TTL caching of git queries) ----
+
+    #[test]
+    fn cache_serves_identical_results_for_non_git_dir() {
+        let cache = GitCache::default();
+        let dir = Path::new("/definitely/not/a/git/repo");
+        let a = cache.cached_worktrees(dir);
+        let b = cache.cached_worktrees(dir);
+        assert_eq!(a.root, None);
+        assert!(a.worktrees.is_empty());
+        assert_eq!(a.root, b.root);
+        assert_eq!(a.worktrees.len(), b.worktrees.len());
+    }
+
+    #[test]
+    fn cache_diff_summary_is_none_for_non_git_dir() {
+        let cache = GitCache::default();
+        let dir = Path::new("/definitely/not/a/git/repo");
+        assert_eq!(cache.cached_diff_summary(dir, dir, "HEAD"), None);
+    }
+
+    #[test]
+    fn invalidate_clears_worktree_entries() {
+        let cache = GitCache::default();
+        let dir = Path::new("/definitely/not/a/git/repo");
+        cache.cached_worktrees(dir);
+        assert_eq!(cache.worktrees.lock_unpoisoned().len(), 1);
+        cache.invalidate(dir);
+        assert_eq!(cache.worktrees.lock_unpoisoned().len(), 0);
     }
 
     // ---- auto_create naming (no git involved) ----
