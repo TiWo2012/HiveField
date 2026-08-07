@@ -451,6 +451,13 @@ interface PanelStatus {
   baseTitle: string;
   indicator: string;
   userTitle: boolean;
+  /**
+   * The automatic (OSC / input-line / mode) title in effect before the user
+   * pinned a custom name; restoring it when the custom name is cleared. Kept
+   * across rename→rename so a second rename still reverts to the automatic
+   * title, not the previous custom one.
+   */
+  preRenameTitle: string | undefined;
   /** True once a finished agent session has been reported to the user. */
   notified: boolean;
 }
@@ -758,6 +765,9 @@ function ensurePanelStatus(panelId: string, initialTitle: string, userTitle?: st
     baseTitle: userTitle ?? clean,
     indicator: "",
     userTitle: typeof userTitle === "string" && userTitle.length > 0,
+    // A restored custom title has no live pre-rename title to revert to;
+    // renamePanel falls back to the mode label in that case.
+    preRenameTitle: undefined,
     notified: false,
   };
   panelStatus.set(panelId, st);
@@ -2377,6 +2387,17 @@ function panelForTabElement(tabEl: HTMLElement): IDockviewPanel | undefined {
   return group.panels[idx];
 }
 
+/** The mode-derived label for a panel (fallback title when no live title exists). */
+function panelModeLabel(panel: IDockviewPanel): string {
+  const params = panel.api.getParameters() as Record<string, unknown>;
+  const mode: Mode =
+    typeof params.mode === "string" &&
+    isKnownModeAll(params.mode, customs())
+      ? params.mode
+      : DEFAULT_MODE;
+  return modeLabelAll(mode, customs());
+}
+
 /** Prompt to rename a tab; empty input reverts to automatic titles. */
 async function renamePanel(panel: IDockviewPanel): Promise<void> {
   const st = panelStatus.get(panel.id);
@@ -2394,12 +2415,21 @@ async function renamePanel(panel: IDockviewPanel): Promise<void> {
   if (!status) return;
   status.userTitle = value.length > 0;
   if (status.userTitle) {
+    // Remember the automatic title in effect right now so that clearing the
+    // custom name later can restore it (renaming again keeps the original
+    // snapshot instead of overwriting it with the previous custom name).
+    if (status.preRenameTitle === undefined) {
+      status.preRenameTitle = status.baseTitle;
+    }
     status.baseTitle = value;
     panel.api.updateParameters({ userTitle: value });
     renderTitle(panel.id);
   } else {
-    // Revert: next OSC / input-line title wins again.
-    status.baseTitle = status.baseTitle;
+    // Revert: hand the tab back to automatic titles. Restore the pre-rename
+    // title (mode label as a fallback when no snapshot exists, e.g. after a
+    // layout restore where only the custom name was serialized).
+    status.baseTitle = status.preRenameTitle ?? panelModeLabel(panel);
+    status.preRenameTitle = undefined;
     panel.api.updateParameters({ userTitle: null });
     renderTitle(panel.id);
   }
