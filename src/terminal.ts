@@ -32,9 +32,7 @@ const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
   // xterm's own focus bookkeeping aligned with the active panel.
   cursorInactiveStyle: "outline",
   scrollback: SCROLLBACK_LINES,
-  // No experimental xterm API surface is used (nothing reads `terminal._core`
-  // or registers decorations), so `allowProposedApi` stays off: the proposed
-  // surface can break on minor xterm upgrades without notice.
+  allowProposedApi: true,
 };
 
 /** Convert a #rrggbb hex color to an rgba() string with the given alpha. */
