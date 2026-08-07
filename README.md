@@ -12,7 +12,10 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   A new window opens on the same launch directory as the one that created it,
   and each window's workspace document is keyed by its own directory — so you
   can run several projects side by side. Closing a window ends the sessions
-  it spawned.
+  it spawned. **Drag an agent out of a window** (or hold **Alt** while
+  dragging and drop anywhere on the opaque "Drop to open in a new window"
+  overlay that appears) to open that agent in a fresh window instead of
+  splitting the current layout.
 - **Opens in the directory it was launched from** (falls back to `$HOME` if the
   launch dir is gone/unreadable)
 - **Per-directory workspace restore**: the tab/split layout (which sessions are
@@ -53,9 +56,13 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
   terminal area — it opens there as a **split** (drop near an edge to choose
   the split direction, drop in the middle to split to the right). Agent
   sessions auto-run the agent CLI; `raw` sessions are a plain shell. Use
-  `Ctrl+Shift+T` to open a session as a tab instead. Which agents are offered
-  is configurable in **Settings → Agents** (uncheck an agent to hide it from
-  the sidebar, context menu and palette; the raw shell is always available).
+  `Ctrl+Shift+T` to open a session as a tab instead. **Drag an entry out of
+  the window** to open that session in a brand-new window, or hold **Alt**
+  while dragging to show the "drop to open in a new window" overlay (opaque,
+  so it never lets the desktop show through) and drop anywhere on it. Which
+  agents are offered is configurable in **Settings → Agents** (uncheck an
+  agent to hide it from the sidebar, context menu and palette; the raw shell
+  is always available).
   **Custom agents** are defined in the same panel: give one a name and a
   command line (arguments allowed, e.g. `opencode --model gpt-5`), and it
   behaves like a built-in — sidebar entry, palette/context-menu source,

@@ -8,6 +8,7 @@ mod windows;
 mod workspace;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -26,6 +27,49 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
             next_id: AtomicU64::new(1),
         }
     }
+}
+
+/// The git state the app launched against: the repo (if any) containing the
+/// process working directory and the HEAD commit at that moment. Kept so the
+/// UI can later report how much the repo changed since startup (see the
+/// `git_diff_summary` command).
+pub struct GitLaunchState {
+    /// Repo root captured at launch, when the launch dir was inside a repo.
+    repo_root: Option<PathBuf>,
+    /// HEAD commit hash captured at launch, when the launch dir was a repo.
+    commit: Option<String>,
+}
+
+impl GitLaunchState {
+    /// Capture the repo + HEAD commit of `launch_dir` (best-effort: both
+    /// fields stay `None` when it is not inside a git repository).
+    fn from_dir(launch_dir: &Path) -> Self {
+        let repo_root = git::repo_root(launch_dir);
+        let commit = repo_root.as_deref().and_then(git::head_commit);
+        Self { repo_root, commit }
+    }
+}
+
+/// IPC command: summarize the changes since the app launched. The launch
+/// commit was captured at startup (HEAD of the repo containing the process
+/// working directory); this diffs it against the current working tree and
+/// reports total files changed plus added/deleted lines. Returns `null` when
+/// the app did not launch inside a git repository, when the invoking window
+/// is on a different repository, or when git is unavailable.
+#[tauri::command]
+fn git_diff_summary(
+    state: State<'_, GitLaunchState>,
+    window: tauri::WebviewWindow,
+) -> Option<git::DiffSummary> {
+    let launch_root = state.repo_root.as_ref()?;
+    let dir = window_cwd(&window).map(std::path::PathBuf::from).ok()?;
+    let root = git::repo_root(&dir)?;
+    // Only meaningful while the window is on the repo the app launched from.
+    if root != *launch_root {
+        return None;
+    }
+    let base = state.commit.as_ref()?;
+    git::diff_summary(&root, base)
 }
 
 /// The directory a command's window resolves its "launch directory" to: the
@@ -200,14 +244,20 @@ fn project_touch(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
 /// the new window's label. The frontend passes the invoking window's own
 /// launch directory so "New Window" opens a second window on the same project.
 ///
+/// `start_mode` optionally requests a session the new window should open
+/// right away instead of showing the splash — used when an agent is dragged
+/// out of a window to open it there. The mode is handed to the new window via
+/// its URL (`?start=<mode>`), which the frontend reads during init.
+///
 /// Async on purpose: on Windows, building a window inside a synchronous
 /// command deadlocks (see [`tauri::WebviewWindowBuilder`] docs).
 #[tauri::command]
 async fn window_new(
     app: tauri::AppHandle,
     cwd: Option<String>,
+    start_mode: Option<String>,
 ) -> Result<String, String> {
-    windows::new_window(&app, cwd)
+    windows::new_window(&app, cwd, start_mode)
 }
 
 /// IPC command: list the git worktrees of the repo containing the invoking
@@ -309,12 +359,20 @@ fn open_url(url: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Capture the repo + HEAD commit the app launched against, so the UI can
+    // report changes since startup a few seconds in (git_diff_summary).
+    let launch_state = GitLaunchState::from_dir(
+        &workspace::resolve_cwd()
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(".")),
+    );
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(PtyState::<tauri::Wry>::default())
         .manage(windows::WindowState::default())
         .manage(dictation::DictationState::default())
+        .manage(launch_state)
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -333,6 +391,7 @@ pub fn run() {
             git_worktree_create,
             git_worktree_remove,
             git_worktree_auto_create,
+            git_diff_summary,
             dir_exists,
             open_url,
             fonts::list_system_fonts,

@@ -101,6 +101,16 @@ interface AutoWorktree {
   branch: string;
 }
 
+/** Result of the `git_diff_summary` IPC command (null when not applicable). */
+interface GitDiffSummary {
+  /** Number of files that changed since launch. */
+  changed: number;
+  /** Total inserted lines since launch. */
+  insertions: number;
+  /** Total deleted lines since launch. */
+  deletions: number;
+}
+
 /** A session start request carried across a drag or passed to a panel. */
 interface SessionDrag {
   mode: Mode;
@@ -218,6 +228,69 @@ function buildDragGhost(source: { icon: string; label: string }): HTMLElement {
   ghost.appendChild(icon);
   ghost.appendChild(document.createTextNode(source.label));
   return ghost;
+}
+
+/**
+ * Show or hide the "drop to open in a new window" indicator. It is a
+ * full-window drop surface that appears only while a sidebar drag hovers with
+ * Alt held (see `setupSidebarDndFallback`), so it never clutters normal
+ * dragging. Its background is deliberately opaque — the OS window can be
+ * transparent, and a translucent fill would let the desktop bleed through.
+ * Dropping on it opens the dragged session in a brand-new window.
+ */
+function setNewWindowIndicator(visible: boolean): void {
+  if (visible === newWindowIndicatorVisible) return;
+  newWindowIndicatorVisible = visible;
+  if (!visible) {
+    newWindowDropEl?.remove();
+    newWindowDropEl = null;
+    return;
+  }
+  if (!newWindowDropEl) {
+    const el = document.createElement("div");
+    el.className = "new-window-drop";
+    const icon = document.createElement("span");
+    icon.className = "new-window-drop-icon";
+    icon.textContent = "⤢";
+    const label = document.createElement("span");
+    label.className = "new-window-drop-label";
+    label.textContent = "Drop to open in a new window";
+    const inner = document.createElement("div");
+    inner.className = "new-window-drop-inner";
+    inner.appendChild(icon);
+    inner.appendChild(label);
+    el.appendChild(inner);
+
+    // Accept the drag so WebKitGTK reliably delivers the `drop`, and keep the
+    // in-memory payload fresh for arbitrarily long hovers.
+    el.addEventListener("dragover", (e) => {
+      if (!isHiveFieldDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      pendingSessionExpiresAt = Date.now() + DRAG_GRACE_MS;
+    });
+    // Dropping on the indicator opens the session in a new window instead of
+    // the current one. `dragSawDrop`/`dragOpenedSession` stop the dragend and
+    // document-level fallbacks from also opening a split.
+    el.addEventListener("drop", (e) => {
+      const drag = resolveDragPayload(e.dataTransfer);
+      if (!drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragSawDrop = true;
+      dragOpenedSession = true;
+      setNewWindowIndicator(false);
+      openNewWindow(drag.mode);
+    });
+    // Hide once the pointer truly leaves the overlay (i.e. the window); a
+    // transition onto a child element keeps it up.
+    el.addEventListener("dragleave", (e) => {
+      const related = e.relatedTarget as Node | null;
+      if (!related || !el.contains(related)) setNewWindowIndicator(false);
+    });
+    document.body.appendChild(el);
+    newWindowDropEl = el;
+  }
 }
 
 const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
@@ -378,6 +451,13 @@ interface PanelStatus {
   baseTitle: string;
   indicator: string;
   userTitle: boolean;
+  /**
+   * The automatic (OSC / input-line / mode) title in effect before the user
+   * pinned a custom name; restoring it when the custom name is cleared. Kept
+   * across rename→rename so a second rename still reverts to the automatic
+   * title, not the previous custom one.
+   */
+  preRenameTitle: string | undefined;
   /** True once a finished agent session has been reported to the user. */
   notified: boolean;
 }
@@ -455,6 +535,21 @@ let dragSawDrop = false;
 
 /** True once a session was actually opened for this drag. */
 let dragOpenedSession = false;
+
+/**
+ * True while a sidebar drag's pointer is outside this window (dragged out of
+ * the webview). Set when a `dragleave` leaves the document or a `dragover`
+ * reports coordinates outside the window bounds, cleared when the pointer
+ * comes back in. On `dragend` a drag that ended outside opens a new window
+ * with the dragged session instead of splitting the current layout.
+ */
+let sidebarDragOutside = false;
+
+/** Whether the new-window drop indicator is currently visible. */
+let newWindowIndicatorVisible = false;
+
+/** The new-window drop indicator element (created lazily, see below). */
+let newWindowDropEl: HTMLElement | null = null;
 
 /**
  * Most recent pointer position (client coords) while the sidebar drag hovered
@@ -670,6 +765,9 @@ function ensurePanelStatus(panelId: string, initialTitle: string, userTitle?: st
     baseTitle: userTitle ?? clean,
     indicator: "",
     userTitle: typeof userTitle === "string" && userTitle.length > 0,
+    // A restored custom title has no live pre-rename title to revert to;
+    // renamePanel falls back to the mode label in that case.
+    preRenameTitle: undefined,
     notified: false,
   };
   panelStatus.set(panelId, st);
@@ -1434,6 +1532,28 @@ function clearStuckDropOverlay(): void {
 }
 
 /**
+ * End the in-flight sidebar drag: drop the flag that makes isHiveFieldDrag()
+ * accept every drag and drop the stored payload. Every release path (the
+ * mouseup net, the drop handler) must call this — if a swallowed `dragend`
+ * leaves sidebarDragActive set, isHiveFieldDrag() returns true for every
+ * subsequent drag and resolveDragPayload() falls through to the stale
+ * pendingSessionDrag for unrelated foreign drops. It also hides the
+ * per-drag UI (the drop overlay, the new-window indicator). Note: the
+ * sidebar `dragend` handler intentionally does NOT call this — it keeps the
+ * payload alive for the grace window so a late WebKitGTK `drop` still
+ * resolves.
+ */
+function resetSidebarDndState(): void {
+  sidebarDragActive = false;
+  pendingSessionDrag = undefined;
+  pendingSessionExpiresAt = 0;
+  lastSidebarDragOver = undefined;
+  sidebarDragOutside = false;
+  setNewWindowIndicator(false);
+  clearStuckDropOverlay();
+}
+
+/**
  * WebKitGTK workaround: dockview's own drop targets sometimes lose the final
  * `drop` (the preview overlay still shows while hovering — only the release
  * is dropped on the floor) or deliver it late. This layer makes the sidebar
@@ -1467,6 +1587,16 @@ function setupSidebarDndFallback() {
       if (!isHiveFieldDrag(e.dataTransfer)) return;
       // Keep the in-memory payload fresh for arbitrarily long drags.
       pendingSessionExpiresAt = Date.now() + DRAG_GRACE_MS;
+      // Outside the window bounds means the drag left the window (the
+      // gesture that opens the dragged session in a new window).
+      sidebarDragOutside =
+        e.clientX < 0 ||
+        e.clientY < 0 ||
+        e.clientX > window.innerWidth ||
+        e.clientY > window.innerHeight;
+      // The new-window drop indicator follows the Alt modifier on every hover
+      // (keyboard events may not reach the page mid-drag on WebKitGTK).
+      setNewWindowIndicator(e.altKey);
       if (inTerminal(e.clientX, e.clientY)) {
         // preventDefault so WebKitGTK reliably delivers the final `drop`.
         e.preventDefault();
@@ -1478,6 +1608,18 @@ function setupSidebarDndFallback() {
     true
   );
 
+  // A `dragleave` with no related target means the pointer left the document
+  // (the window). This is the reliable "drag out of the window" signal —
+  // WebKitGTK stops delivering `dragover` events once the pointer is outside.
+  document.addEventListener(
+    "dragleave",
+    (e) => {
+      if (!sidebarDragActive) return;
+      if (e.relatedTarget === null) sidebarDragOutside = true;
+    },
+    true
+  );
+
   // Worst-case recovery: if a sidebar drag produced neither a `drop` nor a
   // `dragend` (WebKitGTK can lose the drag state machine after showing the
   // overlay), the first `mouseup` is the release — open the session at the
@@ -1485,15 +1627,33 @@ function setupSidebarDndFallback() {
   document.addEventListener(
     "mouseup",
     () => {
-      if (!sidebarDragActive || dragOpenedSession) return;
-      if (!lastSidebarDragOver || !pendingSessionDrag) return;
+      // Not our drag (or it already ended): nothing to clean up — and a late
+      // WebKitGTK `drop` may still be on its way, so leave the grace window
+      // intact.
+      if (!sidebarDragActive) return;
+      if (
+        dragOpenedSession ||
+        // A drag that left the window belongs to the new-window gesture;
+        // never fall back to splitting the pane it hovered before leaving.
+        sidebarDragOutside ||
+        !lastSidebarDragOver ||
+        !pendingSessionDrag
+      ) {
+        // Nothing left to release: a session already opened through the drop
+        // path, a drag that left the window, or a drag that ended without
+        // ever hovering the terminal whose `dragend` was swallowed. Either
+        // way this mouseup ends the drag — clear the in-flight state so a
+        // stuck sidebarDragActive can't make isHiveFieldDrag() accept every
+        // subsequent drag and let the stale payload leak into an unrelated
+        // foreign drop.
+        resetSidebarDndState();
+        return;
+      }
       const { clientX, clientY } = lastSidebarDragOver;
       if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
         dragOpenedSession = true;
       }
-      clearStuckDropOverlay();
-      sidebarDragActive = false;
-      lastSidebarDragOver = undefined;
+      resetSidebarDndState();
     },
     true
   );
@@ -1504,21 +1664,48 @@ function setupSidebarDndFallback() {
     "drop",
     (e) => {
       const drag = resolveDragPayload(e.dataTransfer);
-      if (!drag) return;
+      if (!drag) {
+        // A drop that resolves to nothing (a foreign drag, or an expired
+        // payload) still ends any stale in-flight sidebar drag — otherwise
+        // the stuck flags would keep accepting every subsequent drop and
+        // overlay. Clear them so the next drag starts clean.
+        resetSidebarDndState();
+        return;
+      }
       dragSawDrop = true;
       e.preventDefault(); // don't let the webview insert/paste the payload
       const before = api.panels.length;
-      // dockview handles drops synchronously inside the same event dispatch, so
-      // when a session already opened by the time this runs, it handled the drop.
       setTimeout(() => {
-        if (api.panels.length > before) return;
+        // A drop that opened a session in a *new* window (the Alt indicator
+        // or a drag-out) sets dragOpenedSession synchronously; dockview opens
+        // in-window drops synchronously (panels grew). Either way the drag is
+        // over — drop the in-flight state so a swallowed `dragend` can't
+        // leave it set.
+        if (dragOpenedSession || api.panels.length > before) {
+          resetSidebarDndState();
+          return;
+        }
         if (openSessionAtPoint(e.clientX, e.clientY, drag)) {
           dragOpenedSession = true;
         }
+        resetSidebarDndState();
       }, 0);
     },
     true
   );
+
+  // The Alt modifier drives the new-window drop indicator. During an HTML5
+  // drag WebKitGTK may stop delivering key events to the page, so `dragover`
+  // also refreshes it from `altKey`; these handlers cover the case where Alt
+  // is pressed before the drag starts (the keydown fires before dragstart).
+  // Losing focus (dragging out onto another app) hides it defensively.
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Alt" && sidebarDragActive) setNewWindowIndicator(true);
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Alt" && sidebarDragActive) setNewWindowIndicator(false);
+  });
+  window.addEventListener("blur", () => setNewWindowIndicator(false));
 }
 
 /* ---------------------------------------------------------------------------
@@ -1813,6 +2000,8 @@ function buildSidebarSources(): void {
       dragSawDrop = false;
       dragOpenedSession = false;
       lastSidebarDragOver = undefined;
+      sidebarDragOutside = false;
+      setNewWindowIndicator(false);
       // Advertise the session under our own MIME type *and* as plain text:
       // some WebKitGTK builds only surface the text/plain target across a
       // drag. JSON carries the mode plus an optional worktree cwd.
@@ -1834,22 +2023,46 @@ function buildSidebarSources(): void {
     // the session at the last hovered workspace position instead. The
     // in-memory payload stays resolvable for a grace window so a `drop` that
     // arrives after `dragend` still opens its session.
-    item.addEventListener("dragend", () => {
+    item.addEventListener("dragend", (e) => {
       sidebarDragActive = false;
-      if (
-        !dragOpenedSession &&
-        !dragSawDrop &&
-        lastSidebarDragOver &&
-        pendingSessionDrag
-      ) {
-        const { clientX, clientY } = lastSidebarDragOver;
-        if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
+      setNewWindowIndicator(false);
+      if (!dragOpenedSession && !dragSawDrop && pendingSessionDrag) {
+        // Decide where the drag actually ended. WebKitGTK's dragend
+        // coordinates are not always trustworthy (a drop outside the window
+        // can report stale in-window coordinates, especially on Wayland), and
+        // its `dragleave` can fire spuriously with a null relatedTarget. So:
+        // coordinates clearly outside the window, or ambiguous coordinates
+        // combined with the dragleave flag, mean the session was dragged out
+        // and belongs in a brand-new window; clearly-inside coordinates win
+        // over a spurious dragleave flag.
+        const MARGIN = 8;
+        const clearlyInside =
+          e.clientX >= MARGIN &&
+          e.clientY >= MARGIN &&
+          e.clientX <= window.innerWidth - MARGIN &&
+          e.clientY <= window.innerHeight - MARGIN;
+        const clearlyOutside =
+          e.clientX < 0 ||
+          e.clientY < 0 ||
+          e.clientX > window.innerWidth ||
+          e.clientY > window.innerHeight;
+        const endedOutside = clearlyOutside || (sidebarDragOutside && !clearlyInside);
+        if (endedOutside) {
+          openNewWindow(pendingSessionDrag.mode);
           dragOpenedSession = true;
+        } else if (lastSidebarDragOver) {
+          // In-window release (WebKitGTK swallowed the `drop`): open the
+          // session at the last hovered workspace position.
+          const { clientX, clientY } = lastSidebarDragOver;
+          if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
+            dragOpenedSession = true;
+          }
         }
       }
       // Clear any drop overlay dockview never got a chance to remove.
       clearStuckDropOverlay();
       lastSidebarDragOver = undefined;
+      sidebarDragOutside = false;
     });
 
     sidebarSourcesEl.appendChild(item);
@@ -2223,6 +2436,17 @@ function panelForTabElement(tabEl: HTMLElement): IDockviewPanel | undefined {
   return group.panels[idx];
 }
 
+/** The mode-derived label for a panel (fallback title when no live title exists). */
+function panelModeLabel(panel: IDockviewPanel): string {
+  const params = panel.api.getParameters() as Record<string, unknown>;
+  const mode: Mode =
+    typeof params.mode === "string" &&
+    isKnownModeAll(params.mode, customs())
+      ? params.mode
+      : DEFAULT_MODE;
+  return modeLabelAll(mode, customs());
+}
+
 /** Prompt to rename a tab; empty input reverts to automatic titles. */
 async function renamePanel(panel: IDockviewPanel): Promise<void> {
   const st = panelStatus.get(panel.id);
@@ -2240,12 +2464,21 @@ async function renamePanel(panel: IDockviewPanel): Promise<void> {
   if (!status) return;
   status.userTitle = value.length > 0;
   if (status.userTitle) {
+    // Remember the automatic title in effect right now so that clearing the
+    // custom name later can restore it (renaming again keeps the original
+    // snapshot instead of overwriting it with the previous custom name).
+    if (status.preRenameTitle === undefined) {
+      status.preRenameTitle = status.baseTitle;
+    }
     status.baseTitle = value;
     panel.api.updateParameters({ userTitle: value });
     renderTitle(panel.id);
   } else {
-    // Revert: next OSC / input-line title wins again.
-    status.baseTitle = status.baseTitle;
+    // Revert: hand the tab back to automatic titles. Restore the pre-rename
+    // title (mode label as a fallback when no snapshot exists, e.g. after a
+    // layout restore where only the custom name was serialized).
+    status.baseTitle = status.preRenameTitle ?? panelModeLabel(panel);
+    status.preRenameTitle = undefined;
     panel.api.updateParameters({ userTitle: null });
     renderTitle(panel.id);
   }
@@ -2530,6 +2763,10 @@ async function registerGlobalListeners() {
 async function init() {
   await loadSettings();
 
+  // Report repo changes since launch 10s after startup (git diff against the
+  // HEAD commit captured at launch).
+  scheduleGitDiffReport();
+
   // Track OS window focus so agent-done notifications still fire while the
   // user is in another application (even when the agent's panel is active).
   const win = getCurrentWindow();
@@ -2798,32 +3035,37 @@ async function init() {
     }
   }
 
-  // Always show the welcome screen *before* auto-resuming. It offers
-  // "Continue latest" (restores the launch directory's saved layout), the
-  // current directory's quick-start sessions, and the recent-projects list;
-  // any of those — or an OS folder drop — dismisses it and continues.
-  splash = mountSplash(document.getElementById("terminal")!, {
-    cwd: getWorkspaceCwd(),
-    hasSavedWorkspace,
-    // The first few visible agents (respecting the settings filter) plus
-    // the raw shell, matching the sidebar's session sources.
-    quickAgents: sessionModes().slice(0, 4),
-    onContinue: () => void continueFromSplash(),
-    onOpenProject: (path) => {
-      // Open the default agent in the chosen directory and mark it recent.
-      addPanelWithMode(DEFAULT_MODE, undefined, path);
-      void invoke("project_touch", { cwd: path }).catch(() => {});
-    },
-    onNewSession: (mode) => addPanelWithMode(mode),
-    onSkip: () => addPanelWithMode(DEFAULT_MODE),
-    onForgetProject: (path) => {
-      void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
-    },
-    onDropPath: (path) => void continueFromSplash(path),
-  });
-  // Any panel appearing (sidebar drop, palette action, keyboard shortcut, …)
-  // dismisses the splash.
-  api.onDidAddPanel(() => splash.hide());
+  // Always show the welcome screen *before* auto-resuming — except when this
+  // window was opened with a session start request (an agent dragged out of
+  // another window): then open the requested session directly, so the drag-out
+  // gesture lands the agent in the new window without a welcome step.
+  const startMode = new URLSearchParams(location.search).get("start");
+  if (startMode && isKnownModeAll(startMode, customs())) {
+    addPanelWithMode(startMode);
+  } else {
+    splash = mountSplash(document.getElementById("terminal")!, {
+      cwd: getWorkspaceCwd(),
+      hasSavedWorkspace,
+      // The first few visible agents (respecting the settings filter) plus
+      // the raw shell, matching the sidebar's session sources.
+      quickAgents: sessionModes().slice(0, 4),
+      onContinue: () => void continueFromSplash(),
+      onOpenProject: (path) => {
+        // Open the default agent in the chosen directory and mark it recent.
+        addPanelWithMode(DEFAULT_MODE, undefined, path);
+        void invoke("project_touch", { cwd: path }).catch(() => {});
+      },
+      onNewSession: (mode) => addPanelWithMode(mode),
+      onSkip: () => addPanelWithMode(DEFAULT_MODE),
+      onForgetProject: (path) => {
+        void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
+      },
+      onDropPath: (path) => void continueFromSplash(path),
+    });
+    // Any panel appearing (sidebar drop, palette action, keyboard shortcut, …)
+    // dismisses the splash.
+    api.onDidAddPanel(() => splash.hide());
+  }
 
   // Persist subsequent layout changes for this launch directory.
   bindWorkspaceSave(api);
@@ -3148,11 +3390,74 @@ function zoomBy(delta: number): void {
  * Open a new app window via the backend, on this window's launch directory
  * (so the new window restores the same project's workspace and its sessions
  * land there). The backend creates the window and scopes it to that cwd.
+ *
+ * `mode` optionally requests a session the new window should open right away
+ * instead of showing the splash — used when an agent is dragged out of this
+ * window (or dropped on the Alt new-window indicator), so the dragged agent
+ * lands in the new window.
  */
-function openNewWindow(): void {
-  void invoke("window_new", { cwd: getWorkspaceCwd() }).catch((err) =>
+function openNewWindow(mode?: Mode): void {
+  void invoke("window_new", {
+    cwd: getWorkspaceCwd(),
+    ...(mode ? { startMode: mode } : {}),
+  }).catch((err) =>
     console.error("failed to open new window", err)
   );
+}
+
+/**
+ * Ten seconds after launch, ask the backend how the repo changed since the
+ * app opened — the backend captured HEAD at startup, and this diffs it
+ * against the current working tree (new commits + uncommitted edits). Shows
+ * a small toast with the totals: files changed, lines added, lines deleted.
+ * Nothing is shown when the launch directory is not a git repository, the
+ * window moved to a different repo, or nothing changed.
+ */
+function scheduleGitDiffReport(): void {
+  setTimeout(async () => {
+    let summary: GitDiffSummary | null = null;
+    try {
+      summary = await invoke<GitDiffSummary | null>("git_diff_summary");
+    } catch {
+      // Not a git repo / backend unavailable: nothing to report.
+    }
+    if (!summary || summary.changed === 0) return;
+
+    const toast = document.createElement("div");
+    toast.className = "hivefield-toast git-diff-toast";
+
+    const icon = document.createElement("span");
+    icon.className = "git-diff-icon";
+    icon.textContent = "⑂";
+    icon.title = "Changes since launch";
+
+    const text = document.createElement("span");
+    text.className = "git-diff-text";
+    const files = document.createElement("span");
+    files.textContent = `${summary.changed} file${summary.changed === 1 ? "" : "s"} changed`;
+    const plus = document.createElement("span");
+    plus.className = "git-diff-add";
+    plus.textContent = `+${summary.insertions}`;
+    plus.title = "lines added";
+    const minus = document.createElement("span");
+    minus.className = "git-diff-del";
+    minus.textContent = `−${summary.deletions}`;
+    minus.title = "lines deleted";
+    text.append("since launch · ", files, " · ", plus, " ", minus);
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "git-diff-dismiss";
+    close.title = "Dismiss";
+    close.setAttribute("aria-label", "Dismiss git changes summary");
+    close.textContent = "✕";
+    close.addEventListener("click", () => toast.remove());
+
+    toast.append(icon, text, close);
+    document.body.appendChild(toast);
+    // Keep it out of the way: auto-dismiss after a while if not clicked.
+    setTimeout(() => toast.remove(), 20_000);
+  }, 10_000);
 }
 
 init().catch((err) => console.error("failed to initialize terminal layout", err));

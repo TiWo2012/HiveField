@@ -65,6 +65,65 @@ pub fn repo_root(dir: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(root))
 }
 
+/// A summary of the changes between a base commit and the current working
+/// tree: how many files were touched, plus the total added/deleted lines.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffSummary {
+    /// Number of files that changed (modified, added, deleted, renamed).
+    pub changed: u64,
+    /// Total inserted lines.
+    pub insertions: u64,
+    /// Total deleted lines.
+    pub deletions: u64,
+}
+
+/// Resolve the commit the repo's HEAD currently points at (full hash).
+/// Returns `None` when `dir` is not inside a repository or git is unavailable.
+pub fn head_commit(dir: &Path) -> Option<String> {
+    let out = git_stdout(dir, &["rev-parse", "HEAD"])?;
+    let hash = out.trim();
+    if hash.is_empty() {
+        return None;
+    }
+    Some(hash.to_string())
+}
+
+/// Diff summary between the `base` commit and the current working tree of the
+/// repo containing `dir`. `git diff <base>` compares the commit against the
+/// index plus the working tree, so it catches both commits made since `base`
+/// and uncommitted edits — exactly the "how much has the repo moved since
+/// launch" question. Binary files count toward `changed` but contribute 0
+/// lines (`git` reports `-` for them in numstat). Returns `None` when the
+/// diff cannot be produced (not a repo, bad base, git unavailable).
+pub fn diff_summary(dir: &Path, base: &str) -> Option<DiffSummary> {
+    let numstat = git_stdout(dir, &["diff", "--numstat", base])?;
+    Some(parse_numstat(&numstat))
+}
+
+/// Sum `git diff --numstat` output into a [`DiffSummary`]. Each non-empty
+/// line is `\`<added>\t<deleted>\t<path>``; binary files report `-` for their
+/// counts and are only counted in `changed`.
+fn parse_numstat(numstat: &str) -> DiffSummary {
+    let mut summary = DiffSummary {
+        changed: 0,
+        insertions: 0,
+        deletions: 0,
+    };
+    for line in numstat.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(3, '\t');
+        let Some(add) = parts.next() else { continue };
+        let Some(del) = parts.next() else { continue };
+        summary.changed += 1;
+        summary.insertions += add.parse::<u64>().unwrap_or(0);
+        summary.deletions += del.parse::<u64>().unwrap_or(0);
+    }
+    summary
+}
+
 /// List the worktrees of the repo containing `dir`. Returns an empty
 /// `WorktreesInfo` (never an error) when `dir` is not inside a repository or
 /// git is unavailable.
@@ -434,6 +493,45 @@ prunable gitdir file
         mark_current(&mut wts, Path::new("/home/u/proj/hiveField"));
         assert!(wts[0].current, "first worktree is the launch-dir one");
         assert!(!wts[1].current);
+    }
+
+    // ---- parse_numstat ----
+
+    #[test]
+    fn numstat_counts_changed_files_and_lines() {
+        let numstat = "42\t7\tsrc/main.rs\n1\t1\tREADME.md\n";
+        let s = parse_numstat(numstat);
+        assert_eq!(s.changed, 2);
+        assert_eq!(s.insertions, 43);
+        assert_eq!(s.deletions, 8);
+    }
+
+    #[test]
+    fn numstat_handles_binary_files_as_zero_lines() {
+        let numstat = "-\t-\tassets/logo.png\n3\t0\tsrc/git.rs\n";
+        let s = parse_numstat(numstat);
+        assert_eq!(s.changed, 2);
+        assert_eq!(s.insertions, 3);
+        assert_eq!(s.deletions, 0);
+    }
+
+    #[test]
+    fn numstat_empty_input_yields_zeroes() {
+        let s = parse_numstat("");
+        assert_eq!(s.changed, 0);
+        assert_eq!(s.insertions, 0);
+        assert_eq!(s.deletions, 0);
+    }
+
+    #[test]
+    fn numstat_tolerates_malformed_lines() {
+        // A line without a tab separator can't yield both counts, so it is
+        // skipped rather than counted or panicking.
+        let numstat = "garbage\n2\t3\tsrc/x.rs\n";
+        let s = parse_numstat(numstat);
+        assert_eq!(s.changed, 1);
+        assert_eq!(s.insertions, 2);
+        assert_eq!(s.deletions, 3);
     }
 
     // ---- sanitize_branch_name ----
