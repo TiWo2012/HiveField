@@ -14,6 +14,8 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+use crate::Unpoisoned;
+
 /// Managed state: window label -> that window's launch directory.
 pub struct WindowState {
     pub cwds: Mutex<HashMap<String, PathBuf>>,
@@ -30,17 +32,17 @@ impl Default for WindowState {
 impl WindowState {
     /// Remember the launch directory for a window (idempotent).
     pub fn register(&self, label: &str, cwd: PathBuf) {
-        self.cwds.lock().unwrap().insert(label.to_string(), cwd);
+        self.cwds.lock_unpoisoned().insert(label.to_string(), cwd);
     }
 
     /// The registered launch directory for a window, if any.
     pub fn cwd_for(&self, label: &str) -> Option<PathBuf> {
-        self.cwds.lock().unwrap().get(label).cloned()
+        self.cwds.lock_unpoisoned().get(label).cloned()
     }
 
     /// Forget a window's launch directory (called when the window is destroyed).
     pub fn remove(&self, label: &str) {
-        self.cwds.lock().unwrap().remove(label);
+        self.cwds.lock_unpoisoned().remove(label);
     }
 }
 

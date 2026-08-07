@@ -56,7 +56,11 @@ impl WorkspaceStore {
         if !map.is_object() {
             map = serde_json::json!({});
         }
-        let entries = map.as_object_mut().expect("workspace map is an object");
+        // `map` was just normalized to an object; a shape change elsewhere in
+        // the file must degrade to an error instead of panicking.
+        let Some(entries) = map.as_object_mut() else {
+            return Err("workspace map is not an object".to_string());
+        };
         if layout.is_null() {
             entries.remove(cwd);
         } else {
@@ -82,7 +86,10 @@ impl WorkspaceStore {
         if !map.is_object() {
             map = serde_json::json!({});
         }
-        let entries = map.as_object_mut().expect("workspace map is an object");
+        // `map` was just normalized to an object; degrade gracefully anyway.
+        let Some(entries) = map.as_object_mut() else {
+            return Err("workspace map is not an object".to_string());
+        };
         let doc = entries
             .entry(cwd.to_string())
             .or_insert_with(|| serde_json::json!({}));

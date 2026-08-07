@@ -14,6 +14,20 @@ use std::sync::Mutex;
 
 use tauri::{Emitter, Manager, State};
 
+/// Recover a mutex guard even when the mutex is poisoned (a holder panicked
+/// while holding the lock). For the app's session/state maps, degrading to the
+/// last consistent value is strictly better than panicking the whole app on a
+/// stray panicking thread.
+pub trait Unpoisoned<T> {
+    fn lock_unpoisoned(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T> Unpoisoned<T> for std::sync::Mutex<T> {
+    fn lock_unpoisoned(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// Managed state holding all live PTY sessions, keyed by session id.
 pub struct PtyState<R: tauri::Runtime = tauri::Wry> {
     pub sessions: Mutex<HashMap<u64, pty::PtySession<R>>>,
@@ -447,7 +461,7 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| log::error!("error while running tauri application: {e}"));
 }
 
 #[cfg(test)]

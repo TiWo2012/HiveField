@@ -33,7 +33,7 @@
 //!   to `C.UTF-8`) when none is configured, so it emits full Unicode (emoji,
 //!   CJK, Nerd Font codepoints, etc.).
 
-use crate::PtyState;
+use crate::{PtyState, Unpoisoned};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -131,9 +131,15 @@ impl Utf8StreamDecoder {
                 Err(e) => {
                     let valid = e.valid_up_to();
                     if valid > 0 {
-                        out.push_str(
-                            std::str::from_utf8(&rest[..valid]).expect("validated prefix"),
-                        );
+                        // `valid` is `e.valid_up_to()`, so `rest[..valid]` is
+                        // guaranteed valid UTF-8; decode it without panicking
+                        // even if that invariant were ever violated (skip the
+                        // chunk rather than crash the reader thread).
+                        if let Ok(prefix) = std::str::from_utf8(&rest[..valid]) {
+                            out.push_str(prefix);
+                        } else {
+                            log::warn!("utf8 decoder: invalid prefix despite valid_up_to");
+                        }
                     }
                     match e.error_len() {
                         Some(_) => {
@@ -236,8 +242,7 @@ pub fn spawn<R: Runtime>(
     };
     app.state::<crate::PtyState<R>>()
         .sessions
-        .lock()
-        .unwrap()
+        .lock_unpoisoned()
         .insert(session_id, session);
 
     let reader_app = app.clone();
@@ -253,7 +258,7 @@ pub fn spawn<R: Runtime>(
                         // Emit once the frontend is ready; otherwise buffer.
                         // The push + check + drain all happen under the buffer
                         // lock so no output is lost when `ready` flips.
-                        let mut pending = buffer.lock().unwrap();
+                        let mut pending = buffer.lock_unpoisoned();
                         pending.push(data);
                         if ready.load(Ordering::Relaxed) {
                             for s in pending.drain(..) {
@@ -269,8 +274,7 @@ pub fn spawn<R: Runtime>(
         let session = reader_app
             .state::<crate::PtyState<R>>()
             .sessions
-            .lock()
-            .unwrap()
+            .lock_unpoisoned()
             .remove(&session_id);
         match session {
             Some(mut session) => {
@@ -310,7 +314,7 @@ pub fn spawn<R: Runtime>(
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(AUTORUN_DELAY_MS));
             let state = autorun_app.state::<crate::PtyState<R>>();
-            let mut guard = state.sessions.lock().unwrap();
+            let mut guard = state.sessions.lock_unpoisoned();
             if let Some(session) = guard.get_mut(&session_id) {
                 let _ = session.writer.write_all(&bytes);
                 let _ = session.writer.flush();
@@ -420,7 +424,7 @@ fn resolve_start_dir(preferred: Option<&Path>) -> Option<PathBuf> {
 
 /// Send input from the frontend into the session's PTY.
 pub fn write<R: Runtime>(state: &PtyState<R>, session_id: u64, data: &str) -> io::Result<()> {
-    let mut guard = state.sessions.lock().unwrap();
+    let mut guard = state.sessions.lock_unpoisoned();
     let session = guard.get_mut(&session_id).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -435,7 +439,7 @@ pub fn write<R: Runtime>(state: &PtyState<R>, session_id: u64, data: &str) -> io
 
 /// Resize the session's PTY to match the frontend terminal viewport.
 pub fn resize<R: Runtime>(state: &PtyState<R>, session_id: u64, cols: u16, rows: u16) -> io::Result<()> {
-    let mut guard = state.sessions.lock().unwrap();
+    let mut guard = state.sessions.lock_unpoisoned();
     let session = guard.get_mut(&session_id).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -480,7 +484,7 @@ fn emit_output<R: Runtime>(
 /// Kill the session's shell process and remove the session. Idempotent: a
 /// session that is already gone (or was never created) is not an error.
 pub fn kill<R: Runtime>(state: &PtyState<R>, session_id: u64) -> io::Result<()> {
-    let mut guard = state.sessions.lock().unwrap();
+    let mut guard = state.sessions.lock_unpoisoned();
     if let Some(mut session) = guard.remove(&session_id) {
         let _ = session.child.kill();
     }
@@ -494,7 +498,7 @@ pub fn kill<R: Runtime>(state: &PtyState<R>, session_id: u64) -> io::Result<()> 
 pub fn kill_window_sessions<R: Runtime>(state: &PtyState<R>, window_label: &str) {
     // Collect ids under the lock, then kill outside it (kill takes the lock).
     let ids: Vec<u64> = {
-        let guard = state.sessions.lock().unwrap();
+        let guard = state.sessions.lock_unpoisoned();
         guard
             .iter()
             .filter(|(_, s)| s.window_label.as_deref() == Some(window_label))
@@ -510,7 +514,7 @@ pub fn kill_window_sessions<R: Runtime>(state: &PtyState<R>, window_label: &str)
 /// buffered before the webview finished registering its event listeners.
 fn mark_ready<R: Runtime>(session: &mut PtySession<R>) {
     if !session.ready.swap(true, Ordering::Relaxed) {
-        let drained: Vec<String> = session.buffer.lock().unwrap().drain(..).collect();
+        let drained: Vec<String> = session.buffer.lock_unpoisoned().drain(..).collect();
         for s in drained {
             emit_output(&session.app, &session.window_label, session.session_id, &s);
         }
