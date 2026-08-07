@@ -49,14 +49,14 @@ lets you (or another agent) pick it up later.
 
 Do not let finished work sit on a side branch. The moment a unit of work — a
 feature, a fix, or a refactor — is complete and committed, merge it back to
-`master` right away. A feature that is "done but not merged" is effectively
+`dev` right away. A feature that is "done but not merged" is effectively
 still undone: nobody can use it, and it rots on the branch.
 
 - Merge as soon as the feature is done. Do not batch several finished features
   and merge them in one go — merge each one when it lands.
 - Before merging, run the relevant checks on the branch (`bun run build`,
-  `tsc`, and `cargo test` in `src-tauri/`) so `master` stays green.
-- Keep history linear: rebase the branch onto `master` if it has drifted, then
+  `tsc`, and `cargo test` in `src-tauri/`) so `dev` stays green.
+- Keep history linear: rebase the branch onto `dev` if it has drifted, then
   `git merge --ff-only` it back. Avoid merge commits unless something truly
   requires them.
 - After merging, remove the worktree and its branch so the session leaves no
