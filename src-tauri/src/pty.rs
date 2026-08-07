@@ -256,14 +256,21 @@ pub fn spawn<R: Runtime>(
                     let data = decoder.push(&buf[..n]);
                     if !data.is_empty() {
                         // Emit once the frontend is ready; otherwise buffer.
-                        // The push + check + drain all happen under the buffer
-                        // lock so no output is lost when `ready` flips.
-                        let mut pending = buffer.lock_unpoisoned();
-                        pending.push(data);
-                        if ready.load(Ordering::Relaxed) {
-                            for s in pending.drain(..) {
-                                emit_output(&reader_app, &owner_label, session_id, &s);
+                        // Push + check happen under the buffer lock so a
+                        // concurrent `mark_ready` sees every un-flushed chunk.
+                        let drain = {
+                            let mut pending = buffer.lock_unpoisoned();
+                            pending.push(data);
+                            if ready.load(Ordering::Relaxed) {
+                                pending.drain(..).collect::<Vec<_>>()
+                            } else {
+                                Vec::new()
                             }
+                        };
+                        // Emit outside the lock: `emit_output` sends IPC to
+                        // the webview and may block if the webview is busy.
+                        for s in drain {
+                            emit_output(&reader_app, &owner_label, session_id, &s);
                         }
                     }
                 }

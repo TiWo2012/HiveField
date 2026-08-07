@@ -97,7 +97,11 @@ async function init() {
   subscribe((settings) => {
     for (const [id, entry] of sessions) {
       applyTerminalSettings(entry.terminal, settings);
-      syncSize(id, entry.fitAddon, entry.terminal);
+      // Parked sessions live in off-screen zero-size containers; fitting
+      // them would resize the PTY to garbage dimensions (2 cols × 1 row),
+      // corrupting running processes. Skip them — they'll be resized when
+      // their workspace is restored and their element is laid out again.
+      if (!parkedSessions.has(id)) syncSize(id, entry.fitAddon, entry.terminal);
     }
     document.documentElement.style.setProperty(
       "--hivefield-font",

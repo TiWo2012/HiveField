@@ -85,9 +85,16 @@ export async function registerGlobalListeners() {
       }
       return;
     }
-    const buf = pendingOutputs.get(sessionId) ?? [];
-    buf.push(data);
-    pendingOutputs.set(sessionId, buf);
+    // Analyze the output before buffering, same as the live-session path
+    // above, so shell-integration markers (OSC 133) don't leak into xterm.js
+    // when the pending chunks are replayed. The markers themselves are lost
+    // for tab indicators — an acceptable trade-off for a rare edge case.
+    const { text } = analyzeOutput(data);
+    if (text) {
+      const buf = pendingOutputs.get(sessionId) ?? [];
+      buf.push(text);
+      pendingOutputs.set(sessionId, buf);
+    }
   });
 
   await listen<{ sessionId: number; code: number }>("pty://exit", (event) => {
