@@ -14,8 +14,14 @@
 //!   - `ntfyToken`:   optional ntfy access token, sent as `Authorization: Bearer`.
 //!                    Stored in plaintext in `settings.json`, exactly as the
 //!                    user configured it.
+//!
+//! The HTTP request itself is delegated to the shared [`crate::net::HttpClient`]
+//! abstraction (timeouts, user agent, normalized errors) — this module only
+//! maps settings to a typed ntfy publish.
 
 use tauri_plugin_notification::NotificationExt;
+
+use crate::net::HttpClient;
 
 /// Show a native desktop notification (e.g. "opencode done").
 #[tauri::command]
@@ -68,27 +74,29 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, body: String) -> Result<(
 
     let url = format!("{}/{}", server.trim_end_matches('/'), topic);
 
-    let mut request = ureq::post(&url)
-        .header("X-Title", &title)
-        .header("X-Tags", "computer")
-        // ureq 2's send_string() set this implicitly; keep the wire format stable.
-        .header("Content-Type", "text/plain; charset=utf-8");
+    let mut headers: Vec<(String, String)> = vec![
+        ("X-Title".to_string(), title),
+        ("X-Tags".to_string(), "computer".to_string()),
+        // ureq v3 does not set a content type for raw body sends; keep the
+        // wire format stable (v2 set text/plain implicitly).
+        ("Content-Type".to_string(), "text/plain; charset=utf-8".to_string()),
+    ];
     if !token.is_empty() {
-        request = request.header("Authorization", &format!("Bearer {token}"));
+        headers.push(("Authorization".to_string(), format!("Bearer {token}")));
     }
+    let header_refs: Vec<(&str, &str)> = headers
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
 
-    let response = request
-        .send(&body)
-        .map_err(|e| format!("ntfy request failed: {e}"))?;
-    let status = response.status().as_u16();
-    if !(200..300).contains(&status) {
-        return Err(format!("ntfy server responded with status {status}"));
-    }
+    HttpClient::default().post_text(&url, &header_refs, &body)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// Build the ntfy publish URL from a configured server + topic (mirrors
     /// the production code path, which reads these from the settings store).
     fn publish_url(server: &str, topic: &str) -> String {

@@ -1,6 +1,7 @@
 mod dictation;
 mod fonts;
 mod git;
+mod net;
 mod notifications;
 mod pty;
 mod settings;

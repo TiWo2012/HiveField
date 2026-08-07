@@ -36,17 +36,6 @@ jobs:
             libasound2-dev \
             libfuse2t64
 
-      # The vosk crate links against a prebuilt libvosk.so (it is not built
-      # from source), so the library must be present before cargo runs. It
-      # goes in /usr/lib/x86_64-linux-gnu so rust-lld finds it on the -L
-      # search path emitted by the tauri/gtk pkg-config flags.
-      - name: Install libvosk
-        run: |
-          curl -fsSL -o /tmp/vosk.zip https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip
-          sudo unzip -oq /tmp/vosk.zip -d /opt/vosk
-          sudo cp /opt/vosk/vosk-linux-x86_64-0.3.45/libvosk.so /usr/lib/x86_64-linux-gnu/
-          sudo ldconfig
-
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:

@@ -644,12 +644,11 @@ function buildGeneralTab(): HTMLElement {
         s.dictationEngine,
         [
           { value: "whisper", label: "Whisper (local)" },
-          { value: "vosk", label: "Vosk (local)" },
           { value: "cloud", label: "Cloud API" },
         ],
         (dictationEngine) => updateSettings({ dictationEngine })
       ),
-      "Hold the Dictate key (rebindable in the Keybinds tab) in the terminal to dictate; local engines download their model on first use"
+      "Hold the Dictate key (rebindable in the Keybinds tab) in the terminal to dictate; Whisper uses a local model, Cloud API sends the audio to an OpenAI-compatible endpoint (needs the OPENAI_API_KEY environment variable)"
     )
   );
   dictationSection.appendChild(
@@ -657,6 +656,33 @@ function buildGeneralTab(): HTMLElement {
       "Microphone",
       micSelect(s.dictationMic, (dictationMic) => updateSettings({ dictationMic })),
       "Which microphone to capture from; System default follows the OS default input device"
+    )
+  );
+  dictationSection.appendChild(
+    controlRow(
+      "Auto-download model",
+      toggleField(s.dictationAutoDownload, (dictationAutoDownload) =>
+        updateSettings({ dictationAutoDownload })
+      ),
+      "When the Whisper model is missing, download it on first use instead of failing with an error"
+    )
+  );
+  dictationSection.appendChild(
+    controlRow(
+      "Model URL",
+      textField(s.dictationModelUrl, (dictationModelUrl) =>
+        updateSettings({ dictationModelUrl })
+      ),
+      "Download source for the Whisper model when missing (default: upstream HuggingFace release); leave empty for the default"
+    )
+  );
+  dictationSection.appendChild(
+    controlRow(
+      "Model directory",
+      textField(s.dictationModelDir, (dictationModelDir) =>
+        updateSettings({ dictationModelDir })
+      ),
+      "Directory holding ggml-base.en.bin; leave empty for the default config models dir. Pre-provision a model here and disable auto-download to avoid runtime downloads"
     )
   );
   body.appendChild(dictationSection);
