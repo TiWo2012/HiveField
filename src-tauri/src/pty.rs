@@ -37,22 +37,10 @@ use crate::{PtyState, Unpoisoned};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-
-/// How long the auto-run writer waits for the shell's first output before
-/// giving up and writing anyway. Bounded so a shell that produces no output
-/// (e.g. a silent agent) still receives its command.
-const AUTORUN_READY_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// After the shell produces its first output, wait this long before typing
-/// the auto-run command. Shells emit escape sequences and profile-script
-/// output before the prompt; rushing the command in right after the first
-/// byte interleaves it with init output and garbles the agent's display.
-const AUTORUN_SETTLE_MS: u64 = 300;
 
 /// A live PTY session: the master end of the pseudo-terminal plus the shell
 /// child process and a handle used to emit events to the frontend.
@@ -239,11 +227,6 @@ pub fn spawn<R: Runtime>(
 
     let ready = Arc::new(AtomicBool::new(false));
     let buffer = Arc::new(Mutex::new(Vec::new()));
-    // Signalled once the shell has produced its first output chunk. The
-    // auto-run writer waits on this instead of a hardcoded sleep, so the
-    // agent command is typed only once the shell is actually alive.
-    let first_output: Arc<(Mutex<bool>, Condvar)> =
-        Arc::new((Mutex::new(false), Condvar::new()));
     // Events go only to the window that spawned the session (never broadcast),
     // so another window's frontend never buffers output it does not own.
     let owner_label = window_label.clone();
@@ -263,7 +246,6 @@ pub fn spawn<R: Runtime>(
         .insert(session_id, session);
 
     let reader_app = app.clone();
-    let reader_first_output = first_output.clone();
     std::thread::spawn(move || {
         let mut decoder = Utf8StreamDecoder::new();
         let mut buf = [0u8; READ_BUF_SIZE];
@@ -271,16 +253,6 @@ pub fn spawn<R: Runtime>(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    // First output = the shell is alive; wake the auto-run
-                    // writer so it types the command behind the prompt.
-                    if n > 0 {
-                        let (lock, cvar) = &*reader_first_output;
-                        let mut flag = lock.lock_unpoisoned();
-                        if !*flag {
-                            *flag = true;
-                            cvar.notify_all();
-                        }
-                    }
                     let data = decoder.push(&buf[..n]);
                     if !data.is_empty() {
                         // Emit once the frontend is ready; otherwise buffer.
@@ -331,47 +303,16 @@ pub fn spawn<R: Runtime>(
         }
     });
 
-    // For agent sessions, auto-run the agent once the shell is alive so each
-    // tab opens straight into the agent. The shell stays alive underneath, so
-    // quitting the agent returns to the prompt. Writes go through the same
+    // For agent sessions, auto-run the agent shortly after the shell starts so
+    // each tab opens straight into the agent. The shell stays alive underneath,
+    // so quitting the agent returns to the prompt. Writes go through the same
     // sessions mutex as `pty_write`, so input cannot interleave. `raw` sessions
     // skip this entirely.
     if let Some(cmd) = autorun_command(mode, autorun_override.as_deref()) {
         let bytes = format!("{cmd}\r\n").into_bytes();
         let autorun_app = app.clone();
-        let first_output = first_output.clone();
         std::thread::spawn(move || {
-            // Wait for the shell's first output (typically the prompt) instead
-            // of a fixed sleep, so the command is typed once the shell is
-            // actually ready. Bounded: a silent shell still gets the command
-            // after AUTORUN_READY_TIMEOUT.
-            let (lock, cvar) = &*first_output;
-            let mut flag = lock.lock_unpoisoned();
-            loop {
-                if *flag {
-                    break;
-                }
-                match cvar.wait_timeout(flag, AUTORUN_READY_TIMEOUT) {
-                    Ok((guard, result)) => {
-                        let timed_out = result.timed_out();
-                        flag = guard;
-                        if timed_out {
-                            break;
-                        }
-                    }
-                    // Poisoned holder: recover the guard and re-check the
-                    // flag rather than deadlocking.
-                    Err(poisoned) => {
-                        let (guard, _) = poisoned.into_inner();
-                        flag = guard;
-                    }
-                }
-            }
-            drop(flag);
-            // Shell init (profile scripts, escape sequences, prompt render)
-            // may still be ongoing even after first output; a short settle
-            // prevents the autorun command from interleaving with it.
-            std::thread::sleep(Duration::from_millis(AUTORUN_SETTLE_MS));
+            std::thread::sleep(std::time::Duration::from_millis(AUTORUN_DELAY_MS));
             let state = autorun_app.state::<crate::PtyState<R>>();
             let mut guard = state.sessions.lock_unpoisoned();
             if let Some(session) = guard.get_mut(&session_id) {
@@ -390,6 +331,9 @@ const INITIAL_PTY_COLS: u16 = 120;
 
 /// Size of each raw read from the PTY master.
 const READ_BUF_SIZE: usize = 4096;
+
+/// How long after spawn the agent auto-run command is typed into the shell.
+const AUTORUN_DELAY_MS: u64 = 500;
 
 /// Map a session mode to the command auto-run in its shell.
 ///
