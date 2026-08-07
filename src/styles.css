@@ -116,10 +116,25 @@ body {
   color: var(--hf-text);
   font-family: var(--hivefield-font);
   font-size: 13px;
+  /* Never let sidebar text become selectable (WebKitGTK needs the prefix). */
   user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-touch-callout: none;
   /* Many agent sources now live here: scroll rather than clip. */
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* No child of the sidebar may opt text back into selection. */
+#sidebar *,
+#sidebar *::before,
+#sidebar *::after {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 #sidebar .sidebar-title {
