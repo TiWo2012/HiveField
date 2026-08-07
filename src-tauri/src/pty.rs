@@ -48,6 +48,12 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 /// (e.g. a silent agent) still receives its command.
 const AUTORUN_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// After the shell produces its first output, wait this long before typing
+/// the auto-run command. Shells emit escape sequences and profile-script
+/// output before the prompt; rushing the command in right after the first
+/// byte interleaves it with init output and garbles the agent's display.
+const AUTORUN_SETTLE_MS: u64 = 300;
+
 /// A live PTY session: the master end of the pseudo-terminal plus the shell
 /// child process and a handle used to emit events to the frontend.
 pub struct PtySession<R: tauri::Runtime = tauri::Wry> {
@@ -362,6 +368,10 @@ pub fn spawn<R: Runtime>(
                 }
             }
             drop(flag);
+            // Shell init (profile scripts, escape sequences, prompt render)
+            // may still be ongoing even after first output; a short settle
+            // prevents the autorun command from interleaving with it.
+            std::thread::sleep(Duration::from_millis(AUTORUN_SETTLE_MS));
             let state = autorun_app.state::<crate::PtyState<R>>();
             let mut guard = state.sessions.lock_unpoisoned();
             if let Some(session) = guard.get_mut(&session_id) {
