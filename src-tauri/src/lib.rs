@@ -440,6 +440,10 @@ pub fn run() {
                 let state = app.state::<PtyState>();
                 pty::kill_window_sessions(&state, &label);
                 app.state::<windows::WindowState>().remove(&label);
+                // A dictation capture owned by the closing window would
+                // otherwise keep running (and recording) with no window left
+                // to stop it or receive the result.
+                dictation::stop_capture_for_window(&app, &label);
             }
         })
         .run(tauri::generate_context!())

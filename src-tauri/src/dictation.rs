@@ -3,14 +3,21 @@
 //!
 //! Exposes four IPC commands to the frontend:
 //!   - `dictation_devices()` — list the microphones available for capture.
-//!   - `dictation_start(app, state, engine, device)` — begin mic capture for
-//!     the given engine on the given device (id from `dictation_devices`;
-//!     omitted or empty = the system default input device).
-//!   - `dictation_stop(app, state)` — stop capture, transcribe, emit the result.
+//!   - `dictation_start(app, state, window, engine, device, session_id)` — begin
+//!     mic capture for the given engine on the given device (id from
+//!     `dictation_devices`; omitted or empty = the system default input
+//!     device). Model downloads and the Whisper context load run on background
+//!     threads so the command never blocks the webview; the originating window
+//!     and the session id active at keydown are recorded so the result lands in
+//!     the right window/session. Returns quickly while a download/load is in
+//!     flight — the frontend retries once the status returns to idle.
+//!   - `dictation_stop(app, state, window)` — stop capture, transcribe, and
+//!     emit the result. Only the window that started the capture may stop it;
+//!     the result is emitted to that window with the keydown session id.
 //!   - `dictation_status(state)` — return the current `DictationStatus`.
 //!
-//! Status changes are emitted as `dictation://status` events and transcriptions as
-//! `dictation://result` events.
+//! Status changes are emitted as `dictation://status` events and transcriptions
+//! as `dictation://result` events targeted at the originating window.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -49,6 +56,21 @@ pub const MULTIPART_BOUNDARY: &str = "hivefield-dictation-boundary";
 
 /// Minimum recording length (seconds) worth transcribing.
 const MIN_PHRASE_SECONDS: f64 = 0.3;
+
+/// Maximum recording length (seconds). A longer hold keeps the stream alive
+/// but stops accumulating samples, so a held key can never grow an unbounded
+/// buffer or produce a multi-minute transcription.
+const MAX_CAPTURE_SECONDS: f64 = 60.0;
+
+/// Connect timeout for model downloads: a stalled TCP connect must not leave
+/// `model_busy` set (and dictation disabled) forever.
+const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 30;
+/// Read timeout for model downloads: abort if no data arrives for this long.
+const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
+/// Connect timeout for the cloud transcription request.
+const CLOUD_CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Read timeout for the cloud transcription response.
+const CLOUD_READ_TIMEOUT_SECS: u64 = 60;
 
 /// Status payload sent to the frontend (JSON `{ status, detail }`, camelCase).
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -168,6 +190,14 @@ pub struct DictationInner {
     model_busy: bool,
     ctx: Option<Arc<WhisperContext>>,
     capture: Option<ActiveCapture>,
+    /// Window label of the window that started the current capture. Only that
+    /// window may stop the capture, and the transcription result is emitted
+    /// back to it (multi-window: a keyup in another window must not steal the
+    /// capture, and a result must never land in every window).
+    window_label: Option<String>,
+    /// Session id captured at keydown. The result is written into this session
+    /// regardless of which pane is active when the transcription finishes.
+    session_id: Option<u64>,
 }
 
 /// A live microphone capture.
@@ -196,121 +226,216 @@ fn parse_engine(engine: Option<String>) -> String {
 ///
 /// `device` is the stable id of the microphone to capture from (see
 /// `dictation_devices`); when omitted or empty the host's default input device
-/// is used. Lazily downloads / extracts the local model (Whisper / Vosk), loads
-/// the Whisper context exactly once, then starts capturing at 16 kHz if the
-/// device supports it. Downloads run on a background thread guarded by
-/// `model_busy`.
+/// is used. `session_id` is the terminal session active at keydown, captured by
+/// the frontend so the transcription can be routed back to the same session
+/// even if the user switches panes while it runs.
+///
+/// Downloads / Whisper-context loads run on background threads guarded by
+/// `model_busy`, so the command never blocks the webview and never silently
+/// loses the hold: when the work finishes the status returns to `idle` and the
+/// frontend (which keeps the key held) calls back to start capture. All
+/// decisions happen under one lock so two racing starts can never both spawn a
+/// download or both load the context.
 #[tauri::command]
 pub fn dictation_start(
     app: AppHandle,
     state: State<'_, DictationState>,
+    window: tauri::WebviewWindow,
     engine: Option<String>,
     device: Option<String>,
+    session_id: Option<u64>,
 ) -> Result<(), String> {
     let engine = parse_engine(engine);
+    let window_label = window.label().to_string();
     let models_dir = models_dir(&app)?;
 
-    {
-        let inner = state.inner.lock().map_err(poisoned)?;
+    /// What a start invocation should do, decided under one lock so two racing
+    /// starts can never both spawn a download or both load the context.
+    enum StartAction {
+        /// Begin capturing immediately.
+        Start,
+        /// Download the Whisper model on a background thread, then wait.
+        DownloadWhisper,
+        /// Download + extract the Vosk model on a background thread.
+        DownloadVosk,
+        /// Load the Whisper context on a background thread.
+        LoadWhisper,
+    }
+
+    let action = {
+        let mut inner = state.inner.lock().map_err(poisoned)?;
+
         if inner.capture.is_some() {
-            return Ok(());
+            if inner.window_label.as_deref() == Some(window_label.as_str()) {
+                // Same window already capturing (e.g. a retry that raced the
+                // "listening" status): nothing to do.
+                return Ok(());
+            }
+            // Another window owns the capture. Report the error to *this*
+            // window only (an app-wide status would overwrite the owner's
+            // "listening" badge) and reject the invocation so this window's
+            // frontend clears its active flag.
+            set_status_to(
+                &app,
+                &window_label,
+                &DictationStatus::error("dictation is already in progress in another window"),
+            );
+            return Err("dictation is already in progress in another window".to_string());
         }
-        if inner.model_busy {
-            // A model download/extract for some engine is already in flight.
-            return Ok(());
-        }
-    }
 
-    match engine.as_str() {
-        "vosk" => {
-            let model_dir = vosk_model_dir(&models_dir);
-            if !model_dir.exists() {
-                set_status(&app, &DictationStatus::downloading("0%"));
-                {
-                    let mut inner = state.inner.lock().map_err(poisoned)?;
-                    inner.model_busy = true;
+        match engine.as_str() {
+            "cloud" => {
+                if std::env::var("OPENAI_API_KEY").is_err() {
+                    // Report as an error *and* reject the invocation: an Ok(()) here
+                    // would leave the frontend's active flag set through the whole
+                    // hold with nothing ever happening.
+                    set_status_to(
+                        &app,
+                        &window_label,
+                        &DictationStatus::error(
+                            "OPENAI_API_KEY environment variable is not set",
+                        ),
+                    );
+                    return Err(
+                        "OPENAI_API_KEY environment variable is not set".to_string()
+                    );
                 }
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    let result = download_vosk_model(&app, &models_dir);
-                    finish_model_download(&app, result, "vosk model download failed");
-                });
-                return Ok(());
+                StartAction::Start
             }
-        }
-        "cloud" => {
-            if std::env::var("OPENAI_API_KEY").is_err() {
-                set_status(
-                    &app,
-                    &DictationStatus::error("OPENAI_API_KEY environment variable is not set"),
-                );
-                return Ok(());
-            }
-        }
-        _ => {
-            // whisper
-            let model_path = models_dir.join(MODEL_FILE);
-            if !model_path.exists() {
-                set_status(&app, &DictationStatus::downloading("0%"));
-                {
-                    let mut inner = state.inner.lock().map_err(poisoned)?;
+            "vosk" => {
+                let model_dir = vosk_model_dir(&models_dir);
+                if !model_dir.exists() || !vosk_model_valid(&model_dir) {
+                    if inner.model_busy {
+                        // A download/extract/load is already in flight (possibly
+                        // started by another window); the frontend retries once
+                        // the status returns to idle.
+                        return Ok(());
+                    }
                     inner.model_busy = true;
+                    StartAction::DownloadVosk
+                } else {
+                    StartAction::Start
                 }
-                let app = app.clone();
-                let path = model_path.clone();
-                std::thread::spawn(move || {
-                    let result = download_whisper_model(&app, &path);
-                    finish_model_download(&app, result, "whisper model download failed");
-                });
-                return Ok(());
             }
-        }
-    }
-
-    if engine == "whisper" {
-        let needs_load = {
-            let inner = state.inner.lock().map_err(poisoned)?;
-            inner.ctx.is_none()
-        };
-        if needs_load {
-            set_status(&app, &DictationStatus::model_loading());
-            let path = models_dir.join(MODEL_FILE);
-            let ctx = load_context(&path)?;
-            {
-                let mut inner = state.inner.lock().map_err(poisoned)?;
-                inner.ctx.get_or_insert(ctx);
+            _ => {
+                // whisper
+                let model_path = models_dir.join(MODEL_FILE);
+                if !model_path.exists() {
+                    if inner.model_busy {
+                        return Ok(());
+                    }
+                    inner.model_busy = true;
+                    StartAction::DownloadWhisper
+                } else if inner.ctx.is_none() {
+                    if inner.model_busy {
+                        return Ok(());
+                    }
+                    inner.model_busy = true;
+                    StartAction::LoadWhisper
+                } else {
+                    StartAction::Start
+                }
             }
-            set_status(&app, &DictationStatus::idle());
-        }
-    }
-
-    let capture = match start_capture(device.as_deref()) {
-        Ok(capture) => capture,
-        Err(e) => {
-            set_status(&app, &DictationStatus::error(&e));
-            return Err(e);
         }
     };
-    {
-        let mut inner = state.inner.lock().map_err(poisoned)?;
-        inner.capture = Some(capture);
-        inner.engine = engine;
+
+    match action {
+        StartAction::Start => {
+            let capture = match start_capture(device.as_deref()) {
+                Ok(capture) => capture,
+                Err(e) => {
+                    set_status(&app, &DictationStatus::error(&e));
+                    return Err(e);
+                }
+            };
+            {
+                let mut inner = state.inner.lock().map_err(poisoned)?;
+                // Re-check under the lock: another window may have started
+                // capturing while this one was setting up its stream (two
+                // windows pressing at the same instant). Never overwrite the
+                // winner's capture.
+                if inner.capture.is_some() {
+                    drop(capture);
+                    return Err(
+                        "dictation is already in progress in another window".to_string()
+                    );
+                }
+                inner.capture = Some(capture);
+                inner.engine = engine;
+                inner.window_label = Some(window_label);
+                inner.session_id = session_id;
+            }
+            set_status(&app, &DictationStatus::listening());
+            Ok(())
+        }
+        StartAction::DownloadWhisper => {
+            set_status(&app, &DictationStatus::downloading("0%"));
+            let app = app.clone();
+            let path = models_dir.join(MODEL_FILE);
+            std::thread::spawn(move || {
+                let result = download_whisper_model(&app, &path);
+                finish_model_download(&app, result, "whisper model download failed");
+            });
+            Ok(())
+        }
+        StartAction::DownloadVosk => {
+            set_status(&app, &DictationStatus::downloading("0%"));
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let result = download_vosk_model(&app, &models_dir);
+                finish_model_download(&app, result, "vosk model download failed");
+            });
+            Ok(())
+        }
+        StartAction::LoadWhisper => {
+            set_status(&app, &DictationStatus::model_loading());
+            let app = app.clone();
+            let path = models_dir.join(MODEL_FILE);
+            std::thread::spawn(move || load_whisper_in_background(&app, &path));
+            Ok(())
+        }
     }
-    set_status(&app, &DictationStatus::listening());
-    Ok(())
 }
 
 /// IPC: stop capture, transcribe the recorded phrase with the active engine,
 /// and emit the result.
+///
+/// Only the window that started the capture may stop it: a keyup in another
+/// window must not steal this window's capture (the capture is app-global but
+/// the keybind is per-window). The transcription result is emitted back to the
+/// originating window carrying the session id captured at keydown, so it lands
+/// in the right window and the right session even when the user switched
+/// panes (or windows) while it was transcribing.
 #[tauri::command]
-pub fn dictation_stop(app: AppHandle, state: State<'_, DictationState>) -> Result<(), String> {
-    let (capture, engine) = {
+pub fn dictation_stop(
+    app: AppHandle,
+    state: State<'_, DictationState>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let window_label = window.label().to_string();
+    let (capture, engine, session_id, owner) = {
         let mut inner = state.inner.lock().map_err(poisoned)?;
-        let engine = inner.engine.clone();
-        match inner.capture.take() {
-            Some(capture) => (capture, engine),
-            None => return Ok(()),
+        // Only the window that started the capture may stop it: a keyup in
+        // another window must not steal this window's capture. A capture with
+        // no recorded owner (shouldn't happen, but defensively) is stoppable
+        // by anyone rather than stuck forever.
+        if inner.capture.is_some()
+            && inner.window_label.is_some()
+            && inner.window_label.as_deref() != Some(window_label.as_str())
+        {
+            // Another window owns the capture; leave it alone. No status emit
+            // (that would clobber the owner's badge), just reject.
+            return Err("dictation is active in another window".to_string());
         }
+        let Some(capture) = inner.capture.take() else {
+            return Ok(());
+        };
+        let engine = inner.engine.clone();
+        let session_id = inner.session_id;
+        let owner = inner.window_label.clone();
+        inner.window_label = None;
+        inner.session_id = None;
+        (capture, engine, session_id, owner)
     };
 
     capture.stop.store(true, Ordering::SeqCst);
@@ -323,13 +448,26 @@ pub fn dictation_stop(app: AppHandle, state: State<'_, DictationState>) -> Resul
 
     let duration_seconds = samples.len() as f64 / capture.sample_rate as f64;
     if duration_seconds < MIN_PHRASE_SECONDS {
-        set_status(&app, &DictationStatus::idle());
+        // Status is targeted at the owner so a short tap in one window does
+        // not clear another window's badge.
+        if let Some(label) = owner.as_deref() {
+            set_status_to(&app, label, &DictationStatus::idle());
+        } else {
+            set_status(&app, &DictationStatus::idle());
+        }
         return Ok(());
     }
 
     let app = app.clone();
+    let owner_label = owner.clone();
     std::thread::spawn(move || {
-        set_status(&app, &DictationStatus::transcribing());
+        // Transcription statuses go to the owning window only: a stop in one
+        // window must not flash "Transcribing…" on every other window's badge.
+        if let Some(label) = owner_label.as_deref() {
+            set_status_to(&app, label, &DictationStatus::transcribing());
+        } else {
+            set_status(&app, &DictationStatus::transcribing());
+        }
         let result = match engine.as_str() {
             "vosk" => {
                 let model_dir = app
@@ -358,12 +496,30 @@ pub fn dictation_stop(app: AppHandle, state: State<'_, DictationState>) -> Resul
         };
         match result {
             Ok(text) => {
-                let _ = app.emit("dictation://result", serde_json::json!({ "text": text }));
-                set_status(&app, &DictationStatus::idle());
+                // Route the result to the window that started the dictation so a
+                // second window's listener never writes into its own active pane.
+                let payload = serde_json::json!({ "text": text, "sessionId": session_id });
+                match owner {
+                    Some(label) => {
+                        let _ = app.emit_to(&label, "dictation://result", payload);
+                    }
+                    None => {
+                        let _ = app.emit("dictation://result", payload);
+                    }
+                }
+                if let Some(label) = owner_label.as_deref() {
+                    set_status_to(&app, label, &DictationStatus::idle());
+                } else {
+                    set_status(&app, &DictationStatus::idle());
+                }
             }
             Err(e) => {
                 log::error!("dictation transcription failed: {e}");
-                set_status(&app, &DictationStatus::error(&e));
+                if let Some(label) = owner_label.as_deref() {
+                    set_status_to(&app, label, &DictationStatus::error(&e));
+                } else {
+                    set_status(&app, &DictationStatus::error(&e));
+                }
             }
         }
     });
@@ -391,6 +547,13 @@ fn set_status(app: &AppHandle, status: &DictationStatus) {
     let _ = app.emit("dictation://status", status);
 }
 
+/// Emit a status event to a single window (used for errors that concern only
+/// the invoking window, e.g. "dictation is already in progress in another
+/// window") so the other windows' badges are left alone.
+fn set_status_to(app: &AppHandle, window_label: &str, status: &DictationStatus) {
+    let _ = app.emit_to(window_label, "dictation://status", status);
+}
+
 /// Clear the `model_busy` guard and publish the final download status.
 fn finish_model_download(app: &AppHandle, result: Result<(), String>, err_label: &str) {
     if let Some(state) = app.try_state::<DictationState>() {
@@ -408,6 +571,58 @@ fn finish_model_download(app: &AppHandle, result: Result<(), String>, err_label:
     set_status(app, &status);
 }
 
+/// Load the Whisper context on a background thread (a ~75 MB model parse must
+/// never run on the webview/IPC thread: it freezes every window for seconds).
+/// On success the context is stored and the status returns to `idle` so a
+/// still-held dictation key can retry and start capture; on failure an error
+/// status is emitted (instead of the badge hanging on "Loading…" forever).
+fn load_whisper_in_background(app: &AppHandle, path: &Path) {
+    match load_context(path) {
+        Ok(ctx) => {
+            if let Some(state) = app.try_state::<DictationState>() {
+                if let Ok(mut inner) = state.inner.lock() {
+                    inner.ctx.get_or_insert(ctx);
+                    inner.model_busy = false;
+                }
+            }
+            set_status(app, &DictationStatus::idle());
+        }
+        Err(e) => {
+            log::error!("failed to load whisper model: {e}");
+            if let Some(state) = app.try_state::<DictationState>() {
+                if let Ok(mut inner) = state.inner.lock() {
+                    inner.model_busy = false;
+                }
+            }
+            set_status(app, &DictationStatus::error(&e));
+        }
+    }
+}
+
+/// Stop and discard any capture owned by `window_label`. Called when a window
+/// is destroyed so a capture cannot keep running (and recording) with nobody
+/// left to stop it and no window to receive the result.
+pub fn stop_capture_for_window(app: &AppHandle, window_label: &str) {
+    if let Some(state) = app.try_state::<DictationState>() {
+        let capture = {
+            let mut inner = match state.inner.lock() {
+                Ok(inner) => inner,
+                Err(_) => return,
+            };
+            if inner.window_label.as_deref() != Some(window_label) {
+                return;
+            }
+            inner.window_label = None;
+            inner.session_id = None;
+            inner.capture.take()
+        };
+        if let Some(capture) = capture {
+            capture.stop.store(true, Ordering::SeqCst);
+            drop(capture.stream);
+        }
+    }
+}
+
 fn poisoned<T>(_: std::sync::PoisonError<T>) -> String {
     "dictation state poisoned".to_string()
 }
@@ -421,6 +636,14 @@ fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Resolve the Vosk model directory under a models dir.
 fn vosk_model_dir(models_dir: &Path) -> PathBuf {
     models_dir.join(VOSK_MODEL_DIR)
+}
+
+/// A Vosk model directory is usable only when its recognizer files are
+/// present (`am/final.mdl`). A partial extraction from an interrupted run can
+/// leave the directory in place and pass a bare `.exists()` check, only to
+/// fail later at `Model::new` — so the existence check must validate contents.
+fn vosk_model_valid(dir: &Path) -> bool {
+    dir.join("am").join("final.mdl").is_file()
 }
 
 /// Load the Whisper context for the given model file, wrapped in an `Arc`.
@@ -490,9 +713,17 @@ fn transcribe_cloud(samples: &[f32], input_rate: u32, api_key: &str) -> Result<S
 
     // Keep 4xx/5xx responses as Ok so the API error body can be surfaced
     // (ureq v3 drops the body when it converts a status to `Error::StatusCode`).
+    // Timeouts bound a stalled request so the badge never hangs on
+    // "Transcribing…" forever.
     let mut response = ureq::post(CLOUD_API_URL)
         .config()
         .http_status_as_error(false)
+        .timeout_connect(Some(std::time::Duration::from_secs(
+            CLOUD_CONNECT_TIMEOUT_SECS,
+        )))
+        .timeout_recv_body(Some(std::time::Duration::from_secs(
+            CLOUD_READ_TIMEOUT_SECS,
+        )))
         .build()
         .header("Authorization", &format!("Bearer {api_key}"))
         .header(
@@ -531,8 +762,18 @@ fn join_segments(texts: impl IntoIterator<Item = String>) -> String {
 }
 
 /// Download `url` to `dest`, emitting `downloading` progress status events.
+/// Uses timeout-bounded requests so a stalled connection cannot leave
+/// `model_busy` set (and dictation disabled) forever.
 fn download_with_progress(app: &AppHandle, url: &str, dest: &Path) -> Result<(), String> {
     let response = ureq::get(url)
+        .config()
+        .timeout_connect(Some(std::time::Duration::from_secs(
+            DOWNLOAD_CONNECT_TIMEOUT_SECS,
+        )))
+        .timeout_recv_body(Some(std::time::Duration::from_secs(
+            DOWNLOAD_READ_TIMEOUT_SECS,
+        )))
+        .build()
         .call()
         .map_err(|e| format!("download request failed: {e}"))?;
 
@@ -584,11 +825,21 @@ fn download_whisper_model(app: &AppHandle, dest: &Path) -> Result<(), String> {
 }
 
 /// Download the Vosk model archive, extract it into `<models>/`, then delete
-/// the archive. The archive is written to a `.part` file first.
+/// the archive. The archive is written to a `.part` file first, and the model
+/// is extracted into a temp directory and renamed into place, so an
+/// interrupted download or extraction never leaves a half-written directory
+/// that passes the `.exists()` check and later fails at `Model::new`.
 fn download_vosk_model(app: &AppHandle, models_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(models_dir).map_err(|e| format!("failed to create models dir: {e}"))?;
-    if vosk_model_dir(models_dir).exists() {
+    let final_dir = vosk_model_dir(models_dir);
+    if final_dir.exists() && vosk_model_valid(&final_dir) {
         return Ok(());
+    }
+    // A partial extraction from an interrupted run can exist but be unusable;
+    // clear it so we re-download/extract cleanly.
+    if final_dir.exists() {
+        fs::remove_dir_all(&final_dir)
+            .map_err(|e| format!("failed to remove stale vosk model dir: {e}"))?;
     }
 
     let archive = models_dir.join(format!("{VOSK_MODEL_DIR}.zip"));
@@ -600,11 +851,28 @@ fn download_vosk_model(app: &AppHandle, models_dir: &Path) -> Result<(), String>
         fs::File::open(&archive).map_err(|e| format!("failed to open vosk archive: {e}"))?;
     let mut zip =
         zip::ZipArchive::new(file).map_err(|e| format!("failed to read vosk archive: {e}"))?;
-    zip.extract(models_dir)
+
+    // Extract into a temp dir, validate, then rename into place atomically.
+    let temp_dir = models_dir.join(format!("{VOSK_MODEL_DIR}.tmp"));
+    if temp_dir.exists() {
+        fs::remove_dir_all(&temp_dir)
+            .map_err(|e| format!("failed to remove stale vosk temp dir: {e}"))?;
+    }
+    fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("failed to create vosk temp dir: {e}"))?;
+    zip.extract(&temp_dir)
         .map_err(|e| format!("failed to extract vosk model: {e}"))?;
+    let extracted = temp_dir.join(VOSK_MODEL_DIR);
+    if !vosk_model_valid(&extracted) {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err("vosk archive did not contain a complete model directory".to_string());
+    }
+    fs::rename(&extracted, &final_dir)
+        .map_err(|e| format!("failed to install vosk model: {e}"))?;
+    let _ = fs::remove_dir_all(&temp_dir);
     fs::remove_file(&archive).map_err(|e| format!("failed to remove vosk archive: {e}"))?;
 
-    log::info!("installed vosk model at {}", vosk_model_dir(models_dir).display());
+    log::info!("installed vosk model at {}", final_dir.display());
     Ok(())
 }
 
@@ -643,6 +911,13 @@ fn start_capture(device_id: Option<&str>) -> Result<ActiveCapture, String> {
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
 
+    /// Cap the recording buffer at `MAX_CAPTURE_SECONDS` at the given sample
+    /// rate, so a long hold can never grow an unbounded buffer or produce a
+    /// multi-minute transcription.
+    fn sample_cap(rate: u32) -> usize {
+        (MAX_CAPTURE_SECONDS * rate as f64) as usize
+    }
+
     let mut errors: Vec<String> = Vec::new();
 
     // Preferred: mono f32 at 16 kHz (matches the engines' input format).
@@ -652,7 +927,14 @@ fn start_capture(device_id: Option<&str>) -> Result<ActiveCapture, String> {
             sample_rate: TARGET_SAMPLE_RATE,
             buffer_size: cpal::BufferSize::Default,
         };
-        match build_stream::<f32>(&device, &config, 1, &samples, &stop) {
+        match build_stream::<f32>(
+            &device,
+            &config,
+            1,
+            sample_cap(TARGET_SAMPLE_RATE),
+            &samples,
+            &stop,
+        ) {
             Ok(stream) => {
                 return Ok(ActiveCapture {
                     stream,
@@ -671,7 +953,14 @@ fn start_capture(device_id: Option<&str>) -> Result<ActiveCapture, String> {
         sample_rate: default.sample_rate(),
         buffer_size: cpal::BufferSize::Default,
     };
-    match build_stream::<f32>(&device, &config, 1, &samples, &stop) {
+    match build_stream::<f32>(
+        &device,
+        &config,
+        1,
+        sample_cap(default_rate),
+        &samples,
+        &stop,
+    ) {
         Ok(stream) => {
             return Ok(ActiveCapture {
                 stream,
@@ -686,7 +975,15 @@ fn start_capture(device_id: Option<&str>) -> Result<ActiveCapture, String> {
     // Fallback 2: exact default config with its native sample format.
     let config = default.config();
     let channels = config.channels;
-    match build_stream_for_format(&device, &config, channels, default.sample_format(), &samples, &stop) {
+    match build_stream_for_format(
+        &device,
+        &config,
+        channels,
+        default.sample_format(),
+        sample_cap(default_rate),
+        &samples,
+        &stop,
+    ) {
         Ok(stream) => {
             return Ok(ActiveCapture {
                 stream,
@@ -715,10 +1012,13 @@ fn device_supports_rate(device: &cpal::Device, rate: u32) -> bool {
 }
 
 /// Build a mono-downmixing f32 input stream from a typed sample format.
+/// Appends at most `max_samples` frames so a long hold cannot grow an
+/// unbounded recording buffer.
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     channels: u16,
+    max_samples: usize,
     samples: &Arc<Mutex<Vec<f32>>>,
     stop: &Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String>
@@ -740,10 +1040,18 @@ where
                     Ok(buf) => buf,
                     Err(_) => return,
                 };
+                if buf.len() >= max_samples {
+                    return;
+                }
+                let remaining = max_samples - buf.len();
                 if channels == 1 {
-                    buf.extend(data.iter().map(|s| s.to_sample::<f32>()));
+                    buf.extend(
+                        data.iter()
+                            .take(remaining)
+                            .map(|s| s.to_sample::<f32>()),
+                    );
                 } else {
-                    for frame in data.chunks(channels as usize) {
+                    for frame in data.chunks(channels as usize).take(remaining) {
                         let sum: f32 = frame.iter().map(|s| s.to_sample::<f32>()).sum();
                         buf.push(sum / channels as f32);
                     }
@@ -761,16 +1069,29 @@ fn build_stream_for_format(
     config: &cpal::StreamConfig,
     channels: u16,
     format: cpal::SampleFormat,
+    max_samples: usize,
     samples: &Arc<Mutex<Vec<f32>>>,
     stop: &Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     match format {
-        cpal::SampleFormat::F32 => build_stream::<f32>(device, config, channels, samples, stop),
-        cpal::SampleFormat::F64 => build_stream::<f64>(device, config, channels, samples, stop),
-        cpal::SampleFormat::I16 => build_stream::<i16>(device, config, channels, samples, stop),
-        cpal::SampleFormat::U16 => build_stream::<u16>(device, config, channels, samples, stop),
-        cpal::SampleFormat::I8 => build_stream::<i8>(device, config, channels, samples, stop),
-        cpal::SampleFormat::U8 => build_stream::<u8>(device, config, channels, samples, stop),
+        cpal::SampleFormat::F32 => {
+            build_stream::<f32>(device, config, channels, max_samples, samples, stop)
+        }
+        cpal::SampleFormat::F64 => {
+            build_stream::<f64>(device, config, channels, max_samples, samples, stop)
+        }
+        cpal::SampleFormat::I16 => {
+            build_stream::<i16>(device, config, channels, max_samples, samples, stop)
+        }
+        cpal::SampleFormat::U16 => {
+            build_stream::<u16>(device, config, channels, max_samples, samples, stop)
+        }
+        cpal::SampleFormat::I8 => {
+            build_stream::<i8>(device, config, channels, max_samples, samples, stop)
+        }
+        cpal::SampleFormat::U8 => {
+            build_stream::<u8>(device, config, channels, max_samples, samples, stop)
+        }
         other => Err(format!("unsupported capture sample format {other}")),
     }
 }

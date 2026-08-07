@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required for cpal/CoreAudio input: without NSMicrophoneUsageDescription
+	     macOS TCC kills the process the moment dictation opens the mic. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Dictation uses the microphone to transcribe your speech into the terminal.</string>
+</dict>
+</plist>
