@@ -244,14 +244,20 @@ fn project_touch(app: tauri::AppHandle, cwd: String) -> Result<(), String> {
 /// the new window's label. The frontend passes the invoking window's own
 /// launch directory so "New Window" opens a second window on the same project.
 ///
+/// `start_mode` optionally requests a session the new window should open
+/// right away instead of showing the splash — used when an agent is dragged
+/// out of a window to open it there. The mode is handed to the new window via
+/// its URL (`?start=<mode>`), which the frontend reads during init.
+///
 /// Async on purpose: on Windows, building a window inside a synchronous
 /// command deadlocks (see [`tauri::WebviewWindowBuilder`] docs).
 #[tauri::command]
 async fn window_new(
     app: tauri::AppHandle,
     cwd: Option<String>,
+    start_mode: Option<String>,
 ) -> Result<String, String> {
-    windows::new_window(&app, cwd)
+    windows::new_window(&app, cwd, start_mode)
 }
 
 /// IPC command: list the git worktrees of the repo containing the invoking

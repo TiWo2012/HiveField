@@ -230,6 +230,69 @@ function buildDragGhost(source: { icon: string; label: string }): HTMLElement {
   return ghost;
 }
 
+/**
+ * Show or hide the "drop to open in a new window" indicator. It is a
+ * full-window drop surface that appears only while a sidebar drag hovers with
+ * Alt held (see `setupSidebarDndFallback`), so it never clutters normal
+ * dragging. Its background is deliberately opaque — the OS window can be
+ * transparent, and a translucent fill would let the desktop bleed through.
+ * Dropping on it opens the dragged session in a brand-new window.
+ */
+function setNewWindowIndicator(visible: boolean): void {
+  if (visible === newWindowIndicatorVisible) return;
+  newWindowIndicatorVisible = visible;
+  if (!visible) {
+    newWindowDropEl?.remove();
+    newWindowDropEl = null;
+    return;
+  }
+  if (!newWindowDropEl) {
+    const el = document.createElement("div");
+    el.className = "new-window-drop";
+    const icon = document.createElement("span");
+    icon.className = "new-window-drop-icon";
+    icon.textContent = "⤢";
+    const label = document.createElement("span");
+    label.className = "new-window-drop-label";
+    label.textContent = "Drop to open in a new window";
+    const inner = document.createElement("div");
+    inner.className = "new-window-drop-inner";
+    inner.appendChild(icon);
+    inner.appendChild(label);
+    el.appendChild(inner);
+
+    // Accept the drag so WebKitGTK reliably delivers the `drop`, and keep the
+    // in-memory payload fresh for arbitrarily long hovers.
+    el.addEventListener("dragover", (e) => {
+      if (!isHiveFieldDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      pendingSessionExpiresAt = Date.now() + DRAG_GRACE_MS;
+    });
+    // Dropping on the indicator opens the session in a new window instead of
+    // the current one. `dragSawDrop`/`dragOpenedSession` stop the dragend and
+    // document-level fallbacks from also opening a split.
+    el.addEventListener("drop", (e) => {
+      const drag = resolveDragPayload(e.dataTransfer);
+      if (!drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragSawDrop = true;
+      dragOpenedSession = true;
+      setNewWindowIndicator(false);
+      openNewWindow(drag.mode);
+    });
+    // Hide once the pointer truly leaves the overlay (i.e. the window); a
+    // transition onto a child element keeps it up.
+    el.addEventListener("dragleave", (e) => {
+      const related = e.relatedTarget as Node | null;
+      if (!related || !el.contains(related)) setNewWindowIndicator(false);
+    });
+    document.body.appendChild(el);
+    newWindowDropEl = el;
+  }
+}
+
 const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
   // Colors come from the active theme via applyTerminalSettings().
   cursorBlink: true,
@@ -465,6 +528,21 @@ let dragSawDrop = false;
 
 /** True once a session was actually opened for this drag. */
 let dragOpenedSession = false;
+
+/**
+ * True while a sidebar drag's pointer is outside this window (dragged out of
+ * the webview). Set when a `dragleave` leaves the document or a `dragover`
+ * reports coordinates outside the window bounds, cleared when the pointer
+ * comes back in. On `dragend` a drag that ended outside opens a new window
+ * with the dragged session instead of splitting the current layout.
+ */
+let sidebarDragOutside = false;
+
+/** Whether the new-window drop indicator is currently visible. */
+let newWindowIndicatorVisible = false;
+
+/** The new-window drop indicator element (created lazily, see below). */
+let newWindowDropEl: HTMLElement | null = null;
 
 /**
  * Most recent pointer position (client coords) while the sidebar drag hovered
@@ -1477,6 +1555,16 @@ function setupSidebarDndFallback() {
       if (!isHiveFieldDrag(e.dataTransfer)) return;
       // Keep the in-memory payload fresh for arbitrarily long drags.
       pendingSessionExpiresAt = Date.now() + DRAG_GRACE_MS;
+      // Outside the window bounds means the drag left the window (the
+      // gesture that opens the dragged session in a new window).
+      sidebarDragOutside =
+        e.clientX < 0 ||
+        e.clientY < 0 ||
+        e.clientX > window.innerWidth ||
+        e.clientY > window.innerHeight;
+      // The new-window drop indicator follows the Alt modifier on every hover
+      // (keyboard events may not reach the page mid-drag on WebKitGTK).
+      setNewWindowIndicator(e.altKey);
       if (inTerminal(e.clientX, e.clientY)) {
         // preventDefault so WebKitGTK reliably delivers the final `drop`.
         e.preventDefault();
@@ -1484,6 +1572,18 @@ function setupSidebarDndFallback() {
       } else {
         lastSidebarDragOver = undefined;
       }
+    },
+    true
+  );
+
+  // A `dragleave` with no related target means the pointer left the document
+  // (the window). This is the reliable "drag out of the window" signal —
+  // WebKitGTK stops delivering `dragover` events once the pointer is outside.
+  document.addEventListener(
+    "dragleave",
+    (e) => {
+      if (!sidebarDragActive) return;
+      if (e.relatedTarget === null) sidebarDragOutside = true;
     },
     true
   );
@@ -1496,7 +1596,9 @@ function setupSidebarDndFallback() {
     "mouseup",
     () => {
       if (!sidebarDragActive || dragOpenedSession) return;
-      if (!lastSidebarDragOver || !pendingSessionDrag) return;
+      // A drag that left the window belongs to the new-window gesture; never
+      // fall back to splitting the pane it hovered before leaving.
+      if (sidebarDragOutside || !lastSidebarDragOver || !pendingSessionDrag) return;
       const { clientX, clientY } = lastSidebarDragOver;
       if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
         dragOpenedSession = true;
@@ -1520,7 +1622,10 @@ function setupSidebarDndFallback() {
       const before = api.panels.length;
       // dockview handles drops synchronously inside the same event dispatch, so
       // when a session already opened by the time this runs, it handled the drop.
+      // A drop that opened a session in a *new* window (the Alt indicator, or a
+      // drag-out) sets dragOpenedSession synchronously — don't double-open.
       setTimeout(() => {
+        if (dragOpenedSession) return;
         if (api.panels.length > before) return;
         if (openSessionAtPoint(e.clientX, e.clientY, drag)) {
           dragOpenedSession = true;
@@ -1529,6 +1634,19 @@ function setupSidebarDndFallback() {
     },
     true
   );
+
+  // The Alt modifier drives the new-window drop indicator. During an HTML5
+  // drag WebKitGTK may stop delivering key events to the page, so `dragover`
+  // also refreshes it from `altKey`; these handlers cover the case where Alt
+  // is pressed before the drag starts (the keydown fires before dragstart).
+  // Losing focus (dragging out onto another app) hides it defensively.
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Alt" && sidebarDragActive) setNewWindowIndicator(true);
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Alt" && sidebarDragActive) setNewWindowIndicator(false);
+  });
+  window.addEventListener("blur", () => setNewWindowIndicator(false));
 }
 
 /* ---------------------------------------------------------------------------
@@ -1823,6 +1941,8 @@ function buildSidebarSources(): void {
       dragSawDrop = false;
       dragOpenedSession = false;
       lastSidebarDragOver = undefined;
+      sidebarDragOutside = false;
+      setNewWindowIndicator(false);
       // Advertise the session under our own MIME type *and* as plain text:
       // some WebKitGTK builds only surface the text/plain target across a
       // drag. JSON carries the mode plus an optional worktree cwd.
@@ -1844,22 +1964,46 @@ function buildSidebarSources(): void {
     // the session at the last hovered workspace position instead. The
     // in-memory payload stays resolvable for a grace window so a `drop` that
     // arrives after `dragend` still opens its session.
-    item.addEventListener("dragend", () => {
+    item.addEventListener("dragend", (e) => {
       sidebarDragActive = false;
-      if (
-        !dragOpenedSession &&
-        !dragSawDrop &&
-        lastSidebarDragOver &&
-        pendingSessionDrag
-      ) {
-        const { clientX, clientY } = lastSidebarDragOver;
-        if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
+      setNewWindowIndicator(false);
+      if (!dragOpenedSession && !dragSawDrop && pendingSessionDrag) {
+        // Decide where the drag actually ended. WebKitGTK's dragend
+        // coordinates are not always trustworthy (a drop outside the window
+        // can report stale in-window coordinates, especially on Wayland), and
+        // its `dragleave` can fire spuriously with a null relatedTarget. So:
+        // coordinates clearly outside the window, or ambiguous coordinates
+        // combined with the dragleave flag, mean the session was dragged out
+        // and belongs in a brand-new window; clearly-inside coordinates win
+        // over a spurious dragleave flag.
+        const MARGIN = 8;
+        const clearlyInside =
+          e.clientX >= MARGIN &&
+          e.clientY >= MARGIN &&
+          e.clientX <= window.innerWidth - MARGIN &&
+          e.clientY <= window.innerHeight - MARGIN;
+        const clearlyOutside =
+          e.clientX < 0 ||
+          e.clientY < 0 ||
+          e.clientX > window.innerWidth ||
+          e.clientY > window.innerHeight;
+        const endedOutside = clearlyOutside || (sidebarDragOutside && !clearlyInside);
+        if (endedOutside) {
+          openNewWindow(pendingSessionDrag.mode);
           dragOpenedSession = true;
+        } else if (lastSidebarDragOver) {
+          // In-window release (WebKitGTK swallowed the `drop`): open the
+          // session at the last hovered workspace position.
+          const { clientX, clientY } = lastSidebarDragOver;
+          if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
+            dragOpenedSession = true;
+          }
         }
       }
       // Clear any drop overlay dockview never got a chance to remove.
       clearStuckDropOverlay();
       lastSidebarDragOver = undefined;
+      sidebarDragOutside = false;
     });
 
     sidebarSourcesEl.appendChild(item);
@@ -2812,32 +2956,37 @@ async function init() {
     }
   }
 
-  // Always show the welcome screen *before* auto-resuming. It offers
-  // "Continue latest" (restores the launch directory's saved layout), the
-  // current directory's quick-start sessions, and the recent-projects list;
-  // any of those — or an OS folder drop — dismisses it and continues.
-  splash = mountSplash(document.getElementById("terminal")!, {
-    cwd: getWorkspaceCwd(),
-    hasSavedWorkspace,
-    // The first few visible agents (respecting the settings filter) plus
-    // the raw shell, matching the sidebar's session sources.
-    quickAgents: sessionModes().slice(0, 4),
-    onContinue: () => void continueFromSplash(),
-    onOpenProject: (path) => {
-      // Open the default agent in the chosen directory and mark it recent.
-      addPanelWithMode(DEFAULT_MODE, undefined, path);
-      void invoke("project_touch", { cwd: path }).catch(() => {});
-    },
-    onNewSession: (mode) => addPanelWithMode(mode),
-    onSkip: () => addPanelWithMode(DEFAULT_MODE),
-    onForgetProject: (path) => {
-      void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
-    },
-    onDropPath: (path) => void continueFromSplash(path),
-  });
-  // Any panel appearing (sidebar drop, palette action, keyboard shortcut, …)
-  // dismisses the splash.
-  api.onDidAddPanel(() => splash.hide());
+  // Always show the welcome screen *before* auto-resuming — except when this
+  // window was opened with a session start request (an agent dragged out of
+  // another window): then open the requested session directly, so the drag-out
+  // gesture lands the agent in the new window without a welcome step.
+  const startMode = new URLSearchParams(location.search).get("start");
+  if (startMode && isKnownModeAll(startMode, customs())) {
+    addPanelWithMode(startMode);
+  } else {
+    splash = mountSplash(document.getElementById("terminal")!, {
+      cwd: getWorkspaceCwd(),
+      hasSavedWorkspace,
+      // The first few visible agents (respecting the settings filter) plus
+      // the raw shell, matching the sidebar's session sources.
+      quickAgents: sessionModes().slice(0, 4),
+      onContinue: () => void continueFromSplash(),
+      onOpenProject: (path) => {
+        // Open the default agent in the chosen directory and mark it recent.
+        addPanelWithMode(DEFAULT_MODE, undefined, path);
+        void invoke("project_touch", { cwd: path }).catch(() => {});
+      },
+      onNewSession: (mode) => addPanelWithMode(mode),
+      onSkip: () => addPanelWithMode(DEFAULT_MODE),
+      onForgetProject: (path) => {
+        void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
+      },
+      onDropPath: (path) => void continueFromSplash(path),
+    });
+    // Any panel appearing (sidebar drop, palette action, keyboard shortcut, …)
+    // dismisses the splash.
+    api.onDidAddPanel(() => splash.hide());
+  }
 
   // Persist subsequent layout changes for this launch directory.
   bindWorkspaceSave(api);
@@ -3162,9 +3311,17 @@ function zoomBy(delta: number): void {
  * Open a new app window via the backend, on this window's launch directory
  * (so the new window restores the same project's workspace and its sessions
  * land there). The backend creates the window and scopes it to that cwd.
+ *
+ * `mode` optionally requests a session the new window should open right away
+ * instead of showing the splash — used when an agent is dragged out of this
+ * window (or dropped on the Alt new-window indicator), so the dragged agent
+ * lands in the new window.
  */
-function openNewWindow(): void {
-  void invoke("window_new", { cwd: getWorkspaceCwd() }).catch((err) =>
+function openNewWindow(mode?: Mode): void {
+  void invoke("window_new", {
+    cwd: getWorkspaceCwd(),
+    ...(mode ? { startMode: mode } : {}),
+  }).catch((err) =>
     console.error("failed to open new window", err)
   );
 }

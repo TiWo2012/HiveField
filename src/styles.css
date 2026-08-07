@@ -199,6 +199,42 @@ body {
   line-height: 1;
 }
 
+/* "Drop to open in a new window" surface shown while a sidebar drag hovers
+ * with Alt held. The fill is deliberately OPAQUE: the OS window can be
+ * transparent, and an alpha background would let the desktop show through. */
+.new-window-drop {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hf-mantle);
+  cursor: copy;
+  outline: 2px dashed var(--hf-accent);
+  outline-offset: -10px;
+}
+
+.new-window-drop-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 28px;
+  border-radius: 10px;
+  background: var(--hf-base);
+  border: 1px solid var(--hf-surface2);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 15px;
+  box-shadow: var(--hf-shadow);
+}
+
+.new-window-drop-icon {
+  font-size: 20px;
+  line-height: 1;
+  color: var(--hf-accent);
+}
+
 /* Sidebar section headers ("RUNNING", "WORKSPACE"). */
 .sidebar-section-title {
   font-size: 10px;

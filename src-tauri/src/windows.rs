@@ -65,16 +65,23 @@ fn resolve_cwd(requested: Option<String>) -> Option<PathBuf> {
 }
 
 /// Create a new app window hosting the terminal frontend, mirroring the main
-/// window's configuration (size, transparency, drag & drop). Registers the
-/// window's launch directory (the provided `cwd`, or the process cwd) so
-/// `workspace_cwd` / session defaults are scoped to it. Returns the new
-/// window's label.
+/// window's configuration (size, drag & drop). Registers the window's launch
+/// directory (the provided `cwd`, or the process cwd) so `workspace_cwd` /
+/// session defaults are scoped to it. Returns the new window's label.
+///
+/// `start_mode`, when given, is passed to the new window's frontend via the
+/// URL (`?start=<mode>`) so it can open that agent/session immediately instead
+/// of showing the splash (used when an agent is dragged out of a window).
 ///
 /// The window must be built from a thread that can reach the main loop; Tauri
 /// internally marshals window creation to the main thread, but on Windows
 /// building from inside a synchronous command deadlocks, so callers should use
 /// this from an `async` command (the `window_new` IPC command is async).
-pub fn new_window(app: &AppHandle, cwd: Option<String>) -> Result<String, String> {
+pub fn new_window(
+    app: &AppHandle,
+    cwd: Option<String>,
+    start_mode: Option<String>,
+) -> Result<String, String> {
     let launch_dir = resolve_cwd(cwd);
 
     // Pick a unique label (counter + existence check, in case a previous
@@ -86,7 +93,16 @@ pub fn new_window(app: &AppHandle, cwd: Option<String>) -> Result<String, String
         }
     };
 
-    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+    // A start mode rides along in the URL so the new window's frontend can
+    // open the requested session during init (before any user interaction).
+    let url = match start_mode.as_deref() {
+        Some(mode) if !mode.trim().is_empty() => {
+            WebviewUrl::App(format!("index.html?start={}", mode.trim()).into())
+        }
+        _ => WebviewUrl::App("index.html".into()),
+    };
+
+    let mut builder = WebviewWindowBuilder::new(app, &label, url)
         .title("hiveField Terminal")
         .inner_size(960.0, 600.0)
         .min_inner_size(400.0, 300.0)
