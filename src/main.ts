@@ -1532,6 +1532,28 @@ function clearStuckDropOverlay(): void {
 }
 
 /**
+ * End the in-flight sidebar drag: drop the flag that makes isHiveFieldDrag()
+ * accept every drag and drop the stored payload. Every release path (the
+ * mouseup net, the drop handler) must call this — if a swallowed `dragend`
+ * leaves sidebarDragActive set, isHiveFieldDrag() returns true for every
+ * subsequent drag and resolveDragPayload() falls through to the stale
+ * pendingSessionDrag for unrelated foreign drops. It also hides the
+ * per-drag UI (the drop overlay, the new-window indicator). Note: the
+ * sidebar `dragend` handler intentionally does NOT call this — it keeps the
+ * payload alive for the grace window so a late WebKitGTK `drop` still
+ * resolves.
+ */
+function resetSidebarDndState(): void {
+  sidebarDragActive = false;
+  pendingSessionDrag = undefined;
+  pendingSessionExpiresAt = 0;
+  lastSidebarDragOver = undefined;
+  sidebarDragOutside = false;
+  setNewWindowIndicator(false);
+  clearStuckDropOverlay();
+}
+
+/**
  * WebKitGTK workaround: dockview's own drop targets sometimes lose the final
  * `drop` (the preview overlay still shows while hovering — only the release
  * is dropped on the floor) or deliver it late. This layer makes the sidebar
@@ -1605,17 +1627,33 @@ function setupSidebarDndFallback() {
   document.addEventListener(
     "mouseup",
     () => {
-      if (!sidebarDragActive || dragOpenedSession) return;
-      // A drag that left the window belongs to the new-window gesture; never
-      // fall back to splitting the pane it hovered before leaving.
-      if (sidebarDragOutside || !lastSidebarDragOver || !pendingSessionDrag) return;
+      // Not our drag (or it already ended): nothing to clean up — and a late
+      // WebKitGTK `drop` may still be on its way, so leave the grace window
+      // intact.
+      if (!sidebarDragActive) return;
+      if (
+        dragOpenedSession ||
+        // A drag that left the window belongs to the new-window gesture;
+        // never fall back to splitting the pane it hovered before leaving.
+        sidebarDragOutside ||
+        !lastSidebarDragOver ||
+        !pendingSessionDrag
+      ) {
+        // Nothing left to release: a session already opened through the drop
+        // path, a drag that left the window, or a drag that ended without
+        // ever hovering the terminal whose `dragend` was swallowed. Either
+        // way this mouseup ends the drag — clear the in-flight state so a
+        // stuck sidebarDragActive can't make isHiveFieldDrag() accept every
+        // subsequent drag and let the stale payload leak into an unrelated
+        // foreign drop.
+        resetSidebarDndState();
+        return;
+      }
       const { clientX, clientY } = lastSidebarDragOver;
       if (openSessionAtPoint(clientX, clientY, pendingSessionDrag)) {
         dragOpenedSession = true;
       }
-      clearStuckDropOverlay();
-      sidebarDragActive = false;
-      lastSidebarDragOver = undefined;
+      resetSidebarDndState();
     },
     true
   );
@@ -1626,20 +1664,31 @@ function setupSidebarDndFallback() {
     "drop",
     (e) => {
       const drag = resolveDragPayload(e.dataTransfer);
-      if (!drag) return;
+      if (!drag) {
+        // A drop that resolves to nothing (a foreign drag, or an expired
+        // payload) still ends any stale in-flight sidebar drag — otherwise
+        // the stuck flags would keep accepting every subsequent drop and
+        // overlay. Clear them so the next drag starts clean.
+        resetSidebarDndState();
+        return;
+      }
       dragSawDrop = true;
       e.preventDefault(); // don't let the webview insert/paste the payload
       const before = api.panels.length;
-      // dockview handles drops synchronously inside the same event dispatch, so
-      // when a session already opened by the time this runs, it handled the drop.
-      // A drop that opened a session in a *new* window (the Alt indicator, or a
-      // drag-out) sets dragOpenedSession synchronously — don't double-open.
       setTimeout(() => {
-        if (dragOpenedSession) return;
-        if (api.panels.length > before) return;
+        // A drop that opened a session in a *new* window (the Alt indicator
+        // or a drag-out) sets dragOpenedSession synchronously; dockview opens
+        // in-window drops synchronously (panels grew). Either way the drag is
+        // over — drop the in-flight state so a swallowed `dragend` can't
+        // leave it set.
+        if (dragOpenedSession || api.panels.length > before) {
+          resetSidebarDndState();
+          return;
+        }
         if (openSessionAtPoint(e.clientX, e.clientY, drag)) {
           dragOpenedSession = true;
         }
+        resetSidebarDndState();
       }, 0);
     },
     true
