@@ -95,8 +95,6 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, body: String) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Build the ntfy publish URL from a configured server + topic (mirrors
     /// the production code path, which reads these from the settings store).
     fn publish_url(server: &str, topic: &str) -> String {
