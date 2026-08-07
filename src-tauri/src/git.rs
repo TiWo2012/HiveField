@@ -65,7 +65,7 @@ impl GitCache {
     /// Diff summary of the repo containing `dir` against `base`, cached for
     /// [`DIFF_TTL`]. `launch_root` gates the result: the diff is only reported
     /// while `dir` resolves to the repo the app launched from (matching the
-    /// `git_diff_summary` semantics). A cached `None` (not that repo, bad
+    /// `git_diff_report` semantics). A cached `None` (not that repo, bad
     /// base, git unavailable) is stored too, so a flaky git call is not
     /// retried on every poll.
     pub fn cached_diff_summary(

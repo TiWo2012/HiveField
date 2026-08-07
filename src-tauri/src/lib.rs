@@ -468,7 +468,7 @@ fn open_url(url: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Capture the repo + HEAD commit the app launched against, so the UI can
-    // report changes since startup a few seconds in (git_diff_summary).
+    // report changes since startup (see the `git_diff_report` command).
     let launch_state = GitLaunchState::from_dir(
         &workspace::resolve_cwd()
             .map(PathBuf::from)
