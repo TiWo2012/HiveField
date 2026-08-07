@@ -31,6 +31,14 @@ export interface PromptSnippet {
   content: string;
 }
 
+/**
+ * Version of the settings document shape (persisted as `schemaVersion`).
+ * Bump on any incompatible change and add a migration step on the Rust side
+ * (src-tauri/src/settings.rs `migrate`). The backend refuses to overwrite a
+ * document written by a newer app, so a downgrade never corrupts settings.
+ */
+export const SETTINGS_SCHEMA_VERSION = 1;
+
 /** Built-in prompt snippets offered out of the box (editable in Settings). */
 export const DEFAULT_PROMPT_SNIPPETS: PromptSnippet[] = [
   {
@@ -66,6 +74,12 @@ export const DEFAULT_PROMPT_SNIPPETS: PromptSnippet[] = [
 ];
 
 export interface AppSettings {
+  /**
+   * Version of the persisted settings document (see SETTINGS_SCHEMA_VERSION).
+   * Kept as the document's own version, so a newer doc loaded by an older app
+   * is never silently downgraded.
+   */
+  schemaVersion: number;
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
@@ -129,6 +143,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
   fontFamily: "Maple Mono",
   fontSize: 14,
   lineHeight: 1,
@@ -272,7 +287,19 @@ function normalize(value: unknown): AppSettings {
     ...customAgents.map((a) => a.id),
   ];
 
-  return {
+  // The document's own schema version: keep what the file says (a newer
+  // version means an older app loaded a newer document — it must not stamp
+  // the file as its own older version, or the backend's downgrade guard
+  // would not fire).
+  const schemaVersion =
+    typeof v.schemaVersion === "number" &&
+    Number.isFinite(v.schemaVersion) &&
+    v.schemaVersion >= 1
+      ? Math.floor(v.schemaVersion)
+      : SETTINGS_SCHEMA_VERSION;
+
+  const known: AppSettings = {
+    schemaVersion,
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
     fontSize: Math.max(6, Math.min(48, pickNum("fontSize", DEFAULT_SETTINGS.fontSize))),
     lineHeight: Math.max(0.5, Math.min(3, pickNum("lineHeight", DEFAULT_SETTINGS.lineHeight))),
@@ -314,6 +341,10 @@ function normalize(value: unknown): AppSettings {
     keybinds: pickKeybinds(v.keybinds),
     promptSnippets: pickSnippets("promptSnippets", DEFAULT_SETTINGS.promptSnippets),
   };
+  // Preserve unknown keys from the stored document so fields written by a
+  // *newer* app survive a round-trip through this version (the backend stores
+  // the document verbatim; dropping unknowns would corrupt newer settings).
+  return { ...v, ...known } as AppSettings;
 }
 
 function fromLocalStorage(): AppSettings {
