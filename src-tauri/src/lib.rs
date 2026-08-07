@@ -46,7 +46,7 @@ impl<R: tauri::Runtime> Default for PtyState<R> {
 /// The git state the app launched against: the repo (if any) containing the
 /// process working directory and the HEAD commit at that moment. Kept so the
 /// UI can later report how much the repo changed since startup (see the
-/// `git_diff_summary` command).
+/// `git_diff_report` command).
 pub struct GitLaunchState {
     /// Repo root captured at launch, when the launch dir was inside a repo.
     repo_root: Option<PathBuf>,
@@ -64,18 +64,63 @@ impl GitLaunchState {
     }
 }
 
-/// IPC command: summarize the changes since the app launched. The launch
-/// commit was captured at startup (HEAD of the repo containing the process
-/// working directory); this diffs it against the current working tree and
-/// reports total files changed plus added/deleted lines. Returns `null` when
-/// the app did not launch inside a git repository, when the invoking window
-/// is on a different repository, or when git is unavailable.
+/// Tracks which "changes since launch" summary has already been delivered to
+/// the UI. Polling is re-armed: a repeated poll of the same change set returns
+/// nothing, and only a *different* change set since the last delivery produces
+/// a fresh report. The state lives in the backend, so a frontend reload never
+/// re-shows a toast that was already delivered.
+pub struct GitDiffReportState {
+    /// Digest (`"changed:insertions:deletions"`) of the last delivered report.
+    last_delivered: Mutex<Option<String>>,
+}
+
+impl Default for GitDiffReportState {
+    fn default() -> Self {
+        Self {
+            last_delivered: Mutex::new(None),
+        }
+    }
+}
+
+impl GitDiffReportState {
+    fn digest(summary: &git::DiffSummary) -> String {
+        format!(
+            "{}:{}:{}",
+            summary.changed, summary.insertions, summary.deletions
+        )
+    }
+
+    /// Claim `summary` for delivery: returns it (recording the digest) when it
+    /// is a non-empty change set that has not been delivered yet, `None`
+    /// otherwise.
+    fn claim(&self, summary: &git::DiffSummary) -> Option<git::DiffSummary> {
+        if summary.changed == 0 {
+            return None;
+        }
+        let digest = Self::digest(summary);
+        let mut last = self.last_delivered.lock_unpoisoned();
+        if last.as_deref() == Some(digest.as_str()) {
+            return None;
+        }
+        *last = Some(digest);
+        Some(summary.clone())
+    }
+}
+
+/// IPC command: report the changes since the app launched, once per distinct
+/// change set. The launch commit was captured at startup (HEAD of the repo
+/// containing the process working directory); this diffs it against the
+/// current working tree and reports total files changed plus added/deleted
+/// lines. Returns `null` when the app did not launch inside a git repository,
+/// when the invoking window is on a different repository, when git is
+/// unavailable, or when this exact change set was already reported. The
+/// frontend polls this command; the "already reported" deduplication is what
+/// re-arms the toast for later change sets and survives frontend reloads.
 ///
 /// Async + `spawn_blocking`: the git queries shell out to the `git` binary and
-/// must not block the main thread; results are cached briefly in [`git::GitCache`]
-/// so the frequent worktree/diff refreshes spawn processes only on misses.
+/// must not block the main thread; results are cached briefly in [`git::GitCache`].
 #[tauri::command]
-async fn git_diff_summary(
+async fn git_diff_report(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<Option<git::DiffSummary>, String> {
@@ -91,12 +136,17 @@ async fn git_diff_summary(
     let Ok(dir) = window_cwd(&window).map(std::path::PathBuf::from) else {
         return Ok(None);
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        let cache = app.state::<git::GitCache>();
+    let cache_app = app.clone();
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        let cache = cache_app.state::<git::GitCache>();
         cache.cached_diff_summary(&dir, &launch_root, &base)
     })
     .await
-    .map_err(|e| format!("git diff summary task failed: {e}"))
+    .map_err(|e| format!("git diff report task failed: {e}"))?;
+    let Some(summary) = summary else {
+        return Ok(None);
+    };
+    Ok(app.state::<GitDiffReportState>().claim(&summary))
 }
 
 /// The directory a command's window resolves its "launch directory" to: the
@@ -431,6 +481,7 @@ pub fn run() {
         .manage(git::GitCache::default())
         .manage(dictation::DictationState::default())
         .manage(launch_state)
+        .manage(GitDiffReportState::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -449,7 +500,7 @@ pub fn run() {
             git_worktree_create,
             git_worktree_remove,
             git_worktree_auto_create,
-            git_diff_summary,
+            git_diff_report,
             dir_exists,
             open_url,
             fonts::list_system_fonts,
@@ -573,5 +624,40 @@ mod tests {
         ] {
             assert!(!allowed_url_scheme(url.trim()), "{url:?} should be rejected");
         }
+    }
+
+    // ---- GitDiffReportState (re-armed "changes since launch" delivery) ----
+
+    fn summary(changed: u64, insertions: u64, deletions: u64) -> git::DiffSummary {
+        git::DiffSummary {
+            changed,
+            insertions,
+            deletions,
+        }
+    }
+
+    #[test]
+    fn diff_report_claims_each_change_set_once() {
+        let state = GitDiffReportState::default();
+        // First delivery of a change set is claimed.
+        let first = summary(3, 42, 7);
+        assert_eq!(state.claim(&first), Some(first.clone()));
+        // Same change set again: nothing new.
+        assert_eq!(state.claim(&summary(3, 42, 7)), None);
+        // A different change set re-arms the report.
+        let second = summary(4, 50, 9);
+        assert_eq!(state.claim(&second), Some(second.clone()));
+        // ...and is then deduplicated too.
+        assert_eq!(state.claim(&summary(4, 50, 9)), None);
+    }
+
+    #[test]
+    fn diff_report_never_claims_empty_change_sets() {
+        let state = GitDiffReportState::default();
+        assert_eq!(state.claim(&summary(0, 0, 0)), None);
+        // An empty change set must not mark the state as "delivered": a
+        // non-empty one right after is still claimed.
+        assert_eq!(state.claim(&summary(0, 0, 0)), None);
+        assert_eq!(state.claim(&summary(1, 0, 0)), Some(summary(1, 0, 0)));
     }
 }
