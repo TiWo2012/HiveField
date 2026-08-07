@@ -187,6 +187,15 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 └──────────────────────────────────┘   pty_resize / pty_kill              └──────────────────────────────┘
 ```
 
+The frontend is split into focused modules (see `src/`): `state.ts` owns the
+session/panel state (the single source of truth), `sessions.ts` the session
+lifecycle, `sidebar.ts` the sidebar + workspace switching, `titles.ts` tab
+titles/indicators, `bell.ts` the terminal bell, `dnd.ts` sidebar drag & drop,
+`menus.ts`/`keyboard.ts`/`palette-items.ts` the input surfaces, and
+`listeners.ts` the backend events. `main.ts` only wires them together.
+Settings persist as a versioned JSON document (`schemaVersion`); the backend
+refuses to overwrite a document written by a newer app.
+
 ## Requirements
 
 - Rust (stable) + Tauri v2 system deps (webkit2gtk-4.1 etc.)
@@ -211,13 +220,20 @@ cargo test            # in src-tauri/ — Rust unit tests
 CI (`.github/workflows/test.yml`) runs all four on every push to `dev`: the
 bundle, the typecheck, `bun test`, and `cargo test`.
 
-Frontend tests cover the pure, dependency-free modules (the agent registry in
+Frontend tests cover the pure, dependency-free modules: the agent registry in
 `src/agents.ts` + `src/agents.json`, fuzzy scoring in `src/fuzzy.ts`, keybind
-parsing in `src/keybinds.ts`) plus two docs-drift guards: the README must
-mention every built-in agent, and `AGENTS.md` / `docs/FEATURE_PLAN.md` must
-agree the merge target is `dev`. `src/main.ts` (the ~3.4k-line dockview/PTY
-wiring) is DOM/Tauri-bound and is deliberately not unit-tested; keep new
-logic in small satellite modules so it stays testable.
+parsing in `src/keybinds.ts`, and — since the monolith decomposition — the
+session-mode catalog (`src/modes.ts`), the shared session state helpers
+(`src/state.ts`), the settings schema/versioning (`src/settings.ts`), and the
+input-line/OSC-133 helpers (`src/input-line.ts`), plus two docs-drift guards:
+the README must mention every built-in agent, and `AGENTS.md` /
+`docs/FEATURE_PLAN.md` must agree the merge target is `dev`.
+
+`src/main.ts` is the composition root: it wires the feature modules (sessions,
+sidebar, titles, dnd, menus, keyboard, palette-items, listeners, bell,
+terminal, …) and owns the startup/splash flow, but holds no feature logic
+itself — keep new logic in a satellite module (with a unit test) and wire it
+up in `src/main.ts`.
 
 The built-in agent registry lives in exactly one place — `src/agents.json` —
 guarded on both sides: the frontend test requires the README to mention every

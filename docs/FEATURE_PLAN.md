@@ -1,12 +1,13 @@
 # Feature Plan — hiveField Terminal
 
 A shortlist of five new features, scoped to the existing architecture
-(Tauri v2 backend + xterm.js/dockview frontend, single `src/main.ts` app
-module with small satellite modules). Each feature is independently
-implementable, lands as its own branch merged back to `dev`, and follows
-the existing patterns: IPC command in `src-tauri/src/lib.rs`, keybinding in
-`src/keybinds.ts`, palette/context-menu wiring in `src/main.ts`, settings in
-`src/settings.ts` + `src/settings-ui.ts`.
+(Tauri v2 backend + xterm.js/dockview frontend; `src/main.ts` is the
+composition root wiring focused feature modules). Each feature is
+independently implementable, lands as its own branch merged back to `dev`,
+and follows the existing patterns: IPC command in `src-tauri/src/lib.rs`,
+keybinding in `src/keybinds.ts`, palette/context-menu wiring in
+`src/main.ts`, settings in `src/settings.ts` + `src/settings-ui.ts`. New
+state belongs in `src/state.ts`, new session logic in `src/sessions.ts`.
 
 > **Status (audited 2026-08):** all five features below are **unstarted** —
 > no broadcast/zoom/reopen/transcript/regex-search code exists in the tree
