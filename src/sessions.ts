@@ -45,6 +45,11 @@ import {
 } from "./titles";
 import { trackInputLine, sanitizeTitle, inputLineToTitle, type InputLineState } from "./input-line";
 import {
+  GhosttyCanvas,
+  registerGhosttyCanvas,
+  unregisterGhosttyCanvas,
+} from "./ghostty-canvas";
+import {
   discardSession,
   getApi,
   panelStatus,
@@ -210,6 +215,12 @@ export function createTerminalComponent(): IContentRenderer {
           fitAddon = parkedEntry.fitAddon;
           searchAddon = parkedEntry.searchAddon;
           element.appendChild(parked.element);
+          // Re-register ghostty canvas with the restored session.
+          if (parkedEntry.ghostty) {
+            element.appendChild(parkedEntry.ghostty.element);
+            registerGhosttyCanvas(sessionId!, parkedEntry.ghostty);
+            parkedEntry.ghostty.fit();
+          }
           panelToSession.set(panelApi.id, sessionId);
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
@@ -412,6 +423,15 @@ export function createTerminalComponent(): IContentRenderer {
           // layout can re-attach this session (instead of spawning a new one)
           // when the workspace is restored while the session is still alive.
           panelApi.updateParameters({ sessionId: id });
+
+          // Create ghostty canvas renderer alongside xterm.
+          const gCanvas = new GhosttyCanvas();
+          element.appendChild(gCanvas.element);
+          registerGhosttyCanvas(id, gCanvas);
+          entry.ghostty = gCanvas;
+          gCanvas.fit();
+          gCanvas.resizePty(id);
+
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
 

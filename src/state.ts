@@ -16,6 +16,7 @@ import type { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import type { DockviewApi, IDockviewPanel } from "dockview";
+import type { GhosttyCanvas } from "./ghostty-canvas";
 
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */
 export type Mode = string;
@@ -31,6 +32,8 @@ export interface SessionEntry {
   cwd?: string;
   /** Throwaway worktree this session auto-created; force-deleted on close. */
   worktreePath?: string;
+  /** Optional ghostty canvas renderer (replaces xterm when present). */
+  ghostty?: GhosttyCanvas;
 }
 
 /**

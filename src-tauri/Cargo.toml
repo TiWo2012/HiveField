@@ -31,6 +31,7 @@ rubato = "4.0.0"
 # it pins a specific whisper.cpp revision, so bump deliberately — the bundled
 # binary format must stay compatible with the ggml-base.en.bin model.
 whisper-rs = "0.16"
+vtcode-ghostty-core = "0.128.4"
 
 [dev-dependencies]
 tempfile = "3"

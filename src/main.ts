@@ -10,6 +10,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { initGhosttyListener } from "./ghostty-canvas";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createDockview,
@@ -116,6 +117,7 @@ async function init() {
   });
 
   await registerGlobalListeners();
+  await initGhosttyListener();
 
   // Load the configured terminal font up front so the first fit() measures
   // the real cell size — a fallback font's metrics would resize the PTY
