@@ -207,12 +207,13 @@ export function setFollowing(terminal: Terminal, following: boolean): void {
  * user who is genuinely reading scrollback.
  *
  * xterm parses writes asynchronously (its internal write buffer drains on a
- * later tick), so the follow-up must run once this chunk has been parsed.
+ * later tick), so the checks re-run inside the callback instead of capturing
+ * before the write: a resize (fit) can reflow the scrollback between write
+ * and callback, which would make a pre-write `isAtBottom` stale.
  */
 export function writeToTerminal(terminal: Terminal, data: string): void {
-  const follow = isAtBottom(terminal) || isFollowing(terminal);
   terminal.write(data, () => {
-    if (follow) terminal.scrollToBottom();
+    if (isFollowing(terminal) || isAtBottom(terminal)) terminal.scrollToBottom();
   });
 }
 
