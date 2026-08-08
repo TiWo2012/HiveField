@@ -1,10 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getSettings } from "./settings";
-import { matchesKeybind } from "./keybinds";
-import { isSearchOpen } from "./search";
-import { isPaletteOpen } from "./palette";
-import { isContextMenuOpen } from "./context-menu";
 
 type DictationStatus =
   | "idle"
@@ -48,6 +44,28 @@ function show(text: string, className?: string): void {
 function hide(): void {
   badge.classList.remove("listening", "error");
   badge.classList.remove("visible");
+}
+
+/**
+ * Start dictation capture, called from keyboard.ts when the dictate keybind
+ * is pressed. The caller must supply the current active session id so the
+ * result lands in the right terminal even if focus changes before the
+ * transcription completes.
+ */
+export function startDictation(sessionId: number | undefined): void {
+  if (active) return;
+  active = true;
+  started = false;
+  targetSessionId = sessionId;
+  void beginCapture();
+}
+
+/** Stop an ongoing dictation capture (released keybind or window blur). */
+export function stopDictation(): void {
+  if (!active) return;
+  active = false;
+  started = false;
+  invoke("dictation_stop").catch((err) => console.error("dictation_stop failed", err));
 }
 
 /**
@@ -115,57 +133,11 @@ function onStatus(status: DictationStatus, detail: string | null): void {
   }
 }
 
-export function initDictation(getActiveSessionId: () => number | undefined): void {
+export function initDictation(): void {
   badge = document.createElement("div");
   badge.className = "dictation-badge";
   badge.setAttribute("role", "status");
   document.body.appendChild(badge);
-
-  const isDictationKey = (e: KeyboardEvent): boolean =>
-    matchesKeybind(getSettings().keybinds.dictate, e);
-
-  const stop = (): void => {
-    if (!active) return;
-    active = false;
-    started = false;
-    invoke("dictation_stop").catch((err) => console.error("dictation_stop failed", err));
-  };
-
-  window.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.repeat) return;
-      // While the settings modal, search bar, palette or context menu is open
-      // the keys belong to their inputs (e.g. recording a new binding); never
-      // start dictation from there, and never let a result land under an
-      // overlay. Mirrors setupKeyboard()'s uiOpen() guard.
-      if (document.querySelector(".settings-backdrop")) return;
-      if (isSearchOpen() || isPaletteOpen() || isContextMenuOpen()) return;
-      if (!isDictationKey(e)) return;
-      e.preventDefault();
-      if (active) return;
-      active = true;
-      started = false;
-      // Capture the target session now: the result must go to the terminal
-      // that was active when dictation started, not whichever is active when
-      // the transcription (possibly seconds later) finishes.
-      targetSessionId = getActiveSessionId();
-      void beginCapture();
-    },
-    true
-  );
-
-  window.addEventListener(
-    "keyup",
-    (e) => {
-      if (!isDictationKey(e)) return;
-      e.preventDefault();
-      stop();
-    },
-    true
-  );
-
-  window.addEventListener("blur", stop);
 
   listen<{ status: DictationStatus; detail?: string | null }>("dictation://status", (event) => {
     onStatus(event.payload.status, event.payload.detail ?? null);
@@ -176,8 +148,8 @@ export function initDictation(getActiveSessionId: () => number | undefined): voi
     if (!text) return;
     // The backend echoes the session id captured at keydown, so the text goes
     // to the terminal that was active when dictation *started*. Fall back to
-    // the current active session only for payloads without a sessionId.
-    const sessionId = event.payload.sessionId ?? getActiveSessionId();
+    // the target captured by startDictation() for payloads without a sessionId.
+    const sessionId = event.payload.sessionId ?? targetSessionId;
     if (sessionId === undefined) return;
     // Trailing space so text typed right after dictation doesn't run into the
     // transcription ("world" + typed text -> "worldls").

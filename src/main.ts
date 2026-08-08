@@ -252,11 +252,7 @@ async function init() {
   setupKeyboard();
   setupContextMenu();
 
-  initDictation(() => {
-    const panel = getApi().activePanel;
-    if (!panel) return undefined;
-    return panelToSession.get(panel.id);
-  });
+  initDictation();
 
   // Floating search bar (Ctrl+Shift+F) over the terminal workspace.
   initSearch({
