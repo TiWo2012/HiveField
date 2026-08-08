@@ -630,6 +630,14 @@ body {
   height: 100%;
 }
 
+/* xterm's viewport defaults to background-color: #000, which bleeds through
+ * the DOM renderer's rows on WebKitGTK when color attributes aren't set on
+ * every cell. Use the theme-driven CSS variable instead so the background
+ * stays consistent. */
+.terminal-panel .xterm .xterm-viewport {
+  background-color: var(--hf-terminal-bg);
+}
+
 /* OS file-drag hover: highlight the pane the paths would land in. */
 .terminal-panel.file-drop-target {
   outline: 2px solid var(--hf-accent);
