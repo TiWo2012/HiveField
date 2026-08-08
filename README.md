@@ -1,181 +1,251 @@
 # hiveField Terminal
 
-A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
+A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**, designed
+for coding-agent workflows. Every session runs your real `$SHELL` in a PTY,
+with first-class support for launching coding agents (opencode, pi, Codex,
+Claude Code, Gemini CLI, Aider, Cursor, Cody, and more) in isolated git
+worktrees — all inside a tabbed, split-pane interface.
+
+[![CI](https://github.com/hivefield/hivefield-terminal/actions/workflows/test.yml/badge.svg)](https://github.com/hivefield/hivefield-terminal/actions/workflows/test.yml)
+[![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue)](#)
+
+---
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Features](#features)
+  - [Sessions & Agents](#sessions--agents)
+  - [Tabs, Splits & Navigation](#tabs-splits--navigation)
+  - [Workspaces & Persistence](#workspaces--persistence)
+  - [Sidebar & Session Info](#sidebar--session-info)
+  - [Multiple Windows](#multiple-windows)
+  - [Search, Copy & Paste](#search-copy--paste)
+  - [Notifications & Terminal Bell](#notifications--terminal-bell)
+  - [Appearance & Themes](#appearance--themes)
+  - [Prompt Snippets](#prompt-snippets)
+  - [Drag & Drop](#drag--drop)
+  - [Dictation](#dictation)
+  - [Keybindings](#keybindings)
+  - [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Development](#development)
+- [Build a Release](#build-a-release)
+- [IPC Contract](#ipc-contract)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Quick Start
+
+Download the latest release from the [releases page](https://github.com/hivefield/hivefield-terminal/releases)
+and launch it from your project directory:
+
+```sh
+cd my-project
+hivefield
+```
+
+It opens in that directory and remembers your layout per project — the next
+time you launch from `my-project`, your tabs and splits are restored.
+
+To open a new window for a different project, press `Ctrl+Shift+N` or use
+**File → New Window**.
+
+---
 
 ## Features
 
-- Real shell session (your default `$SHELL`) running in a PTY — one per tab/pane
-- **Multiple windows**: press **`Ctrl+Shift+N`** (also in the **File → New
-  Window** menu and the command palette) to open another app window. Every
-  window is fully independent: it has its own tabs/splits, sessions (its PTYs
-  keep running until the window closes), workspace slots and saved layout.
-  A new window opens on the same launch directory as the one that created it,
-  and each window's workspace document is keyed by its own directory — so you
-  can run several projects side by side. Closing a window ends the sessions
-  it spawned. **Drag an agent out of a window** (or hold **Alt** while
-  dragging and drop anywhere on the opaque "Drop to open in a new window"
-  overlay that appears) to open that agent in a fresh window instead of
-  splitting the current layout.
-- **Opens in the directory it was launched from** (falls back to `$HOME` if the
-  launch dir is gone/unreadable)
-- **Per-directory workspace restore**: the tab/split layout (which sessions are
-  open and their modes) is saved per launch directory and restored the next time
-  you start hiveField from that directory. A fully-wiped layout falls back to a
-  fresh opencode session
-- **Splash screen before auto-resume**: every launch opens a welcome screen
-  before anything restores — a **Continue latest** button (resumes the launch
-  directory's saved layout), the current directory with quick-start session
-  buttons (respecting the visible agents setting), plus a **Recent projects**
-  list of every directory with a saved workspace, sorted by most recently
-  opened. Click a project to open the default agent there (its recency stamp
-  updates), ✕ forgets it, dropping a folder anywhere dismisses the splash and
-  continues (the folder lands in the resumed shell, or becomes the session's
-  directory when nothing is saved here), and any new session (drop, palette,
-  …) dismisses the splash too.
-- **Ten workspace slots (`Ctrl+1`…`Ctrl+9`, `Ctrl+0`)**: keep up to ten
-  independent tab/split layouts per launch directory. Press **`Ctrl+1`…`Ctrl+9`
-  / `Ctrl+0`** to jump to workspace slots 1…10 — the current layout is saved
-  into the slot you're leaving and the target slot's saved layout is restored.
-  Sessions you leave behind stay **running in the background**: their agents
-  keep working and their terminals keep their scrollback, and switching back
-  re-attaches them exactly as you left them (a session that finished while
-  hidden is replaced by a fresh one from the saved layout). Background sessions
-  show up in the sidebar **Running** list with a `◌` marker — click one to jump
-  back to its workspace, hover to kill it. A background agent that finishes
-  still fires the usual completion notification. Pressing a digit on an empty
-  slot starts a fresh workspace there. The **Workspaces** section in the
-  sidebar shows all ten slots (the active one is highlighted, a green dot marks
-  slots with a saved layout): click to switch, double-click to rename. Every
-  slot also appears in the command palette (`Ctrl+Shift+P`).
-  *Note:* `Ctrl+0` now switches to workspace 10, so font-size reset no longer
-  binds to it — keep zooming with `Ctrl+=` / `Ctrl+-` (size is also adjustable
-  in Settings).
-- **Session sidebar**: drag an **agent** (opencode, pi, Codex, GitHub Copilot,
-  Claude Code, Gemini CLI, aider, Cursor, Amp, Qwen Code, Goose, Crush, Cody,
-  OpenHands, Editor, …) or a **raw term** entry from the left sidebar into the
-  terminal area — it opens there as a **split** (drop near an edge to choose
-  the split direction, drop in the middle to split to the right). Agent
-  sessions auto-run the agent CLI; `raw` sessions are a plain shell. Use
-  `Ctrl+Shift+T` to open a session as a tab instead. **Drag an entry out of
-  the window** to open that session in a brand-new window, or hold **Alt**
-  while dragging to show the "drop to open in a new window" overlay (opaque,
-  so it never lets the desktop show through) and drop anywhere on it. Which
-  agents are offered is configurable in **Settings → Agents** (uncheck an
-  agent to hide it from the sidebar, context menu and palette; the raw shell
-  is always available).
-  **Custom agents** are defined in the same panel: give one a name and a
-  command line (arguments allowed, e.g. `opencode --model gpt-5`), and it
-  behaves like a built-in — sidebar entry, palette/context-menu source,
-  isolated worktree, completion notifications. A built-in **Editor** agent
-  runs `$EDITOR` (resolved at spawn, honoring a profile-set value with `vi` /
-  `notepad` as fallback) and runs in the launch directory instead of a
-  throwaway worktree so edited files are never swallowed. Adding a built-in
-  agent is one entry in the shared registry (`src/agents.json`, imported by
-  `src/agents.ts`); the backend auto-runs any non-`raw` mode as its command,
-  and CI guards the contract — unit tests on both sides (see **Testing**)
-  keep the Rust PTY layer and the README in sync with the registry. A new
-  CLI needs no release at all: add it as a **Custom agent** in Settings.
-- **Live sidebar info**: below the drag sources the sidebar shows a
-  **Running** section — every open session with its mode icon, tab title,
-  working directory, and a status glyph (active / ● producing output /
-  ✓ finished), kept in sync as tabs are added, renamed, closed, or produce
-  output. Click a row to focus that session; hover to close it with ✕. A
-  **Workspace** section shows the launch directory, the git branch of the
-  launch dir, the number of repo worktrees, and the open session count.
-  Keyboard-shortcut reminders sit at the bottom.
-- **Isolated sessions**: every agent session (any non-`raw` mode) automatically
-  gets its own throwaway git worktree (branch + directory minted from a
-  codename, checked out under the **Worktree base dir** setting, default
-  `/tmp`), so parallel agents never share a checkout. Closing the tab
-  force-deletes the worktree. When the launch directory isn't a git repo, the
-  agent runs in the launch dir. Raw terms always run in the launch dir.
-- **Tabs & split panes** via [dockview](https://dockview.dev):
-  - `Ctrl+Shift+T` spawns a new terminal tab
-  - Drag a tab **out of the tab bar** to split it into its own pane group
-  - Drag tabs between groups, drag splitter handles to resize
-  - **`Ctrl+H` / `Ctrl+J` / `Ctrl+K` / `Ctrl+L`** move focus to the pane
-    left / down / up / right (vim-style); if no pane exists in that direction
-    the key passes through to the shell (so `Ctrl+L` still clears the screen)
-  - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
-  - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
-  - **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is
-    never overwritten by program/OSC titles, and clearing it reverts to
-    automatic titles
-- **Copy / paste**: `Ctrl+Shift+C` copies the active terminal's selection to
-  the system clipboard (falls through when nothing is selected, so it never
-  clobbers `Ctrl+C`'s SIGINT); `Ctrl+Shift+V` pastes the clipboard into the
-  active terminal (bracketed-paste aware). `Ctrl+V` / `Ctrl+C` keep their
-  native webview behavior.
-- **Right-click context menu**: right-click a terminal pane for a styled,
-  keyboard-navigable menu — a **New session** submenu with every agent (and a
-  raw term), a nested **New split** submenu with all four split directions
-  (relative to the right-clicked pane), **Copy** (only when there is a
-  selection) / **Paste**, plus **Find**, **Rename tab**, and **Close panel**.
-  Right-clicking a tab (or a split gutter) offers split / rename / close for
-  that tab. `↑`/`↓` navigate, `→`/`Enter` open/activate, `←`/`Esc` go back.
-- **Command palette**: press **`Ctrl+Shift+P`** for a fuzzy-finder over every
-  open pane (jump straight to it) and common actions (new agent/raw tab or
-  split for every supported agent, find, focus panes, rename, close, send
-  SIGINT to every pane, close all panes, settings).
-  Type to fuzzy-filter with
-  live match highlighting, `↑`/`↓` (or `Ctrl+P` / `Ctrl+N`, or `Ctrl+K` /
-  `Ctrl+J`) to move, `Enter` to jump/run, `Esc` to close.
-- **Prompt snippets**: `Ctrl+Shift+P` → **Insert prompt…** opens a picker of
-  named prompt snippets; picking one pastes its text into the active terminal
-  (bracketed-paste aware, like `Ctrl+Shift+V`). A handful of useful prompts
-  (explain code, review changes, write/fix tests, …) ship by default, and the
-  **Settings → Snippets** tab lets you add, edit, and remove your own —
-  name + content per snippet, persisted in `settings.json`.
-- **Terminal search**: press **`Ctrl+Shift+F`** to search the current pane's
-  scrollback. Matches highlight live as you type; `Enter` / `Shift+Enter` jump
-  to the next / previous match, `Alt+C` toggles case sensitivity, and `Esc`
-  closes the bar (focus returns to the terminal). The match counter shows
-  `current/total` and turns red when there are no matches.
-- **Hyperlinks**: URLs in output are underlined and **Ctrl+click** (or
-  Cmd+click) opens them in your system browser (`http`, `https`, `mailto`).
-  Hover shows a hint tooltip.
-- **Drag & drop files**: drop files or folders from your file manager onto a
-  terminal — the pane under the pointer lights up with a *release to insert
-  path* hint, and on drop their paths are shell-quoted (single quotes with
-  `'\''` escaping) and written at the shell's cursor. Drops that miss every
-  pane go to the active session instead.
-- **Tab activity / completion indicator**: a background tab whose session
-  prints output gets a `●` prefix, flipping to `✓` once the output goes quiet
-  (or immediately when shell integration emits an OSC 133 `D` finish marker).
-  Switching to the tab clears the indicator.
-- **Notifications**: when a background agent session finishes — or the window is unfocused — hiveField fires a **desktop notification** and/or an **ntfy push notification** (configurable in Settings): ntfy supports a custom server (default `https://ntfy.sh`), topic, and optional access-token auth (`Authorization: Bearer`, stored unencrypted in `settings.json`, as configured). A "Test" button in Settings verifies each channel.
-- **Terminal bell**: when a session prints the BEL character, hiveField plays a
-  synthesized bell tone (Web Audio, no audio files) and raises a **desktop
-  notification** naming the ringing tab — unless you're looking at that exact
-  pane, in which case the sound is enough. Both halves are togglable in
-  **Settings → Terminal bell**; notification bursts (e.g. `echo -e '\a\a\a'`)
-  are throttled to one per few seconds.
-- **Font-size zoom**: `Ctrl+=` / `Ctrl+-` adjust the font size of every
-  terminal live (persisted in settings); `Ctrl+0` resets it.
-- **Configurable keybindings**: every keyboard shortcut (new tab, close
-  panel, rename, copy/paste, find, command palette, settings, pane focus,
-  workspace switching, font zoom, dictation) is rebindable in **Settings →
-  Keybinds** — click a binding and press the new keys, `Backspace` unbinds it,
-  `Esc` cancels. Changes apply instantly and persist; the sidebar shortcuts,
-  palette details and context-menu hints follow the configured bindings.
-- **Themes**: a color theme setting drives both the terminal palette and the
-  window chrome (sidebar, tabs, modals, search bar). Includes Catppuccin
-  Mocha/Latte, Nord, Dracula, Monokai, One Dark, Gruvbox, Solarized Light,
-  GitHub Dark/Light, and Abyss. A **background opacity** setting below 1 makes
-  the terminal translucent with a backdrop blur (requires a compositor that
-  supports transparent windows).
-- Full **Unicode / UTF-8** support (incremental UTF-8 decoding on the Rust side
-  so multi-byte characters survive split reads; xterm.js Unicode 11 on the UI)
-- Copy/paste, cursor blink, scrollback, window resize → PTY resize
-- **Font ligatures** (on by default) — the DOM renderer merges cells into
-  spans and the `calt` OpenType feature is enabled, so fonts with programming
-  ligatures (Fira Code, Maple Mono, JetBrains Mono, …) render `->`, `=>`,
-  `!=` etc. as joined glyphs. Toggle in Settings
-- **OSC-based tab titles**: when a program sets the terminal title via an OSC
-  sequence (`ESC]0;…`, `ESC]2;…`), the pane's tab reflects it. OSC titles win
-  over the input-line-derived titles, which remain as a fallback for sessions
-  that never emit one; a manually renamed tab wins over both.
-- Cross-platform (Linux/macOS/Windows) via `portable-pty`
+### Sessions & Agents
+
+- **Real PTY sessions** — your default `$SHELL` runs in a PTY, one per tab/pane
+- **Coding-agent launcher** — drag an agent from the sidebar into the terminal
+  area to open it as a split; `Ctrl+Shift+T` opens an agent as a tab
+- **Built-in agents** — opencode, pi, Codex, GitHub Copilot, Claude Code,
+  Gemini CLI, Aider, Cursor, Amp, Qwen Code, Goose, Crush, Cody, OpenHands,
+  and an Editor mode that runs `$EDITOR`
+- **Raw shell sessions** — plain terminal with no agent auto-run, always available
+- **Custom agents** — define your own in **Settings → Agents** with a name and
+  full command line (e.g. `opencode --model gpt-5`); they appear in the
+  sidebar, palette, and context menu just like built-ins
+- **Isolated worktrees** — every agent session gets its own throwaway git
+  worktree under the **Worktree base dir** setting (default `/tmp`), so
+  parallel agents never share a checkout. Raw terms and the Editor agent run
+  in the launch directory instead. Closing a tab force-deletes the worktree
+- **Editor agent** — `$EDITOR` resolved at spawn (honors `.bashrc`/`.zshrc`
+  profiles, falls back to `vi`/`notepad`), and runs in the launch directory
+  so edited files are never swallowed by a throwaway worktree
+
+### Tabs, Splits & Navigation
+
+- **Tabbed & split-pane interface** via [dockview](https://dockview.dev)
+- `Ctrl+Shift+T` — new terminal tab
+- **Drag a tab** out of the tab bar to split it into its own pane group
+- **Drag tabs between groups**, drag splitter handles to resize
+- `Ctrl+H` / `Ctrl+J` / `Ctrl+K` / `Ctrl+L` — move focus left/down/up/right
+  (vim-style); if no pane exists in that direction the key passes through to
+  the shell (so `Ctrl+L` still clears the screen)
+- Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
+- `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
+- **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is
+  never overwritten by program/OSC titles. Clearing the name reverts to
+  automatic titles
+- **Tab activity indicators** — a background tab whose session prints output
+  gets a `●` prefix, flipping to `✓` once output goes quiet. Switching to the
+  tab clears the indicator
+
+### Workspaces & Persistence
+
+- **Per-directory workspace restore** — the tab/split layout is saved per
+  launch directory and restored the next time you start hiveField from that
+  directory. A wiped layout falls back to a fresh session
+- **Ten workspace slots** (`Ctrl+1`…`Ctrl+9`, `Ctrl+0`) — keep up to ten
+  independent layouts per launch directory. Switching slots saves the current
+  layout and restores the target slot's layout
+- **Background sessions** — sessions in hidden slots keep running; their agents
+  continue working and terminals retain scrollback. Switching back re-attaches
+  them exactly as you left them. A finished background agent fires the usual
+  completion notification
+- **Splash screen** — every launch shows a welcome screen with:
+  - **Continue latest** — resumes the saved layout for this directory
+  - Quick-start session buttons for the current directory
+  - **Recent projects** — every directory with a saved workspace, sorted by
+    most recently opened
+  - Click a project to open the default agent there; ✕ forgets a project
+  - Drop a folder anywhere to dismiss the splash and continue
+- **Workspaces sidebar** — shows all ten slots (active highlighted, green dot
+  for saved layouts); click to switch, double-click to rename
+
+### Sidebar & Session Info
+
+- **Agent palette** — drag an agent or raw term into the terminal area to spawn
+  it as a split (drop near an edge for split direction, middle for right-split)
+- **Running sessions** — every open session listed with mode icon, tab title,
+  working directory, and status glyph (active / `●` producing output / `✓`
+  finished). Click to focus, hover to close
+- **Workspace info** — shows the launch directory, git branch, number of repo
+  worktrees, and open session count
+- **Keyboard shortcut reminders** at the bottom of the sidebar
+- **Right-click context menu** — right-click a terminal pane for a styled,
+  keyboard-navigable menu: New session (every agent + raw term), New split
+  (all four directions relative to the clicked pane), Copy/Paste, Find,
+  Rename tab, and Close panel. Right-click a tab for split/rename/close.
+  `↑`/`↓` navigate, `→`/`Enter` open, `←`/`Esc` go back
+- **Command palette** (`Ctrl+Shift+P`) — fuzzy-find over every open pane and
+  common actions (new agent/raw tab or split, find, focus panes, rename,
+  close, send SIGINT to all panes, close all panes, settings). Live match
+  highlighting, `↑`/`↓` or `Ctrl+P`/`Ctrl+N` to move, `Enter` to run, `Esc`
+  to close
+
+### Multiple Windows
+
+- `Ctrl+Shift+N` (also **File → New Window** and the command palette) opens a
+  new app window
+- Every window is fully independent: its own tabs/splits, sessions, workspace
+  slots, and saved layout
+- A new window opens in the same launch directory as the one that created it
+- Each window's workspace is keyed by its own directory — run several projects
+  side by side
+- Closing a window ends the sessions it spawned
+
+### Search, Copy & Paste
+
+- **Terminal search** (`Ctrl+Shift+F`) — searches the current pane's
+  scrollback. Matches highlight live as you type; `Enter`/`Shift+Enter` jump
+  next/previous match, `Alt+C` toggles case sensitivity, `Esc` closes.
+  Match counter shows `current/total` and turns red on no matches
+- **Copy** (`Ctrl+Shift+C`) — copies the active terminal's selection to the
+  system clipboard. Falls through when nothing is selected, so it never
+  clobbers `Ctrl+C`'s SIGINT
+- **Paste** (`Ctrl+Shift+V`) — pastes the clipboard into the active terminal
+  (bracketed-paste aware)
+- `Ctrl+V`/`Ctrl+C` keep their native webview behavior
+- **Hyperlinks** — URLs in output are underlined; `Ctrl+click` (Cmd+click on
+  macOS) opens them in your system browser. Hover shows a hint tooltip
+
+### Notifications & Terminal Bell
+
+- **Agent-done notifications** — when a background agent finishes (or the
+  window is unfocused), hiveField fires a desktop notification and/or an ntfy
+  push notification (configurable in Settings)
+- **ntfy push** — supports a custom server (default `https://ntfy.sh`), topic,
+  and optional access-token auth. A "Test" button in Settings verifies each
+  channel
+- **Terminal bell** — when a session prints the BEL character, hiveField plays
+  a synthesized bell tone (Web Audio, no audio files) and optionally raises a
+  desktop notification naming the ringing tab. Both halves are togglable in
+  **Settings → Terminal bell**. Notification bursts (e.g. `echo -e '\a\a\a'`)
+  are throttled to one per few seconds
+
+### Appearance & Themes
+
+- **Color themes** — Catppuccin Mocha/Latte, Nord, Dracula, Monokai, One Dark,
+  Gruvbox, Solarized Light, GitHub Dark/Light, and Abyss. Drives both the
+  terminal palette and window chrome (sidebar, tabs, modals, search bar)
+- **Background opacity** — below 1 makes the terminal translucent with a
+  backdrop blur (requires a compositor with transparent window support)
+- **Font** — configurable family, size, weight, line height, letter spacing
+- **Font ligatures** — DOM renderer merges cells into spans with the `calt`
+  OpenType feature enabled, so programming fonts (Fira Code, Maple Mono,
+  JetBrains Mono, etc.) render `->`, `=>`, `!=` as joined glyphs. Toggle in
+  Settings
+- **Font-size zoom** — `Ctrl+=`/`Ctrl+-` adjust live (persisted); `Ctrl+0`
+  resets to the configured default
+- **Cursor blink** (on by default, toggle in Settings)
+- Full **Unicode / UTF-8** support — incremental UTF-8 decoding on the Rust
+  side, xterm.js Unicode 11 on the UI
+
+### Prompt Snippets
+
+- `Ctrl+Shift+P` → **Insert prompt…** opens a picker of named prompt snippets
+- Picking one pastes its text into the active terminal (bracketed-paste aware)
+- Ships with defaults (explain code, review changes, write/fix tests, debug,
+  summarize changes) — all editable in **Settings → Snippets**
+- Add, edit, and remove your own snippets; persisted in `settings.json`
+
+### Drag & Drop
+
+- **File/folder drop** — drop from your file manager onto a terminal pane. The
+  pane lights up with a *release to insert path* hint, and paths are
+  shell-quoted (single quotes with `'\''` escaping) at the cursor. Drops that
+  miss every pane go to the active session
+- **Splash screen drop** — dropping a folder anywhere dismisses the splash and
+  continues (the folder lands in the resumed shell, or becomes the session
+  directory when nothing is saved here)
+
+### Dictation
+
+- Built-in dictation support with selectable engine (Whisper, Vosk, or cloud)
+- Configurable microphone selection in Settings
+
+### Keybindings
+
+- Every keyboard shortcut is rebindable in **Settings → Keybinds** — click a
+  binding and press the new keys, `Backspace` unbinds, `Esc` cancels
+- Changes apply instantly and persist
+- Sidebar shortcuts, palette details, and context-menu hints follow the
+  configured bindings
+
+### Configuration
+
+All settings are persisted in the app's config directory (`settings.json`)
+with a `localStorage` fallback:
+
+| Category | Options |
+|----------|---------|
+| **Font** | Family, size (6–48), weight (normal/bold), line height, letter spacing, ligatures |
+| **Theme** | 11 built-in themes, background opacity |
+| **Agents** | Show/hide built-in agents, define custom agents (name + command line) |
+| **Worktrees** | Base directory for auto-created worktrees (default `/tmp`) |
+| **Notifications** | Desktop notifications on/off, ntfy server/topic/token |
+| **Terminal Bell** | Sound on/off, notification on/off |
+| **Dictation** | Engine selection, microphone device |
+| **Keybinds** | Remap any shortcut |
+| **Snippets** | Prompt snippet library |
+
+---
 
 ## Architecture
 
@@ -187,94 +257,119 @@ A desktop terminal built with **Tauri v2** (Rust) and **xterm.js**.
 └──────────────────────────────────┘   pty_resize / pty_kill              └──────────────────────────────┘
 ```
 
-The frontend is split into focused modules (see `src/`): `state.ts` owns the
-session/panel state (the single source of truth), `sessions.ts` the session
-lifecycle, `sidebar.ts` the sidebar + workspace switching, `titles.ts` tab
-titles/indicators, `bell.ts` the terminal bell, `dnd.ts` sidebar drag & drop,
-`menus.ts`/`keyboard.ts`/`palette-items.ts` the input surfaces, and
-`listeners.ts` the backend events. `main.ts` only wires them together.
-Settings persist as a versioned JSON document (`schemaVersion`); the backend
-refuses to overwrite a document written by a newer app.
+The frontend (TypeScript, dockview + xterm.js) manages the UI: tabs, split
+panes, the sidebar, command palette, and settings. Each terminal pane
+corresponds to a PTY session on the Rust backend, addressed by a numeric
+`sessionId`. Communication happens over Tauri IPC commands and events.
+
+The Rust backend (`src-tauri/src/`) owns:
+- **PTY lifecycle** — spawn, write, resize, kill (`pty.rs`)
+- **Window management** — multi-window support (`windows.rs`)
+- **Workspace persistence** — per-directory layout save/restore (`workspace.rs`)
+- **Git worktrees** — create/remove throwaway worktrees for agent isolation
+  (`git.rs`)
+- **Settings** — read/write `settings.json` in the app config dir
+  (`settings.rs`)
+- **Notifications** — desktop and ntfy push notifications (`notifications.rs`)
+- **Dictation** — Whisper, Vosk, and cloud speech-to-text engines
+  (`dictation.rs`)
+- **Font discovery** — system font enumeration (`fonts.rs`)
+
+---
 
 ## Requirements
 
-- Rust (stable) + Tauri v2 system deps (webkit2gtk-4.1 etc.)
-- Node 18+ with `bun` (used as package manager + bundler)
+- **Rust** (stable) with Tauri v2 system dependencies
+  ([see Tauri docs](https://v2.tauri.app/start/prerequisites/))
+- **Node.js** 18+ with [Bun](https://bun.sh) (used as package manager and
+  bundler)
+- **Linux**: `libwebkit2gtk-4.1-dev`, `libxdo-dev`, `libssl-dev`,
+  `libayatana-appindicator3-dev`, `librsvg2-dev`, `libasound2-dev`, and
+  `libvosk.so` (for dictation; see CI workflow for download steps)
+- **macOS**: Xcode Command Line Tools
+- **Windows**: Microsoft Visual Studio C++ Build Tools, WebView2
 
-## Develop
+---
+
+## Development
 
 ```sh
-bun install           # install frontend deps (in repo root)
-cargo build           # in src-tauri/
-bun run tauri dev     # build frontend + launch the app window
+# Install frontend dependencies
+bun install
+
+# Build the Rust backend
+(cd src-tauri && cargo build)
+
+# Launch in dev mode (hot-reload frontend, restart backend on changes)
+bun run tauri dev
 ```
 
-## Testing
+Run checks before committing:
 
 ```sh
-bun test              # frontend unit tests + docs-drift guards (repo root)
-bun run typecheck     # tsc --noEmit over src/
-cargo test            # in src-tauri/ — Rust unit tests
+bun run build          # bundle frontend
+bunx tsc --noEmit      # typecheck
+(cd src-tauri && cargo test)  # Rust tests
 ```
 
-CI (`.github/workflows/test.yml`) runs all four on every push to `dev`: the
-bundle, the typecheck, `bun test`, and `cargo test`.
+---
 
-Frontend tests cover the pure, dependency-free modules: the agent registry in
-`src/agents.ts` + `src/agents.json`, fuzzy scoring in `src/fuzzy.ts`, keybind
-parsing in `src/keybinds.ts`, and — since the monolith decomposition — the
-session-mode catalog (`src/modes.ts`), the shared session state helpers
-(`src/state.ts`), the settings schema/versioning (`src/settings.ts`), and the
-input-line/OSC-133 helpers (`src/input-line.ts`), plus two docs-drift guards:
-the README must mention every built-in agent, and `AGENTS.md` /
-`docs/FEATURE_PLAN.md` must agree the merge target is `dev`.
-
-`src/main.ts` is the composition root: it wires the feature modules (sessions,
-sidebar, titles, dnd, menus, keyboard, palette-items, listeners, bell,
-terminal, …) and owns the startup/splash flow, but holds no feature logic
-itself — keep new logic in a satellite module (with a unit test) and wire it
-up in `src/main.ts`.
-
-The built-in agent registry lives in exactly one place — `src/agents.json` —
-guarded on both sides: the frontend test requires the README to mention every
-registered agent, and a Rust test (`registered_agent_modes_are_safe_bare_commands`
-in `src-tauri/src/pty.rs`) requires every mode id to be a safe bare command
-word. Adding an agent is one JSON entry (plus a README mention); no Rust
-change.
-
-## Build a release bundle
+## Build a Release
 
 ```sh
 bun run tauri build
 ```
 
-## IPC contract
+Outputs are in `src-tauri/target/release/bundle/`.
+
+---
+
+## IPC Contract
 
 All commands/events are addressed by a `sessionId` (a number allocated by the
 backend for each spawned shell).
 
-| Direction | Name            | Payload                                       |
-|-----------|-----------------|-----------------------------------------------|
-| Rust → JS | `pty://output`  | `{ sessionId, data }` (data is UTF-8 string)  |
-| Rust → JS | `pty://exit`    | `{ sessionId, code }`                         |
-| JS → Rust | `pty_spawn`     | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"` (default opencode); `cwd` optionally pins the start directory (e.g. a worktree; when omitted the session starts in the *invoking window's* launch directory); `autorun` optionally overrides the command when the CLI binary differs from the mode id (e.g. `cursor` → `cursor-agent`), for a user-defined custom agent's full command line, or the resolved `$EDITOR` command for the `editor` mode → returns `sessionId` |
-| JS → Rust | `editor_command` | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with a per-platform fallback (`${EDITOR:-vi}` on unix, quoted `%EDITOR%`/`notepad` on Windows) |
-| JS → Rust | `pty_write`     | `{ sessionId, data }`                         |
-| JS → Rust | `pty_resize`    | `{ sessionId, cols, rows }`                   |
-| JS → Rust | `pty_kill`      | `{ sessionId }`                               |
-| JS → Rust | `workspace_cwd` | () → canonicalized launch directory of the *invoking window* (its own cwd when it was opened via `window_new`, otherwise the process cwd) — keys the window's workspace persistence |
-| JS → Rust | `window_new`    | `{ cwd? }` — open a new app window scoped to `cwd` (default: process cwd); `cwd` is what the new window's sessions default to and its workspace is keyed by → returns the new window's label | |
-| JS → Rust | `workspace_get` | `{ cwd }` → saved dockview layout (JSON) or `null` |
-| JS → Rust | `workspace_set` | `{ cwd, layout }` — persist the dockview layout |
-| JS → Rust | `projects_list` | () → recent projects: every cwd with a saved workspace as `{ cwd, lastOpened, exists }`, newest first (splash screen) |
-| JS → Rust | `project_touch` | `{ cwd }` — bump a project's `lastOpened` stamp without touching its saved layout |
-| JS → Rust | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir` (e.g. `/tmp/<repo>-<sanitized>-<ts>`). Called for every new agent session (`opencode` / `pi`) |
-| JS → Rust | `git_worktree_remove` | `{ path, force? }` — remove a worktree; `force` runs `--force` (used when closing an auto-created session worktree) |
-| JS → Rust | `git_worktrees` / `git_worktree_create` | legacy listing / named-branch creation commands (no longer used by the UI, kept for compatibility) |
-| JS → Rust | `dir_exists`   | `{ path }` → whether the path exists (lets restored sessions detect stale worktree paths) |
-| JS → Rust | `open_url`     | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
-| JS → Rust | `notify_desktop` | `{ title, body }` — show a native desktop notification |
-| JS → Rust | `ntfy_send`    | `{ title, body }` — publish a push notification to the configured ntfy server/topic (config read from settings: `ntfyEnabled`, `ntfyServer`, `ntfyTopic`, `ntfyToken`; no-op when disabled) |
+| Direction    | Name                       | Payload |
+|-------------|----------------------------|---------|
+| Rust → JS   | `pty://output`             | `{ sessionId, data }` (UTF-8 string) |
+| Rust → JS   | `pty://exit`               | `{ sessionId, code }` |
+| JS → Rust   | `pty_spawn`                | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"`; `cwd` optionally pins the start directory (e.g. a worktree); `autorun` overrides the command when the CLI binary differs from the mode id → returns `sessionId` |
+| JS → Rust   | `editor_command`           | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with per-platform fallback (`${EDITOR:-vi}` on unix, `%EDITOR%`/`notepad` on Windows) |
+| JS → Rust   | `pty_write`                | `{ sessionId, data }` |
+| JS → Rust   | `pty_resize`               | `{ sessionId, cols, rows }` |
+| JS → Rust   | `pty_kill`                 | `{ sessionId }` |
+| JS → Rust   | `workspace_cwd`            | () → canonicalized launch directory of the *invoking window* — keys the window's workspace persistence |
+| JS → Rust   | `window_new`               | `{ cwd? }` — open a new app window scoped to `cwd` (default: process cwd) → returns the new window's label |
+| JS → Rust   | `workspace_get`            | `{ cwd }` → saved dockview layout (JSON) or `null` |
+| JS → Rust   | `workspace_set`            | `{ cwd, layout }` — persist the dockview layout |
+| JS → Rust   | `projects_list`            | () → recent projects: every cwd with a saved workspace as `{ cwd, lastOpened, exists }`, newest first |
+| JS → Rust   | `project_touch`            | `{ cwd }` — bump a project's `lastOpened` stamp without touching its saved layout |
+| JS → Rust   | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir`. Called for every new agent session |
+| JS → Rust   | `git_worktree_remove`      | `{ path, force? }` — remove a worktree; `force` runs `--force` |
+| JS → Rust   | `git_worktrees`            | legacy listing command (kept for compatibility) |
+| JS → Rust   | `git_worktree_create`      | legacy named-branch creation command (kept for compatibility) |
+| JS → Rust   | `dir_exists`               | `{ path }` → whether the path exists (validates restored worktree paths) |
+| JS → Rust   | `open_url`                 | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
+| JS → Rust   | `notify_desktop`           | `{ title, body }` — show a native desktop notification |
+| JS → Rust   | `ntfy_send`                | `{ title, body }` — publish a push notification to the configured ntfy server/topic (no-op when disabled) |
 
-The workspace persistence commands are keyed by the canonicalized launch
-directory (`cwd`), not by a session.
+Workspace persistence commands are keyed by the canonicalized launch directory
+(`cwd`), not by session.
+
+---
+
+## Contributing
+
+1. Create a feature branch from `master`
+2. Make your changes, commit early and often
+3. Run `bun run build`, `bunx tsc --noEmit`, and `cargo test` in `src-tauri/`
+   before opening a PR
+4. Open a pull request against `master`
+
+See [AGENTS.md](AGENTS.md) for agent workflow conventions used in this repo.
+
+---
+
+## License
+
+[MIT](LICENSE) (TODO: add license file)
