@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -24,6 +25,7 @@ use crate::Unpoisoned;
 /// Per-session ghostty rendering state.
 pub struct GhosttySession {
     pub terminal: Terminal,
+    pub last_flush: Instant,
 }
 
 /// A single terminal cell as sent to the frontend.
@@ -117,7 +119,7 @@ impl GhosttyState {
         let mut guard = self.sessions.lock_unpoisoned();
         let mut t = Terminal::new(cols, rows);
         t.set_max_scrollback(10_000);
-        guard.insert(session_id, GhosttySession { terminal: t });
+        guard.insert(session_id, GhosttySession { terminal: t, last_flush: Instant::now() });
     }
 
     /// Feed bytes without emitting cells (for pre-ready buffering).
@@ -179,11 +181,20 @@ impl GhosttyState {
 
     /// Flush current screen state without feeding new data (used after
     /// resize to update the frontend).
+    /// Flush the current screen to the frontend, throttled to ~60 Hz.
     pub fn flush<R: Runtime>(&self, app: &AppHandle<R>, session_id: u64) {
         let mut guard = self.sessions.lock_unpoisoned();
         let Some(session) = guard.get_mut(&session_id) else {
             return;
         };
+
+        // Throttle: at most one flush per frame (~16 ms).
+        let now = Instant::now();
+        if now.duration_since(session.last_flush).as_millis() < 14 {
+            return;
+        }
+        session.last_flush = now;
+
         let cols = session.terminal.cols();
         let rows = session.terminal.rows();
         let cursor = session.terminal.cursor();

@@ -204,26 +204,26 @@ export class GhosttyCanvas {
 
     const theme = getTheme(getSettings().theme).terminal;
 
-    // Clear background — fill entire canvas.
+    // Clear the visible canvas area with the theme background.
     this.ctx.fillStyle = theme.background ?? "#000";
     this.ctx.fillRect(0, 0, cw, ch);
 
-    // Draw cells
+    // Draw cells — skip default background cells (bg == 0 means "transparent").
     for (const c of payload.cells) {
       const x = c.col * this.cellW;
       const y = c.row * this.cellH;
 
       const { fgStyle, bgStyle } = cellColors(c.fg, c.bg, theme, c);
 
-      // Background
-      const bgDefault = c.bg === 0;
-      if (!bgDefault || c.inverse) {
+      // Background — only draw if non-default to avoid redundant fills.
+      if (c.bg !== 0 || c.inverse) {
         this.ctx.fillStyle = bgStyle;
         this.ctx.fillRect(x, y, this.cellW, this.cellH);
       }
 
-      // Text
-      if (c.ch !== " " || bgDefault === false) {
+      // Text — draw unless it's a default-background space (invisible filler).
+      const hasContent = c.ch !== " " || c.bg !== 0 || c.inverse;
+      if (hasContent) {
         this.ctx.fillStyle = fgStyle;
         if (c.bold) this.ctx.font = this.ctx.font.replace(/^[\d.]+px/, (m) => `bold ${m}`);
         if (c.italic) this.ctx.font = this.ctx.font.replace(/^bold /, "bold italic ").replace(/^\d/, (m) => `italic ${m}`);
