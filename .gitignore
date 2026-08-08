@@ -7,6 +7,13 @@ src-tauri/gen/schemas/
 node_modules/
 dist/
 
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
 # Misc
 *.log
 .DS_Store
