@@ -233,6 +233,18 @@ export function createTerminalComponent(): IContentRenderer {
       fitAddon = created.fitAddon;
       searchAddon = created.searchAddon;
       terminal.open(element);
+      // Establish xterm's cell geometry before the PTY can emit startup
+      // output. Dockview may finish laying out the panel asynchronously; the
+      // later sync() call re-fits to the final size and sends that size to the
+      // PTY, but without this initial fit xterm can parse the shell's first
+      // screen against its default 80x24 grid and leave the output stranded
+      // in the lower part of the pane after the real resize.
+      try {
+        fitAddon.fit();
+      } catch {
+        // The panel may still be between DOM attach/layout phases. The first
+        // post-spawn sync and dimensions-change callback will retry the fit.
+      }
       // terminal.element is only created by open(); re-apply settings so
       // element-dependent options (font ligatures) take effect.
       applyTerminalSettings(terminal, getSettings());
