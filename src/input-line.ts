@@ -98,12 +98,18 @@ const OSC133_RE = new RegExp(OSC133_SRC, "g");
  * the remaining visible text. Only complete markers (with a BEL/ST terminator)
  * are stripped; a marker split across reads is left in the text so xterm can
  * buffer it like any other OSC instead of leaking its payload bytes.
+ *
+ * Resets the regex's `lastIndex` before scanning: the `g` flag persists state
+ * across calls, so a preceding chunk whose last match ended at a non-zero
+ * position would cause the regex to start scanning the next chunk from that
+ * offset, silently missing markers at the beginning of the chunk.
  */
 export function analyzeOutput(data: string): { markers: string[]; text: string } {
   const markers: string[] = [];
   let text = "";
   let last = 0;
   let m: RegExpExecArray | null;
+  OSC133_RE.lastIndex = 0;
   while ((m = OSC133_RE.exec(data)) !== null) {
     text += data.slice(last, m.index);
     markers.push(m[1]);

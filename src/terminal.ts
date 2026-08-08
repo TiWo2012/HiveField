@@ -225,8 +225,15 @@ export function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Termin
     // a user who scrolled up to read.
     const follow = isAtBottom(terminal) || isFollowing(terminal);
     fitAddon.fit();
-    if (follow) terminal.scrollToBottom();
-    invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
+    // When the terminal element has no size yet (panel not laid out, element
+    // detached, zero-size container), fit() floors to the minimum terminal
+    // size of 2 cols × 1 row. Sending that to the PTY corrupts the shell's
+    // idea of the terminal size; skip the resize when the computed dimensions
+    // are implausible for a real, visible terminal.
+    if (terminal.cols > 2 && terminal.rows > 1) {
+      if (follow) terminal.scrollToBottom();
+      invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
+    }
   } catch {
     // ignore until the backend is ready
   }

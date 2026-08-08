@@ -286,29 +286,44 @@ export function createTerminalComponent(): IContentRenderer {
       // xterm parses OSC 0/1/2 and exposes the parsed title here; let the
       // running program's title win over the derived input-line one — but a
       // user-renamed tab is never overridden.
+      //
+      // Resolves the panel id and status at fire time so the handler stays
+      // correct after a session is parked and restored into a different panel
+      // (the captured `panelApi.id` would point at the original panel, whose
+      // status was re-keyed).
       terminal.onTitleChange((title) => {
         const sanitized = sanitizeTitle(title);
         if (!sanitized) return;
         oscTitleSeen = true;
-        if (!st.userTitle) setBaseTitle(panelApi.id, sanitized);
+        const sid = sessionId;
+        const livePanelId = sid !== undefined ? sessions.get(sid)?.panel?.id : panelApi.id;
+        if (!livePanelId) return;
+        const liveSt = panelStatus.get(livePanelId);
+        if (liveSt?.userTitle) return;
+        setBaseTitle(livePanelId, sanitized);
       });
 
       // Register input forwarding immediately so no early keystrokes are lost;
       // it no-ops until the session id is known.
       terminal.onData((data) => {
         if (sessionId !== undefined) {
+          const sid = sessionId;
           // Typing happens at the prompt at the bottom of the buffer: the
           // user wants output to follow again (also covers pastes).
           setFollowing(terminal!, true);
           // Track the line being typed; when it is submitted (Enter) it
           // becomes this pane's title before being forwarded to the agent.
           inputState = trackInputLine(inputState, data, (line) => {
-            if (isAgentModeAll(mode, customs()) && !oscTitleSeen && !st.userTitle) {
+            if (isAgentModeAll(mode, customs()) && !oscTitleSeen) {
+              const livePanelId = sessions.get(sid)?.panel?.id ?? panelApi.id;
+              if (!livePanelId) return;
+              const liveSt = panelStatus.get(livePanelId);
+              if (liveSt?.userTitle) return;
               const title = inputLineToTitle(line);
-              if (title) setBaseTitle(panelApi.id, title);
+              if (title) setBaseTitle(livePanelId, title);
             }
           });
-          invoke("pty_write", { sessionId, data }).catch(() => {});
+          invoke("pty_write", { sessionId: sid, data }).catch(() => {});
         }
       });
 

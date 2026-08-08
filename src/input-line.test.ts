@@ -39,6 +39,33 @@ describe("analyzeOutput (OSC 133 shell-integration markers)", () => {
     expect(markers).toEqual([]);
     expect(text).toBe("pre\x1b]133;D");
   });
+
+  test("finds markers at the start of successive chunks (lastIndex reset)", () => {
+    // The regex carries a `g` flag; without resetting lastIndex, a preceding
+    // chunk whose last match ended at a non-zero position would cause the
+    // regex to start scanning the next chunk from that offset, silently
+    // missing markers at the beginning.
+    // First chunk: a marker in the middle — lastIndex ends non-zero.
+    expect(analyzeOutput("abc\x1b]133;A\x07text")).toEqual({
+      markers: ["A"],
+      text: "abctext",
+    });
+    // Second chunk: a marker right at the start — must still be found.
+    expect(analyzeOutput("\x1b]133;C\x07more")).toEqual({
+      markers: ["C"],
+      text: "more",
+    });
+  });
+
+  test("finds multiple markers in successive chunks", () => {
+    // Round-trip: many alternating chunks, each with a marker at position 0.
+    for (let i = 0; i < 10; i++) {
+      expect(analyzeOutput("\x1b]133;C\x07chunk" + i)).toEqual({
+        markers: ["C"],
+        text: "chunk" + i,
+      });
+    }
+  });
 });
 
 describe("sanitizeTitle / inputLineToTitle", () => {
