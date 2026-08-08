@@ -72,11 +72,16 @@ export async function ensureTerminalFont(): Promise<void> {
       const timeout = new Promise<void>((r) => setTimeout(r, 1500));
       const load = fonts.load(`${s.fontSize}px "${s.fontFamily}"`)
         .then(() => fonts.ready);
-      await Promise.race([load, timeout]);
+      const winner = await Promise.race([
+        load.then(() => "loaded" as const),
+        timeout.then(() => "timeout" as const),
+      ]);
+      if (winner === "timeout") return;
     }
   } catch {
     // Font API unavailable or the family failed to load — fit with whatever
     // the browser provides rather than blocking startup.
+    return;
   }
   loadedFonts.add(key);
 }
