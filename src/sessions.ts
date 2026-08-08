@@ -151,14 +151,9 @@ export function createTerminalComponent(): IContentRenderer {
    */
   async function syncWhenReady(): Promise<void> {
     await ensureTerminalFont();
-    // Re-apply so the renderer re-measures the cell with the real font.
     if (terminal) applyTerminalSettings(terminal, getSettings());
-    // The panel may still be laying out and the renderer may not have measured
-    // its first cell yet; retry over a few frames before giving up (later
-    // onDidDimensionsChange / fonts.ready paths re-sync).
-    for (let attempt = 0; attempt < 5 && !sync(); attempt++) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    }
+    // syncSize still gates on terminalFontReady; by now it should pass.
+    sync();
   }
 
   return {

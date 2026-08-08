@@ -59,6 +59,8 @@ function fontKey(family: string, size: number): string {
  * shell then renders startup output at the wrong width/height and the later
  * correction reflows the scrollback into garbage. Gate the first resize on
  * the font actually being loaded (see `syncSize`).
+ *
+ * Bounded to ~1.5 s so a stalled font API never blocks the terminal.
  */
 export async function ensureTerminalFont(): Promise<void> {
   const s = getSettings();
@@ -67,8 +69,10 @@ export async function ensureTerminalFont(): Promise<void> {
   try {
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
     if (fonts?.load) {
-      await fonts.load(`${s.fontSize}px "${s.fontFamily}"`);
-      await fonts.ready;
+      const timeout = new Promise<void>((r) => setTimeout(r, 1500));
+      const load = fonts.load(`${s.fontSize}px "${s.fontFamily}"`)
+        .then(() => fonts.ready);
+      await Promise.race([load, timeout]);
     }
   } catch {
     // Font API unavailable or the family failed to load — fit with whatever
@@ -278,16 +282,6 @@ export function syncSize(
     // garble the shell's startup output in the scrollback. Callers retry
     // once the font is ready (see ensureTerminalFont / fonts.ready refit).
     if (!terminalFontReady()) return false;
-
-    // Also skip until the renderer has actually measured the cell. FitAddon's
-    // proposeDimensions() returns undefined while css.cell is 0×0, which makes
-    // fit() a silent no-op — the terminal keeps its default 80×24 and we would
-    // resize the PTY to that instead of the real panel size.
-    const core = (terminal as unknown as {
-      _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } };
-    })._core;
-    const cell = core?._renderService?.dimensions?.css?.cell;
-    if (!cell || cell.width <= 0 || cell.height <= 0) return false;
 
     // Resizing reflows the scrollback; like writes, it can leave the viewport
     // (and xterm's scroll-tracking flag) off the bottom. Snap back when the
