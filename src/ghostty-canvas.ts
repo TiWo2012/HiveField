@@ -133,6 +133,7 @@ export class GhosttyCanvas {
   private cursorCol = 0;
   private cellW = 8.4;
   private cellH = 17;
+  private lastPayload: GCellsPayload | null = null;
   private cursorBlink = true;
   private blinkTimer: ReturnType<typeof setInterval> | null = null;
   private cursorVisible = true;
@@ -188,7 +189,7 @@ export class GhosttyCanvas {
 
   /** Feed a full screen of cells from the backend. */
   update(payload: GCellsPayload) {
-    this.cols = payload.cols;
+    this.lastPayload = payload;
     this.rows = payload.rows;
     this.cursorRow = payload.cursorRow;
     this.cursorCol = payload.cursorCol;
@@ -248,9 +249,25 @@ export class GhosttyCanvas {
     const y = this.cursorRow * this.cellH;
     if (!this.cursorVisible && this.cursorBlink) return;
 
-    this.ctx.strokeStyle = getTheme(getSettings().theme).terminal.cursor ?? "#fff";
-    this.ctx.lineWidth = 1.5;
-    this.ctx.strokeRect(x + 0.5, y + 0.5, this.cellW - 1, this.cellH - 1);
+    const cursorColor = getTheme(getSettings().theme).terminal.cursor ?? "#fff";
+    const cursorAccent = getTheme(getSettings().theme).terminal.cursorAccent
+      ?? getTheme(getSettings().theme).terminal.background
+      ?? "#000";
+
+    // Filled block cursor.
+    this.ctx.fillStyle = cursorColor;
+    this.ctx.fillRect(x, y, this.cellW, this.cellH);
+
+    // Redraw the character under the cursor in the accent color.
+    if (this.lastPayload) {
+      const cell = this.lastPayload.cells.find(
+        (c) => c.row === this.cursorRow && c.col === this.cursorCol
+      );
+      if (cell && cell.ch !== " ") {
+        this.ctx.fillStyle = cursorAccent;
+        this.ctx.fillText(cell.ch, x, y + this.cellH * 0.8);
+      }
+    }
   }
 
   /** Redraw everything from our cached payload. Call on theme change. */
