@@ -43,6 +43,46 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
+/** Fonts already confirmed loaded, keyed by `size family`. */
+const loadedFonts = new Set<string>();
+
+function fontKey(family: string, size: number): string {
+  return `${size}px ${family}`;
+}
+
+/**
+ * Load the configured terminal font so xterm measures the real cell size.
+ *
+ * The FitAddon computes cols/rows from the renderer's cell dimensions. If the
+ * configured font is still loading when fit() runs, the browser measures a
+ * fallback font's metrics and the PTY gets resized to a bogus size — the
+ * shell then renders startup output at the wrong width/height and the later
+ * correction reflows the scrollback into garbage. Gate the first resize on
+ * the font actually being loaded (see `syncSize`).
+ */
+export async function ensureTerminalFont(): Promise<void> {
+  const s = getSettings();
+  const key = fontKey(s.fontFamily, s.fontSize);
+  if (loadedFonts.has(key)) return;
+  try {
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts?.load) {
+      await fonts.load(`${s.fontSize}px "${s.fontFamily}"`);
+      await fonts.ready;
+    }
+  } catch {
+    // Font API unavailable or the family failed to load — fit with whatever
+    // the browser provides rather than blocking startup.
+  }
+  loadedFonts.add(key);
+}
+
+/** Whether the configured font has been confirmed loaded (fit gating). */
+export function terminalFontReady(): boolean {
+  const s = getSettings();
+  return loadedFonts.has(fontKey(s.fontFamily, s.fontSize));
+}
+
 /** Push the current settings into a terminal's xterm options and Unicode version. */
 export function applyTerminalSettings(terminal: Terminal, settings: AppSettings): void {
   const theme = getTheme(settings.theme);
@@ -231,6 +271,23 @@ export function syncSize(
     if (!element) return false;
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
+
+    // Don't fit/resize until the configured font is loaded: fit() measures
+    // the cell with whatever font is currently active, and a fallback font's
+    // metrics would compute a bogus cols/rows, resize the PTY wrong, and
+    // garble the shell's startup output in the scrollback. Callers retry
+    // once the font is ready (see ensureTerminalFont / fonts.ready refit).
+    if (!terminalFontReady()) return false;
+
+    // Also skip until the renderer has actually measured the cell. FitAddon's
+    // proposeDimensions() returns undefined while css.cell is 0×0, which makes
+    // fit() a silent no-op — the terminal keeps its default 80×24 and we would
+    // resize the PTY to that instead of the real panel size.
+    const core = (terminal as unknown as {
+      _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } };
+    })._core;
+    const cell = core?._renderService?.dimensions?.css?.cell;
+    if (!cell || cell.width <= 0 || cell.height <= 0) return false;
 
     // Resizing reflows the scrollback; like writes, it can leave the viewport
     // (and xterm's scroll-tracking flag) off the bottom. Snap back when the

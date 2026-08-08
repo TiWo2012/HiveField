@@ -28,6 +28,7 @@ import { registerTerminalRoot } from "./file-drop";
 import {
   applyTerminalSettings,
   createTerminal,
+  ensureTerminalFont,
   isAtBottom,
   setFollowing,
   syncSize,
@@ -141,6 +142,25 @@ export function createTerminalComponent(): IContentRenderer {
     return syncSize(sessionId, fitAddon, terminal);
   }
 
+  /**
+   * Fit + pty_resize once the configured font is loaded. Fitting before the
+   * font loads measures a fallback font's cell metrics and resizes the PTY
+   * to a bogus size — the shell's startup output then renders at the wrong
+   * width/height and the later correction garbles the scrollback. Retries on
+   * the next frame if the panel is not yet laid out.
+   */
+  async function syncWhenReady(): Promise<void> {
+    await ensureTerminalFont();
+    // Re-apply so the renderer re-measures the cell with the real font.
+    if (terminal) applyTerminalSettings(terminal, getSettings());
+    // The panel may still be laying out and the renderer may not have measured
+    // its first cell yet; retry over a few frames before giving up (later
+    // onDidDimensionsChange / fonts.ready paths re-sync).
+    for (let attempt = 0; attempt < 5 && !sync(); attempt++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+  }
+
   return {
     element,
     init({ api: panelApi, containerApi, params }: GroupPanelPartInitParameters) {
@@ -216,7 +236,7 @@ export function createTerminalComponent(): IContentRenderer {
           // the first fit + pty resize until the next tick (like the fresh-
           // spawn path, which relies on the async spawn timing).
           setTimeout(() => {
-            if (!sync()) requestAnimationFrame(sync);
+            void syncWhenReady();
             // Give every restored terminal its correct cursor rendering
             // (filled only in the active pane, outlined elsewhere).
             syncTerminalCursorFocus();
@@ -418,10 +438,11 @@ export function createTerminalComponent(): IContentRenderer {
             setBaseTitle(panelApi.id, resolved.name);
           }
 
-          // First pty_resize -> backend flushes the buffered prompt. If
-          // Dockview has not completed layout yet, retry after the next frame;
-          // syncSize refuses to fit zero-sized terminals.
-          if (!sync()) requestAnimationFrame(sync);
+          // First pty_resize -> backend flushes the buffered prompt. Wait for
+          // the configured font so the fit measures the real cell size (a
+          // fallback font would resize the PTY wrong and garble the startup
+          // output in the scrollback). syncSize also refuses zero-size panes.
+          void syncWhenReady();
           // Reconcile cursor fill/outline state with the active pane instead
           // of unconditionally focusing: the session may have spawned while
           // another pane is focused, and stealing focus would leave this

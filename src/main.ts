@@ -53,6 +53,7 @@ import { addPanelWithMode, activeSessionEntry, createTerminalComponent } from ".
 import {
   applyTerminalSettings,
   applyUiTheme,
+  ensureTerminalFont,
   syncSize,
   syncTerminalCursorFocus,
 } from "./terminal";
@@ -95,6 +96,8 @@ async function init() {
   // Keep every open terminal in sync with the settings, and let the whole UI
   // use the chosen font family + theme (sidebar, tabs, settings page).
   subscribe((settings) => {
+    // Load the (possibly changed) configured font so syncSize can fit.
+    void ensureTerminalFont();
     for (const [id, entry] of sessions) {
       applyTerminalSettings(entry.terminal, settings);
       // Parked sessions live in off-screen zero-size containers; fitting
@@ -113,6 +116,25 @@ async function init() {
   });
 
   await registerGlobalListeners();
+
+  // Load the configured terminal font up front so the first fit() measures
+  // the real cell size — a fallback font's metrics would resize the PTY
+  // wrong and garble the shell's startup output in the scrollback. Also
+  // refit every terminal once the font actually lands (covers sessions that
+  // spawned before the font finished loading, and font changes in settings).
+  void ensureTerminalFont();
+  try {
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts?.ready) {
+      fonts.ready.then(() => {
+        for (const [id, entry] of sessions) {
+          if (!parkedSessions.has(id)) syncSize(id, entry.fitAddon, entry.terminal);
+        }
+      });
+    }
+  } catch {
+    // Font API unavailable — nothing to wait on.
+  }
 
   // The native File → New Window menu item broadcasts this event; only the
   // focused window acts on it (it knows its own launch directory, which it
