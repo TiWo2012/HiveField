@@ -1,6 +1,8 @@
 import { SearchAddon } from "@xterm/addon-search";
 import type { Terminal } from "@xterm/xterm";
 import { matchesKeybind } from "./keybinds";
+import { getSettings } from "./settings";
+import { getTheme } from "./themes";
 
 /**
  * A terminal that can be searched. Every session terminal loads a SearchAddon
@@ -22,17 +24,23 @@ export interface SearchContext {
 }
 
 /**
- * Catppuccin Mocha highlight colors for search matches. xterm's decoration API
- * only accepts `#RRGGBB` (no alpha), so these are the closest themed values.
+ * Search match highlight colors derived from the active theme. xterm's
+ * decoration API only accepts `#RRGGBB` (no alpha / no CSS variables), so
+ * we sample the theme's UI palette at search time. A theme change while the
+ * search bar is open re-runs the search via the settings subscriber in
+ * main.ts, which picks up the new colors.
  */
-const MATCH_DECORATIONS = {
-  matchBackground: "#45475a",
-  matchBorder: "#585b70",
-  matchOverviewRuler: "#45475a",
-  activeMatchBackground: "#89b4fa",
-  activeMatchBorder: "#89b4fa",
-  activeMatchColorOverviewRuler: "#f9e2af",
-} as const;
+function matchDecorations() {
+  const ui = getTheme(getSettings().theme).ui;
+  return {
+    matchBackground: ui.surface1,
+    matchBorder: ui.overlay0,
+    matchOverviewRuler: ui.surface1,
+    activeMatchBackground: ui.accent,
+    activeMatchBorder: ui.accent,
+    activeMatchColorOverviewRuler: ui.yellow,
+  };
+}
 
 /** Cap on simultaneously highlighted matches (the addon defaults to 1000). */
 const HIGHLIGHT_LIMIT = 2000;
@@ -72,7 +80,7 @@ function attachResultListener(addon: SearchAddon): void {
 }
 
 function searchOptions(incremental: boolean) {
-  return { caseSensitive, incremental, decorations: MATCH_DECORATIONS };
+  return { caseSensitive, incremental, decorations: matchDecorations() };
 }
 
 function runSearch(direction: "next" | "prev"): void {

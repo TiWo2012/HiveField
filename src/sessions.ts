@@ -259,6 +259,7 @@ export function createTerminalComponent(): IContentRenderer {
             // reaches the bottom (trackpad bursts: re-check a frame later).
             requestAnimationFrame(followAtBottom);
           }
+          // deltaY === 0 (momentum-scroll end) is handled by onScroll below.
         },
         { capture: true, passive: true }
       );
@@ -274,6 +275,15 @@ export function createTerminalComponent(): IContentRenderer {
         },
         { capture: true }
       );
+
+      // xterm's onScroll fires for every viewport change (wheel, keyboard,
+      // touch, and programmatic scrolls). Use it as a backstop: when the
+      // viewport lands at the bottom — including after a momentum-scroll
+      // whose final wheel event carries deltaY === 0 — re-enter follow mode
+      // so the next output chunk stays pinned.
+      terminal.onScroll(() => {
+        if (isAtBottom(terminal!)) setFollowing(terminal!, true);
+      });
 
       // Buffer of the input line currently being typed, used to title the
       // pane once the line is submitted to the agent.

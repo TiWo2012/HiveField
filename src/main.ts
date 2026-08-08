@@ -108,6 +108,8 @@ async function init() {
       `"${settings.fontFamily}", monospace`
     );
     applyUiTheme(settings);
+    // Re-apply search highlights so they pick up the new theme colors.
+    if (isSearchOpen()) rerunSearch();
   });
 
   await registerGlobalListeners();
