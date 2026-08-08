@@ -324,12 +324,10 @@ export function createTerminalComponent(): IContentRenderer {
       fitAddon = created.fitAddon;
       searchAddon = created.searchAddon;
       terminal.open(element);
-      // open() focuses xterm's hidden textarea, which would render a filled
-      // cursor even in an inactive pane. Initialize to outlined (blurred)
-      // state; syncTerminalCursorFocus() will focus the active one later.
-      terminal.blur();
       // terminal.element is only created by open(); re-apply settings so
-      // element-dependent options (font ligatures) take effect.
+      // element-dependent options (font ligatures) take effect. Do not fit
+      // here: Dockview may still report a zero-size panel, and fitting that
+      // state corrupts xterm's startup buffer with a 2x1 reflow.
       applyTerminalSettings(terminal, getSettings());
 
       // X11-style mouse conveniences: copy on select, middle-click paste.

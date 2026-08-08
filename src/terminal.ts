@@ -311,6 +311,9 @@ export function syncSize(
  */
 let previousActiveTerminal: Terminal | undefined;
 
+/** Terminals whose cursor was already pushed through a focus/blur cycle. */
+const cursorInitSet = new WeakSet<Terminal>();
+
 /**
  * Reconcile xterm's per-terminal cursor state with the app's active panel so
  * the cursor renders filled only in the focused pane and outlined everywhere
@@ -321,20 +324,28 @@ let previousActiveTerminal: Terminal | undefined;
  * its workspace is parked — so a restored terminal can stay "focused" forever
  * and keep painting a filled cursor in an inactive pane.
  *
- * Each terminal is initialized to the outlined (blurred) state at creation
- * time (see terminal.open in sessions.ts), so this function only needs to
- * blur the previously-active terminal and focus the new one — O(1) regardless
- * of panel count.
+ * Every terminal gets a one-time focus+blur init cycle the first time this
+ * function is called for it. On WebKitGTK the DOM renderer requires this
+ * cycle to fully wire its viewport and color state — skipping it leaves rows
+ * with default (black) foreground and bleed-through from the viewport bg.
  */
 export function syncTerminalCursorFocus(): void {
   const api = getApi();
   const activeId = api?.activePanel?.id;
   let activeTerm: Terminal | undefined;
 
-  if (activeId) {
-    const sessionId = panelToSession.get(activeId);
-    if (sessionId !== undefined) {
-      activeTerm = sessions.get(sessionId)?.terminal;
+  // One-time focus+blur init for terminals that haven't had it yet.
+  for (const panel of api.panels) {
+    const sid = panelToSession.get(panel.id);
+    if (sid === undefined) continue;
+    const entry = sessions.get(sid);
+    if (!entry) continue;
+    const t = entry.terminal;
+    if (panel.id === activeId) activeTerm = t;
+    if (!cursorInitSet.has(t)) {
+      cursorInitSet.add(t);
+      t.focus();
+      t.blur();
     }
   }
 
