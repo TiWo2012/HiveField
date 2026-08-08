@@ -304,8 +304,12 @@ export function syncSize(
   }
 }
 
-/** Terminals whose cursor was already pushed through a focus/blur cycle. */
-export const cursorInitialized = new WeakSet<Terminal>();
+/**
+ * The terminal that was last focused by syncTerminalCursorFocus(). Tracked so
+ * we only blur the previously-active terminal instead of touching every panel
+ * on each active-panel change.
+ */
+let previousActiveTerminal: Terminal | undefined;
 
 /**
  * Reconcile xterm's per-terminal cursor state with the app's active panel so
@@ -315,39 +319,37 @@ export const cursorInitialized = new WeakSet<Terminal>();
  * xterm picks block vs. outline from the focus state of its hidden textarea,
  * and WebKitGTK never fires a blur when a focused terminal is detached while
  * its workspace is parked — so a restored terminal can stay "focused" forever
- * and keep painting a filled cursor in an inactive pane. Explicitly focusing
- * the active panel's terminal and blurring the rest keeps the cursor style
- * honest after parking/restore races. Blurring an already-unfocused textarea
- * is a no-op, so already-initialized terminals never get spurious focus
- * in/out reports injected into their shells.
+ * and keep painting a filled cursor in an inactive pane.
+ *
+ * Each terminal is initialized to the outlined (blurred) state at creation
+ * time (see terminal.open in sessions.ts), so this function only needs to
+ * blur the previously-active terminal and focus the new one — O(1) regardless
+ * of panel count.
  */
 export function syncTerminalCursorFocus(): void {
   const api = getApi();
   const activeId = api?.activePanel?.id;
   let activeTerm: Terminal | undefined;
-  // Neutralize every non-active terminal first (one-time focus+blur cycle for
-  // never-focused panes so their cursor initializes to the outline style).
-  for (const panel of api.panels) {
-    const sessionId = panelToSession.get(panel.id);
-    if (sessionId === undefined) continue;
-    const entry = sessions.get(sessionId);
-    if (!entry) continue;
-    const term = entry.terminal;
-    if (panel.id === activeId) {
-      activeTerm = term;
-      continue;
-    }
-    if (!cursorInitialized.has(term)) {
-      cursorInitialized.add(term);
-      term.focus();
-      term.blur();
-    } else {
-      term.blur();
+
+  if (activeId) {
+    const sessionId = panelToSession.get(activeId);
+    if (sessionId !== undefined) {
+      activeTerm = sessions.get(sessionId)?.terminal;
     }
   }
-  // Focus the active terminal last so it wins any focus race in the burst.
+
+  // No change — nothing to do.
+  if (previousActiveTerminal === activeTerm) return;
+
+  // Blur the previously active terminal so its cursor goes to outline.
+  if (previousActiveTerminal) {
+    previousActiveTerminal.blur();
+  }
+
+  // Focus the new active terminal so its cursor renders filled.
   if (activeTerm) {
     activeTerm.focus();
-    cursorInitialized.add(activeTerm);
   }
+
+  previousActiveTerminal = activeTerm;
 }
