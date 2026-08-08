@@ -14,7 +14,7 @@ import {
   allAgents,
   type CustomAgentDef,
 } from "./agents";
-import { getSettings } from "./settings";
+import { getSettings, subscribe } from "./settings";
 
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */
 export type Mode = string;
@@ -27,13 +27,26 @@ export function customs(): readonly CustomAgentDef[] {
   return getSettings().customAgents;
 }
 
+type SessionModeEntry = { mode: Mode; label: string; icon: string };
+
+let _sessionModesCache: readonly SessionModeEntry[] | null = null;
+
+// Invalidate the cache whenever settings change.
+subscribe(() => {
+  _sessionModesCache = null;
+});
+
 /**
  * The session modes currently offered as new-session sources (sidebar, context
  * menu, palette): the agents enabled in the `visibleAgents` setting (all of
  * them by default, built-in and custom), plus the raw shell which is always
  * offered.
+ *
+ * The result is cached between settings changes so repeated calls (palette,
+ * menus, sidebar, etc.) are free.
  */
-export function sessionModes(): ReadonlyArray<{ mode: Mode; label: string; icon: string }> {
+export function sessionModes(): ReadonlyArray<SessionModeEntry> {
+  if (_sessionModesCache) return _sessionModesCache;
   const visible = new Set(getSettings().visibleAgents);
   const agents = allAgents(customs())
     .filter((a) => visible.has(a.id))
@@ -42,5 +55,6 @@ export function sessionModes(): ReadonlyArray<{ mode: Mode; label: string; icon:
       label: a.label,
       icon: a.icon,
     }));
-  return [...agents, { mode: RAW_MODE, label: "raw term", icon: "$" }];
+  _sessionModesCache = [...agents, { mode: RAW_MODE, label: "raw term", icon: "$" }];
+  return _sessionModesCache;
 }
