@@ -75,26 +75,20 @@ impl Default for GhosttyState {
 }
 
 /// Pack a Color into a u32 for the frontend.
-///     bits  0-7: blue
-///     bits  8-15: green
-///     bits 16-23: red
-///     bit 24: 0 = ANSI/default, 1 = RGB
-/// Shortcut: we only pass RGB to the frontend; the frontend applies the
-/// theme mapping.  For ANSI colors we send the theme-resolved RGB (the
-/// backend doesn't know the active theme, so we tag the ANSI index and let
-/// the frontend resolve it).
+///      0 → default (use theme foreground/background)
+///  bit24=1 → explicit color
+///      bit25=0, bit24=1 → RGB in bits 0-23, or indexed in bits 0-7
+///      bit25=1, bit24=1 → ANSI 16-color index in bits 0-3
 pub fn color_u32(c: Option<Color>) -> u32 {
     match c {
-        None => 0xFF_000000, // default: tagged + white
+        None => 0, // default
         Some(Color::Rgb { r, g, b }) => {
             0x100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
         }
         Some(Color::Indexed(idx)) => {
-            // 256-color palette: tag (bit24=1) + index in low 8 bits.
             0x100_0000 | (idx as u32)
         }
         Some(Color::Ansi(ac)) => {
-            // 16 ANSI colors: tag as special (bit24=1, bit25=1 for ANSI).
             let idx = match ac {
                 vtcode_ghostty_core::color::AnsiColor::Black => 0,
                 vtcode_ghostty_core::color::AnsiColor::Red => 1,
@@ -113,7 +107,6 @@ pub fn color_u32(c: Option<Color>) -> u32 {
                 vtcode_ghostty_core::color::AnsiColor::BrightCyan => 14,
                 vtcode_ghostty_core::color::AnsiColor::BrightWhite => 15,
             };
-            // bit24=1, bit25=1 (ANSI flag), low 4 bits = index
             0x300_0000 | (idx as u32)
         }
     }

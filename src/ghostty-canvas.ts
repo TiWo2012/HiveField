@@ -106,9 +106,18 @@ function cellColors(
   theme: ReturnType<typeof getTheme>["terminal"],
   attrs: { bold: boolean; inverse: boolean }
 ): { fgStyle: string; bgStyle: string } {
-  let f = fg;
-  let b = bg;
-  if (attrs.inverse) [f, b] = [b, f];
+  // When inverse is set, swap the resolved colors — including defaults.
+  let f = fg, b = bg;
+  if (attrs.inverse) {
+    // Swap default sentinels (0 → default) to produce correct inverse.
+    if (f === 0 && b === 0) {
+      return {
+        fgStyle: theme.foreground ?? "#fff",
+        bgStyle: theme.background ?? "#000",
+      };
+    }
+    [f, b] = [b, f];
+  }
   let fgColor = resolveColor(f, theme, false);
   let bgColor = resolveColor(b, theme, true);
   return { fgStyle: fgColor, bgStyle: bgColor };
@@ -134,9 +143,9 @@ export class GhosttyCanvas {
   constructor() {
     this.element = document.createElement("div");
     this.element.className = "ghostty-canvas-container";
-    this.element.style.cssText = "width:100%;height:100%;overflow:hidden;position:relative;";
+    this.element.style.cssText = "width:100%;height:100%;overflow:hidden;position:relative;background:inherit;";
     this.canvas = document.createElement("canvas");
-    this.canvas.style.cssText = "position:absolute;top:0;left:0;";
+    this.canvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;";
     this.element.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
     this.setupBlink();
@@ -182,20 +191,18 @@ export class GhosttyCanvas {
     this.cursorCol = payload.cursorCol;
     this.cursorVisible = true; // reset blink phase on new data
 
-    const w = this.cols * this.cellW;
-    const h = this.rows * this.cellH;
     const dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.ceil(w * dpr);
-    this.canvas.height = Math.ceil(h * dpr);
-    this.canvas.style.width = `${w}px`;
-    this.canvas.style.height = `${h}px`;
+    const cw = this.element.clientWidth;
+    const ch = this.element.clientHeight;
+    this.canvas.width = Math.ceil(cw * dpr);
+    this.canvas.height = Math.ceil(ch * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const theme = getTheme(getSettings().theme).terminal;
 
-    // Clear background
+    // Clear background — fill entire canvas.
     this.ctx.fillStyle = theme.background ?? "#000";
-    this.ctx.fillRect(0, 0, w, h);
+    this.ctx.fillRect(0, 0, cw, ch);
 
     // Draw cells
     for (const c of payload.cells) {
