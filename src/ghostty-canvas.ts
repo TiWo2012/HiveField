@@ -146,8 +146,11 @@ export class GhosttyCanvas {
     this.element.style.cssText = "width:100%;height:100%;overflow:hidden;position:relative;background:inherit;";
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;";
+    this.canvas.tabIndex = 0; // canvas must be focusable for keyboard input
     this.element.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
+    // Always listen for keyboard; only forward when session is active.
+    this.canvas.addEventListener("keydown", this._onKeyDown);
     this.setupBlink();
     this.applyFont();
   }
@@ -279,21 +282,21 @@ export class GhosttyCanvas {
 
   focus() {
     this.canvas.focus();
-    // Listen for keyboard events on the canvas.
-    this.canvas.addEventListener("keydown", this._onKeyDown);
   }
 
   blur() {
-    this.canvas.removeEventListener("keydown", this._onKeyDown);
+    // Don't remove the listener — canvas stays ready for keyboard.
   }
 
   dispose() {
     if (this.blinkTimer) clearInterval(this.blinkTimer);
-    this.blur();
+    this.canvas.removeEventListener("keydown", this._onKeyDown);
     this.element.remove();
   }
 
   private _onKeyDown = (e: KeyboardEvent) => {
+    // Only forward keyboard input when this canvas owns focus and has a session.
+    if (document.activeElement !== this.canvas || this.sessionId === undefined) return;
     // Simple key-to-char mapping for common keys.
     // Full VT input handling would need a proper keyboard handler
     // (the ghostty VT backend would process input and return responses).
