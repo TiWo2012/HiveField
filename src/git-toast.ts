@@ -42,7 +42,6 @@ async function pollGitDiffReport(): Promise<void> {
     summary = await invoke<GitDiffSummary | null>("git_diff_report");
   } catch {
     // Not a git repo / backend unavailable: nothing to report.
-    return;
   }
   if (summary && summary.changed > 0) showGitDiffToast(summary);
   gitReportTimer = setTimeout(() => void pollGitDiffReport(), GIT_REPORT_POLL_MS);
