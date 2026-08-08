@@ -189,6 +189,8 @@ fn pty_spawn(
     mode: Option<String>,
     cwd: Option<String>,
     autorun: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
 ) -> Result<u64, String> {
     let session_id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let mode = mode.unwrap_or_else(|| "opencode".to_string());
@@ -198,7 +200,7 @@ fn pty_spawn(
         .map(std::path::PathBuf::from)
         .or_else(|| windows::window_cwd(&window));
     let window_label = window.label().to_string();
-    pty::spawn(&app, session_id, &mode, cwd, autorun, Some(window_label))
+    pty::spawn(&app, session_id, &mode, cwd, autorun, cols, rows, Some(window_label))
         .map_err(|e| e.to_string())?;
     Ok(session_id)
 }

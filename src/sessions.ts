@@ -392,10 +392,18 @@ export function createTerminalComponent(): IContentRenderer {
             } else if (command !== undefined && command !== mode) {
               autorun = command;
             }
+            // Pass the terminal's current viewport dimensions so the PTY
+            // starts close to the right size — the first resize (after the
+            // font loads) corrects the rest. Only send when xterm has laid
+            // out real columns (cols > 2 rules out the 2×1 minimum).
+            const spawnCols = terminal && terminal.cols > 2 ? terminal.cols : undefined;
+            const spawnRows = terminal && terminal.rows > 1 ? terminal.rows : undefined;
             id = await invoke<number>("pty_spawn", {
               mode,
               ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
               ...(autorun !== undefined ? { autorun } : {}),
+              ...(spawnCols !== undefined ? { cols: spawnCols } : {}),
+              ...(spawnRows !== undefined ? { rows: spawnRows } : {}),
             });
           } catch (err) {
             console.error("failed to spawn session", err);

@@ -177,6 +177,12 @@ impl Utf8StreamDecoder {
 /// fallback chain applies. This lets a session open inside a specific git
 /// worktree (or any other directory) instead of always sharing the launch dir.
 ///
+/// `cols` and `rows` set the initial PTY size. When `None` (the frontend
+/// hasn't laid out the terminal yet), a reasonable default is used; the
+/// frontend sends a `pty_resize` once the real viewport dimensions are known,
+/// so the initial size only needs to be close enough to avoid reflowing the
+/// shell's startup output.
+///
 /// `window_label` records which window spawned this session (its label), so
 /// closing that window can tear the session down with it.
 pub fn spawn<R: Runtime>(
@@ -185,6 +191,8 @@ pub fn spawn<R: Runtime>(
     mode: &str,
     start_dir: Option<PathBuf>,
     autorun_override: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
     window_label: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let shell = if cfg!(windows) {
@@ -195,8 +203,8 @@ pub fn spawn<R: Runtime>(
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
-        rows: INITIAL_PTY_ROWS,
-        cols: INITIAL_PTY_COLS,
+        rows: rows.unwrap_or(INITIAL_PTY_ROWS),
+        cols: cols.unwrap_or(INITIAL_PTY_COLS),
         pixel_width: 0,
         pixel_height: 0,
     })?;
