@@ -328,6 +328,10 @@ export class GhosttyCanvas {
     // Canvas renderer doesn't have scrollback — always at bottom.
     return true;
   }
+
+  /** Selection stub (not yet implemented). */
+  getSelection(): string { return ""; }
+  hasSelection(): boolean { return false; }
 }
 
 /** Global listener for ghostty://cells events, dispatches to the right canvas. */

@@ -6,9 +6,6 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Terminal } from "@xterm/xterm";
-import type { FitAddon } from "@xterm/addon-fit";
-import type { SearchAddon } from "@xterm/addon-search";
 import type {
   AddPanelPositionOptions,
   GroupNavigationDirection,
@@ -26,16 +23,6 @@ import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
 import { registerTerminalRoot } from "./file-drop";
 import {
-  applyTerminalSettings,
-  createTerminal,
-  ensureTerminalFont,
-  isAtBottom,
-  setFollowing,
-  syncSize,
-  syncTerminalCursorFocus,
-  writeToTerminal,
-} from "./terminal";
-import {
   clearIdle,
   clearIndicator,
   clearNotify,
@@ -43,7 +30,6 @@ import {
   renderTitle,
   setBaseTitle,
 } from "./titles";
-import { trackInputLine, sanitizeTitle, inputLineToTitle, type InputLineState } from "./input-line";
 import {
   GhosttyCanvas,
   registerGhosttyCanvas,
@@ -60,7 +46,7 @@ import {
   refreshSidebarRunning,
   scheduleWorkspaceRefresh,
   sessions,
-  terminalSessions,
+  canvasSessions,
   nextPanelId,
   type SessionEntry,
 } from "./state";
@@ -136,29 +122,14 @@ export function createTerminalComponent(): IContentRenderer {
   const element = document.createElement("div");
   element.classList.add("terminal-panel");
 
-  // Populated when the async spawn resolves; sync() no-ops until then.
+  // Populated when the async spawn resolves.
   let sessionId: number | undefined;
-  let terminal: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
-  let searchAddon: SearchAddon | null = null;
+  let canvas: GhosttyCanvas | null = null;
 
-  function sync(): boolean {
-    if (sessionId === undefined || !terminal || !fitAddon) return false;
-    return syncSize(sessionId, fitAddon, terminal);
-  }
-
-  /**
-   * Fit + pty_resize once the configured font is loaded. Fitting before the
-   * font loads measures a fallback font's cell metrics and resizes the PTY
-   * to a bogus size — the shell's startup output then renders at the wrong
-   * width/height and the later correction garbles the scrollback. Retries on
-   * the next frame if the panel is not yet laid out.
-   */
-  async function syncWhenReady(): Promise<void> {
-    await ensureTerminalFont();
-    if (terminal) applyTerminalSettings(terminal, getSettings());
-    // syncSize still gates on terminalFontReady; by now it should pass.
-    sync();
+  function resize() {
+    if (sessionId === undefined || !canvas) return;
+    canvas.fit();
+    canvas.resizePty(sessionId);
   }
 
   return {
@@ -175,17 +146,14 @@ export function createTerminalComponent(): IContentRenderer {
       const userTitle =
         typeof params.userTitle === "string" ? params.userTitle : undefined;
 
-      // Track this panel's tab title (OSC / input-line / user override).
       const st = ensurePanelStatus(panelApi.id, panelApi.title ?? "", userTitle);
-      // Let right-click handlers map a terminal back to its panel cheaply.
       element.dataset.panelId = panelApi.id;
 
-      // A restored layout may carry the sessionId of a session parked in the
-      // background when its workspace was left. Reuse that session: its PTY
-      // kept running and its terminal (scrollback and all) was kept alive
-      // off-screen — just move the element back into this panel. Input
-      // forwarding, OSC titles and the resize handlers were wired when the
-      // terminal was first created, so nothing else needs redoing.
+      canvas = new GhosttyCanvas();
+      element.appendChild(canvas.element);
+      canvas.applyFont(getSettings());
+
+      // Restore a parked session.
       const parked =
         typeof params.sessionId === "number"
           ? parkedSessions.get(params.sessionId)
@@ -194,206 +162,57 @@ export function createTerminalComponent(): IContentRenderer {
         const parkedEntry = sessions.get(params.sessionId as number);
         if (parkedEntry) {
           const parkedKey = parkedKeyFor(params.sessionId as number);
-          // Move the parked title/notification status back under the panel's
-          // own id (it was re-keyed when the session was parked, so a live
-          // panel could not collide with it). Pending timers are re-armed by
-          // the next output event.
           const parkedSt = panelStatus.get(parkedKey);
           if (parkedSt) {
             panelStatus.delete(parkedKey);
             panelStatus.set(panelApi.id, parkedSt);
             clearIdle(parkedKey);
             clearNotify(parkedKey);
-            // Paint the tab with the status kept across the park (the
-            // serialized title may carry a stale indicator prefix).
             renderTitle(panelApi.id);
           }
           parkedSessions.delete(params.sessionId as number);
           sessionId = params.sessionId as number;
-          terminal = parkedEntry.terminal;
-          terminalSessions.set(terminal, sessionId);
-          fitAddon = parkedEntry.fitAddon;
-          searchAddon = parkedEntry.searchAddon;
-          element.appendChild(parked.element);
-          // Re-register ghostty canvas with the restored session.
-          if (parkedEntry.ghostty) {
-            element.appendChild(parkedEntry.ghostty.element);
-            registerGhosttyCanvas(sessionId!, parkedEntry.ghostty);
-            parkedEntry.ghostty.fit();
-          }
+          canvas = parkedEntry.canvas;
+          canvasSessions.set(canvas, sessionId);
+          element.appendChild(canvas.element);
+          registerGhosttyCanvas(sessionId, canvas);
           panelToSession.set(panelApi.id, sessionId);
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
-          // The panel registers into its group only after this content
-          // component is initialized, so backfill the reference next tick
-          // (same as the fresh-spawn path below).
           setTimeout(() => {
             const panel = containerApi.getPanel(panelApi.id);
             if (panel && sessions.has(sessionId!)) parkedEntry.panel = panel;
           }, 0);
-          panelApi.onDidDimensionsChange(() => sync());
+          panelApi.onDidDimensionsChange(() => resize());
           panelApi.onDidActiveChange(({ isActive }) => {
             if (isActive) {
-              terminal?.focus();
+              canvas?.focus();
               clearIndicator(panelApi.id);
             }
           });
-          // The panel only gets its real size after it is laid out, so defer
-          // the first fit + pty resize until the next tick (like the fresh-
-          // spawn path, which relies on the async spawn timing).
-          setTimeout(() => {
-            void syncWhenReady();
-            // Give every restored terminal its correct cursor rendering
-            // (filled only in the active pane, outlined elsewhere).
-            syncTerminalCursorFocus();
-          }, 0);
+          setTimeout(() => resize(), 0);
           return;
         }
-        // The parked session died in the background (exit event): fall
-        // through and spawn a fresh one, like any other restored layout.
         parkedSessions.delete(params.sessionId as number);
       }
 
-      const created = createTerminal();
-      terminal = created.terminal;
-      fitAddon = created.fitAddon;
-      searchAddon = created.searchAddon;
-      terminal.open(element);
-      // terminal.element is only created by open(); re-apply settings so
-      // element-dependent options (font ligatures) take effect. Do not fit
-      // here: Dockview may still report a zero-size panel, and fitting that
-      // state corrupts xterm's startup buffer with a 2x1 reflow.
-      applyTerminalSettings(terminal, getSettings());
-
-      // OS file drops over this pane write the quoted path(s) into its PTY.
-      registerTerminalRoot(element, () => sessionId);
-
-      // Track the user's scroll intent so output stays pinned unless the user
-      // explicitly scrolled up to read (see `followState`). xterm stopPropagation's
-      // wheel/key events at the terminal element, so listen in the capture phase
-      // on this panel root, which runs before xterm's own handlers.
-      const followAtBottom = () => {
-        if (isAtBottom(terminal!)) setFollowing(terminal!, true);
-      };
-      element.addEventListener(
-        "wheel",
-        (ev) => {
-          if (!terminal?.element?.contains(ev.target as Node)) return;
-          if (ev.deltaY < 0) {
-            // Scrolling up = reading scrollback: leave follow mode.
-            setFollowing(terminal, false);
-          } else if (ev.deltaY > 0) {
-            // Scrolling down re-enters follow mode once the viewport actually
-            // reaches the bottom (trackpad bursts: re-check a frame later).
-            requestAnimationFrame(followAtBottom);
-          }
-          // deltaY === 0 (momentum-scroll end) is handled by onScroll below.
-        },
-        { capture: true, passive: true }
-      );
-      element.addEventListener(
-        "keydown",
-        (ev) => {
-          if (!terminal?.element?.contains(ev.target as Node)) return;
-          if (ev.key === "PageUp") {
-            setFollowing(terminal, false);
-          } else if (ev.key === "PageDown" || ev.key === "End") {
-            requestAnimationFrame(followAtBottom);
-          }
-        },
-        { capture: true }
-      );
-
-      // xterm's onScroll fires for every viewport change (wheel, keyboard,
-      // touch, and programmatic scrolls). Use it as a backstop: when the
-      // viewport lands at the bottom — including after a momentum-scroll
-      // whose final wheel event carries deltaY === 0 — re-enter follow mode
-      // so the next output chunk stays pinned.
-      terminal.onScroll(() => {
-        if (isAtBottom(terminal!)) setFollowing(terminal!, true);
-      });
-
-      // Buffer of the input line currently being typed, used to title the
-      // pane once the line is submitted to the agent.
-      let inputState: InputLineState = { line: "", escape: 0 };
-
-      // Once a program reports an OSC 0/2 title it owns this pane's tab, so
-      // input-line titles no longer override it.
-      let oscTitleSeen = false;
-
-      // xterm parses OSC 0/1/2 and exposes the parsed title here; let the
-      // running program's title win over the derived input-line one — but a
-      // user-renamed tab is never overridden.
-      //
-      // Resolves the panel id and status at fire time so the handler stays
-      // correct after a session is parked and restored into a different panel
-      // (the captured `panelApi.id` would point at the original panel, whose
-      // status was re-keyed).
-      terminal.onTitleChange((title) => {
-        const sanitized = sanitizeTitle(title);
-        if (!sanitized) return;
-        oscTitleSeen = true;
-        const sid = sessionId;
-        const livePanelId = sid !== undefined ? sessions.get(sid)?.panel?.id : panelApi.id;
-        if (!livePanelId) return;
-        const liveSt = panelStatus.get(livePanelId);
-        if (liveSt?.userTitle) return;
-        setBaseTitle(livePanelId, sanitized);
-      });
-
-      // Register input forwarding immediately so no early keystrokes are lost;
-      // it no-ops until the session id is known.
-      terminal.onData((data) => {
-        if (sessionId !== undefined) {
-          const sid = sessionId;
-          // Typing happens at the prompt at the bottom of the buffer: the
-          // user wants output to follow again (also covers pastes).
-          setFollowing(terminal!, true);
-          // Track the line being typed; when it is submitted (Enter) it
-          // becomes this pane's title before being forwarded to the agent.
-          inputState = trackInputLine(inputState, data, (line) => {
-            if (isAgentModeAll(mode, customs()) && !oscTitleSeen) {
-              const livePanelId = sessions.get(sid)?.panel?.id ?? panelApi.id;
-              if (!livePanelId) return;
-              const liveSt = panelStatus.get(livePanelId);
-              if (liveSt?.userTitle) return;
-              const title = inputLineToTitle(line);
-              if (title) setBaseTitle(livePanelId, title);
-            }
-          });
-          invoke("pty_write", { sessionId: sid, data }).catch(() => {});
-        }
-      });
-
-      panelApi.onDidDimensionsChange(() => sync());
+      // Fresh session spawn.
+      panelApi.onDidDimensionsChange(() => resize());
       panelApi.onDidActiveChange(({ isActive }) => {
         if (isActive) {
-          terminal?.focus();
+          canvas?.focus();
           clearIndicator(panelApi.id);
         }
       });
 
-      // Resolve the session: agent sessions auto-create a throwaway worktree
-      // (unless restored with an existing cwd), then ask the backend for a
-      // fresh PTY in the requested mode and directory, and wire the terminal
-      // to it once we know its id.
       void resolveWorktree(mode, cwd, requestedName)
         .then(async (resolved) => {
           let id: number;
           try {
-            // Auto-run the agent (except raw). Pass the exact command only
-            // when the CLI binary differs from the mode id. The Editor agent
-            // resolves $EDITOR through the backend so a profile-set value
-            // (and a per-platform fallback) is honored; custom agents pass
-            // their full command line (args allowed).
             const command = modeCommandAll(mode, customs());
             let autorun: string | undefined;
             if (command === EDITOR_CMD) {
-              try {
-                autorun = await invoke<string>("editor_command");
-              } catch {
-                autorun = "vi";
-              }
+              try { autorun = await invoke<string>("editor_command"); } catch { autorun = "vi"; }
             } else if (command !== undefined && command !== mode) {
               autorun = command;
             }
@@ -407,67 +226,39 @@ export function createTerminalComponent(): IContentRenderer {
             return;
           }
           sessionId = id;
-          terminalSessions.set(terminal!, id);
+          if (canvas) {
+            canvasSessions.set(canvas, id);
+            registerGhosttyCanvas(id, canvas);
+          }
           const entry: SessionEntry = {
             mode,
-            terminal: terminal!,
-            fitAddon: fitAddon!,
-            searchAddon: searchAddon!,
+            canvas: canvas!,
             cwd: resolved.cwd,
-            // Only auto-created throwaway worktrees are force-deleted on close.
             ...(resolved.created ? { worktreePath: resolved.cwd } : {}),
           };
           sessions.set(id, entry);
           panelToSession.set(panelApi.id, id);
-          // Persist the sessionId in the panel params so the saved workspace
-          // layout can re-attach this session (instead of spawning a new one)
-          // when the workspace is restored while the session is still alive.
           panelApi.updateParameters({ sessionId: id });
-
-          // Create ghostty canvas renderer alongside xterm.
-          const gCanvas = new GhosttyCanvas();
-          element.appendChild(gCanvas.element);
-          registerGhosttyCanvas(id, gCanvas);
-          entry.ghostty = gCanvas;
-          gCanvas.fit();
-          gCanvas.resizePty(id);
 
           refreshSidebarRunning();
           scheduleWorkspaceRefresh();
 
-          const pending = pendingOutputs.get(id);
-          if (pending) {
-            for (const chunk of pending) terminal && writeToTerminal(terminal, chunk);
-            pendingOutputs.delete(id);
-          }
-
-          // The panel is registered into its group only after this content
-          // component is initialized, so backfill the reference next tick.
           setTimeout(() => {
             const panel = containerApi.getPanel(panelApi.id);
             if (panel && sessions.has(id)) entry.panel = panel;
           }, 0);
 
-          // A fresh agent session's tab takes the worktree's codename.
-          if (resolved.name && !st.userTitle && !oscTitleSeen) {
+          if (resolved.name && !st.userTitle) {
             setBaseTitle(panelApi.id, resolved.name);
           }
 
-          // First pty_resize -> backend flushes the buffered prompt. Wait for
-          // the configured font so the fit measures the real cell size (a
-          // fallback font would resize the PTY wrong and garble the startup
-          // output in the scrollback). syncSize also refuses zero-size panes.
-          void syncWhenReady();
-          // Reconcile cursor fill/outline state with the active pane instead
-          // of unconditionally focusing: the session may have spawned while
-          // another pane is focused, and stealing focus would leave this
-          // terminal's cursor filled in an inactive pane.
-          syncTerminalCursorFocus();
+          // First resize → pty_resize flushes the buffered output.
+          resize();
         })
         .catch((err) => console.error("failed to spawn session", err));
     },
     onShow() {
-      sync();
+      resize();
     },
   };
 }
@@ -618,7 +409,7 @@ export function killParkedSession(sessionId: number): void {
         force: true,
       }).catch((err) => console.error("failed to remove session worktree", err));
     }
-    entry.terminal.dispose();
+    entry.canvas.dispose();
   }
   const parked = parkedSessions.get(sessionId);
   sessions.delete(sessionId);

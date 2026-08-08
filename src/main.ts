@@ -52,11 +52,8 @@ import { scheduleGitDiffReport } from "./git-toast";
 import { openNewWindow } from "./windows";
 import { addPanelWithMode, activeSessionEntry, createTerminalComponent } from "./sessions";
 import {
-  applyTerminalSettings,
   applyUiTheme,
   ensureTerminalFont,
-  syncSize,
-  syncTerminalCursorFocus,
 } from "./terminal";
 import { clearIndicator, panelForTabElement, renamePanel } from "./titles";
 import {
@@ -97,15 +94,10 @@ async function init() {
   // Keep every open terminal in sync with the settings, and let the whole UI
   // use the chosen font family + theme (sidebar, tabs, settings page).
   subscribe((settings) => {
-    // Load the (possibly changed) configured font so syncSize can fit.
+    // Load the (possibly changed) configured font.
     void ensureTerminalFont();
     for (const [id, entry] of sessions) {
-      applyTerminalSettings(entry.terminal, settings);
-      // Parked sessions live in off-screen zero-size containers; fitting
-      // them would resize the PTY to garbage dimensions (2 cols × 1 row),
-      // corrupting running processes. Skip them — they'll be resized when
-      // their workspace is restored and their element is laid out again.
-      if (!parkedSessions.has(id)) syncSize(id, entry.fitAddon, entry.terminal);
+      entry.canvas.applyFont(settings);
     }
     document.documentElement.style.setProperty(
       "--hivefield-font",
@@ -125,18 +117,6 @@ async function init() {
   // refit every terminal once the font actually lands (covers sessions that
   // spawned before the font finished loading, and font changes in settings).
   void ensureTerminalFont();
-  try {
-    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
-    if (fonts?.ready) {
-      fonts.ready.then(() => {
-        for (const [id, entry] of sessions) {
-          if (!parkedSessions.has(id)) syncSize(id, entry.fitAddon, entry.terminal);
-        }
-      });
-    }
-  } catch {
-    // Font API unavailable — nothing to wait on.
-  }
 
   // The native File → New Window menu item broadcasts this event; only the
   // focused window acts on it (it knows its own launch directory, which it
@@ -234,7 +214,7 @@ async function init() {
             force: true,
           }).catch((err) => console.error("failed to remove session worktree", err));
         }
-        entry.terminal.dispose();
+        entry.canvas.element.remove();
         sessions.delete(sessionId);
         discardSession(sessionId);
         pendingOutputs.delete(sessionId);
@@ -270,7 +250,7 @@ async function init() {
   // Command palette (Ctrl+Shift+P): fuzzy finder over panes and actions.
   initPalette({
     getItems: buildPaletteItems,
-    onClose: () => activeSessionEntry()?.terminal.focus(),
+    onClose: () => activeSessionEntry()?.canvas.focus(),
     toggleKeybind: () => getSettings().keybinds.palette,
   });
 
@@ -287,10 +267,6 @@ async function init() {
   // clear any activity/completion indicator on the newly focused tab.
   getApi().onDidActivePanelChange(() => {
     if (isSearchOpen()) rerunSearch();
-    refreshSidebarRunning();
-    const panel = getApi().activePanel;
-    if (panel) clearIndicator(panel.id);
-    syncTerminalCursorFocus();
   });
 
   // Double-click a tab to rename it.
@@ -357,9 +333,6 @@ async function init() {
   async function continueFromSplash(dropPath?: string): Promise<void> {
     splash.hide();
     const restored = await resumeSavedWorkspace();
-    // Reconcile cursor fill/outline state with the active pane once restored
-    // (or fresh) sessions are attached.
-    syncTerminalCursorFocus();
     if (dropPath) {
       if (restored) {
         // The drop happened while the splash deferred the resume — land the

@@ -12,9 +12,6 @@
  * flag live here too (assigned once at init, read everywhere).
  */
 
-import type { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { SearchAddon } from "@xterm/addon-search";
 import type { DockviewApi, IDockviewPanel } from "dockview";
 import type { GhosttyCanvas } from "./ghostty-canvas";
 
@@ -24,9 +21,8 @@ export type Mode = string;
 export interface SessionEntry {
   /** What this session auto-runs: a coding agent (e.g. "codex") or "raw" shell. */
   mode: Mode;
-  terminal: Terminal;
-  fitAddon: FitAddon;
-  searchAddon: SearchAddon;
+  /** Ghostty canvas renderer for this session. */
+  canvas: GhosttyCanvas;
   panel?: IDockviewPanel;
   /** Directory the session's shell was started in, when it wasn't the launch dir. */
   cwd?: string;
@@ -45,7 +41,7 @@ export interface SessionEntry {
 export interface ParkedSession {
   /** The workspace slot this session belongs to (to jump back to it). */
   slot: number;
-  /** The terminal's content element, held off-screen while parked. */
+  /** The canvas element, held off-screen while parked. */
   element: HTMLElement;
 }
 
@@ -122,13 +118,22 @@ export function isDiscardedSession(sessionId: number): boolean {
 }
 
 /**
+ * Canvas → sessionId. Set when a PTY attaches to a canvas (both the
+ * fresh-spawn and the parked-restore paths), so a bell can resolve the
+ * ringing session's current panel/title at fire time instead of capturing a
+ * stale panel id in the closure (parked canvases are re-attached to new
+ * panels across workspace switches).
+ */
+export const canvasSessions = new WeakMap<GhosttyCanvas, number>();
+
+/**
  * Terminal → sessionId. Set when a PTY attaches to a terminal (both the
  * fresh-spawn and the parked-restore paths), so a bell can resolve the
  * ringing session's current panel/title at fire time instead of capturing a
  * stale panel id in the `onBell` closure (parked terminals are re-attached
  * to new panels across workspace switches).
  */
-export const terminalSessions = new WeakMap<Terminal, number>();
+export const terminalSessions = new WeakMap<GhosttyCanvas, number>();
 
 /** Whether the OS window currently has focus (false while the user is elsewhere). */
 let windowFocused = true;

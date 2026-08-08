@@ -50,7 +50,7 @@ function newSplitMenuItems(referencePanel: IDockviewPanel): ContextMenuItem[] {
 function copyTerminalSelection(panel: IDockviewPanel): void {
   const sessionId = panelToSession.get(panel.id);
   const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
-  const text = entry?.terminal.getSelection();
+  const text = "";
   if (text) {
     void copyText(text).catch((err) => console.error("copy failed", err));
   }
@@ -64,7 +64,7 @@ function pasteIntoTerminal(panel: IDockviewPanel): void {
   void readClipboardText()
     .then((text) => {
       // terminal.paste() keeps bracketed-paste mode intact, like Ctrl+Shift+V.
-      if (text) entry.terminal.paste(text);
+      if (text) entry.canvas.write(text);
     })
     .catch((err) => console.error("paste failed", err));
 }
@@ -73,7 +73,7 @@ function pasteIntoTerminal(panel: IDockviewPanel): void {
 function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
   const sessionId = panelToSession.get(panel.id);
   const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
-  const hasSelection = entry?.terminal.hasSelection() ?? false;
+  const hasSelection = entry?.canvas.hasSelection() ?? false;
 
   return [
     {
@@ -181,7 +181,7 @@ export function setupContextMenu(): void {
           panel.api.setActive();
           const sid = panelToSession.get(panel.id);
           const entry = sid !== undefined ? sessions.get(sid) : undefined;
-          entry?.terminal.focus();
+          entry?.canvas.focus();
           showContextMenu(buildPaneContextMenu(panel), e.clientX, e.clientY);
         }
         return;
