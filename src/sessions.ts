@@ -80,8 +80,10 @@ const NOUNS = [
 
 /** A short kebab-case name for a new session's worktree (e.g. "swift-otter"). */
 export function generateSessionName(): string {
-  const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const buf = new Uint32Array(2);
+  crypto.getRandomValues(buf);
+  const a = ADJECTIVES[buf[0] % ADJECTIVES.length];
+  const n = NOUNS[buf[1] % NOUNS.length];
   return `${a}-${n}`;
 }
 
