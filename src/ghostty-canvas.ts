@@ -215,10 +215,11 @@ export class GhosttyCanvas {
 
       const { fgStyle, bgStyle } = cellColors(c.fg, c.bg, theme, c);
 
-      // Background — only draw if non-default to avoid redundant fills.
+      // Background — only draw if non-default. Add 0.5px overlap to
+      // prevent sub-pixel gaps between adjacent fills.
       if (c.bg !== 0 || c.inverse) {
         this.ctx.fillStyle = bgStyle;
-        this.ctx.fillRect(x, y, this.cellW, this.cellH);
+        this.ctx.fillRect(x - 0.5, y, this.cellW + 0.5, this.cellH);
       }
 
       // Text — draw unless it's a default-background space (invisible filler).
