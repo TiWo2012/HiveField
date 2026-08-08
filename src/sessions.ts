@@ -251,12 +251,6 @@ export function createTerminalComponent(): IContentRenderer {
       // Let right-click handlers map a terminal back to its panel cheaply.
       element.dataset.panelId = panelApi.id;
 
-      // PTY dimensions plumbed to pty_spawn from the pre-spawn fit below.
-      // When the fit is skipped (panel not laid out / font not loaded),
-      // these stay undefined and the backend uses its 120×30 default.
-      let spawnCols: number | undefined;
-      let spawnRows: number | undefined;
-
       // A restored layout may carry the sessionId of a session parked in the
       // background when its workspace was left. Reuse that session: its PTY
       // kept running and its terminal (scrollback and all) was kept alive
@@ -337,28 +331,6 @@ export function createTerminalComponent(): IContentRenderer {
       // terminal.element is only created by open(); re-apply settings so
       // element-dependent options (font ligatures) take effect.
       applyTerminalSettings(terminal, getSettings());
-
-      // Fit the terminal to the panel *before* spawning the PTY, so the
-      // shell starts at the real viewport size instead of xterm's unfitted
-      // 80×24 default. When the panel isn't laid out yet or the configured
-      // font isn't loaded the fit is skipped here — the PTY gets the backend
-      // default (120×30), which is still closer to reality than 80×24, and
-      // syncWhenReady corrects the rest once the panel and font are ready.
-      // Gated on the same conditions as syncSize to avoid corrupting xterm
-      // with a 2×1 reflow on a zero-size element.
-      if (terminalFontReady()) {
-        const el = terminal.element;
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            try { fitAddon.fit(); } catch { /* ignore */ }
-            if (terminal.cols > 2 && terminal.rows > 1) {
-              spawnCols = terminal.cols;
-              spawnRows = terminal.rows;
-            }
-          }
-        }
-      }
 
       // X11-style mouse conveniences: copy on select, middle-click paste.
       setupCopyOnSelect(terminal);
@@ -496,12 +468,25 @@ export function createTerminalComponent(): IContentRenderer {
             } else if (command !== undefined && command !== mode) {
               autorun = command;
             }
-            // The terminal was fitted before spawning (or skipped when the
-            // panel wasn't laid out / font wasn't loaded). Send the fitted
-            // dimensions to the PTY so the shell formats its startup output
-            // at the real viewport width from the first byte. When the fit
-            // was skipped, omit cols/rows entirely — the backend default
-            // (120×30) is a better guess than xterm's unfitted 80×24.
+            // Fit before spawn now that the async worktree resolution gave
+            // WebKitGTK time to complete layout (getBoundingClientRect on a
+            // just-attached element may return zeros). Gated on the same
+            // conditions as syncSize: non-zero element + font loaded.
+            let spawnCols: number | undefined;
+            let spawnRows: number | undefined;
+            if (terminalFontReady()) {
+              const el = terminal!.element;
+              if (el) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  try { fitAddon!.fit(); } catch { /* ignore */ }
+                  if (terminal!.cols > 2 && terminal!.rows > 1) {
+                    spawnCols = terminal!.cols;
+                    spawnRows = terminal!.rows;
+                  }
+                }
+              }
+            }
             id = await invoke<number>("pty_spawn", {
               mode,
               ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
