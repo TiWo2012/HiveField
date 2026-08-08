@@ -90,8 +90,7 @@ export function trackInputLine(
 }
 
 /** OSC 133 shell-integration marker regex (ESC ] 133 ; A/B/C/D ; … BEL|ST). */
-const OSC133_SRC = "\\x1b\\]133;([ABCD])(?:[^\\x07\\x1b]*)(?:\\x07|\\x1b\\\\)";
-const OSC133_RE = new RegExp(OSC133_SRC, "g");
+const OSC133_RE = /\x1b\]133;([ABCD])(?:[^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 
 /**
  * Split a terminal output chunk into shell-integration markers (OSC 133) and
