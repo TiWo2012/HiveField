@@ -104,6 +104,9 @@ function parseDoc(raw: unknown): { current: number; slots: Map<number, SlotData>
         const data: SlotData = {};
         if (typeof e.name === "string") data.name = e.name;
         if (isPlausibleLayout(e.layout)) data.layout = e.layout;
+        // Prune completely empty entries (no name, no layout) so an emptied
+        // workspace stays gone instead of lingering as a bare slot.
+        if (data.name === undefined && data.layout === undefined) continue;
         parsed.set(slot, data);
       }
       const cur = typeof v.current === "number" ? Math.floor(v.current) : 1;
@@ -126,6 +129,8 @@ async function persist(): Promise<void> {
   };
   const entries = doc.slots as Record<string, unknown>;
   for (const [slot, data] of slots) {
+    // Never persist a completely empty slot: those are dropped when emptied.
+    if (!data.name && !data.layout) continue;
     const entry: Record<string, unknown> = {};
     if (data.name) entry.name = data.name;
     if (data.layout) entry.layout = data.layout;
@@ -163,6 +168,10 @@ export function getWorkspaceSlots(): WorkspaceSlot[] {
     // The live current slot counts as having a layout the moment any panel
     // exists, even before the debounced save writes it to disk.
     if (slot === currentSlot && apiRef && apiRef.panels.length > 0) hasLayout = true;
+    // Completely empty workspaces (no saved layout and no name) go away:
+    // hide them from the strip and palette. Their digit still creates a
+    // fresh workspace on demand (switchWorkspace seeds empty slots).
+    if (!hasLayout && !data?.name) continue;
     result.push({ slot, name: data?.name, hasLayout });
   }
   return result;
@@ -171,6 +180,25 @@ export function getWorkspaceSlots(): WorkspaceSlot[] {
 /** The currently active workspace slot (1-based). */
 export function getCurrentSlot(): number {
   return currentSlot;
+}
+
+/**
+ * Drop the current workspace when it has become completely empty: no open
+ * panels and no user-assigned name. Removes the whole slot (saved layout
+ * included) from memory and from the persisted document, so it goes away
+ * everywhere and its digit starts a fresh workspace next time it is used.
+ * Named workspaces are kept — a name counts as content, and their saved
+ * layout stays restorable. No-op mid-switch/restore, where panels are also
+ * torn down, or while any panel remains.
+ */
+export function clearCurrentWorkspaceIfEmpty(): void {
+  if (cwd === undefined || restoring || switching) return;
+  if (apiRef && apiRef.panels.length > 0) return;
+  const data = slots.get(currentSlot);
+  if (!data) return;
+  if (data.name) return;
+  slots.delete(currentSlot);
+  void persist();
 }
 
 /**

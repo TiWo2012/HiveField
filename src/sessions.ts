@@ -24,6 +24,7 @@ import {
 } from "./agents";
 import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
+import { copyText, readClipboardText } from "./clipboard";
 import { registerTerminalRoot } from "./file-drop";
 import {
   applyTerminalSettings,
@@ -127,6 +128,78 @@ async function resolveWorktree(
     // Not inside a git repo (or git unavailable): run in the launch dir.
     return { cwd: undefined, name: undefined, created: false };
   }
+}
+
+/**
+ * Copy the current selection to the system clipboard whenever it changes
+ * (X11-style "copy on select"). Debounced so a mouse drag copies once;
+ * a plain click that just clears the selection never copies. Reads the live
+ * setting at event time, so toggling it in Settings takes effect immediately.
+ */
+function setupCopyOnSelect(terminal: Terminal): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastCopied = "";
+  terminal.onSelectionChange(() => {
+    if (!getSettings().copyOnSelect) return;
+    const selection = terminal.getSelection();
+    if (!selection) {
+      // Selection cleared (plain click): allow re-copying the same text later.
+      lastCopied = "";
+      return;
+    }
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!getSettings().copyOnSelect) return;
+      try {
+        const current = terminal.getSelection();
+        if (current && current !== lastCopied) {
+          lastCopied = current;
+          copyText(current).catch((err) =>
+            console.error("clipboard write failed", err)
+          );
+        }
+      } catch {
+        // Terminal disposed while the debounce was pending.
+      }
+    }, 20);
+  });
+}
+
+/**
+ * Middle-click pastes the system clipboard into the terminal (X11-style).
+ * Attached in the capture phase on the panel container (an ancestor of
+ * xterm's element), so it runs before xterm's own mouse handling and the
+ * click is never forwarded to a mouse-mode app (vim/tmux). Stopping
+ * propagation also suppresses dockview's own click handling, so the panel
+ * is activated explicitly here.
+ */
+function setupMiddleClickPaste(
+  terminal: Terminal,
+  panelEl: HTMLElement,
+  activate: () => void
+): void {
+  panelEl.addEventListener(
+    "mousedown",
+    (e) => {
+      if (e.button !== 1 || !getSettings().pasteWithMiddleClick) return;
+      e.preventDefault();
+      e.stopPropagation();
+      activate();
+      readClipboardText()
+        .then((text) => {
+          if (text) {
+            try {
+              terminal.focus();
+              terminal.paste(text);
+            } catch {
+              // Terminal disposed while the clipboard read was in flight.
+            }
+          }
+        })
+        .catch((err) => console.error("clipboard read failed", err));
+    },
+    true
+  );
 }
 
 export function createTerminalComponent(): IContentRenderer {
@@ -259,6 +332,10 @@ export function createTerminalComponent(): IContentRenderer {
       // here: Dockview may still report a zero-size panel, and fitting that
       // state corrupts xterm's startup buffer with a 2x1 reflow.
       applyTerminalSettings(terminal, getSettings());
+
+      // X11-style mouse conveniences: copy on select, middle-click paste.
+      setupCopyOnSelect(terminal);
+      setupMiddleClickPaste(terminal, element, () => panelApi.setActive());
 
       // OS file drops over this pane write the quoted path(s) into its PTY.
       registerTerminalRoot(element, () => sessionId);

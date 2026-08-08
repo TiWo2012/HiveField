@@ -124,6 +124,10 @@ export interface AppSettings {
   desktopNotifications: boolean;
   /** Play an audible bell tone when a terminal receives the BEL character. */
   terminalBellSound: boolean;
+  /** Selecting text copies it to the clipboard automatically (X11-style). */
+  copyOnSelect: boolean;
+  /** Middle mouse button pastes the clipboard into the terminal. */
+  pasteWithMiddleClick: boolean;
   /**
    * Show a system notification when a terminal rings while its session is
    * not the one the user is looking at.
@@ -181,6 +185,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   worktreeBaseDir: "/tmp",
   desktopNotifications: true,
   terminalBellSound: true,
+  copyOnSelect: true,
+  pasteWithMiddleClick: true,
   terminalBellNotify: true,
   ntfyEnabled: false,
   ntfyServer: "https://ntfy.sh",
@@ -401,6 +407,11 @@ function normalize(value: unknown): AppSettings {
     terminalBellSound: pickBool(
       "terminalBellSound",
       DEFAULT_SETTINGS.terminalBellSound
+    ),
+    copyOnSelect: pickBool("copyOnSelect", DEFAULT_SETTINGS.copyOnSelect),
+    pasteWithMiddleClick: pickBool(
+      "pasteWithMiddleClick",
+      DEFAULT_SETTINGS.pasteWithMiddleClick
     ),
     terminalBellNotify: pickBool(
       "terminalBellNotify",

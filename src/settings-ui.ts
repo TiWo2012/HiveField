@@ -605,6 +605,26 @@ function buildGeneralTab(): HTMLElement {
   );
   body.appendChild(renderSection);
 
+  /* --- Mouse --- */
+  const mouseSection = section("Mouse");
+  mouseSection.appendChild(
+    controlRow(
+      "Copy on select",
+      toggleField(s.copyOnSelect, (copyOnSelect) => updateSettings({ copyOnSelect })),
+      "Selecting text copies it to the clipboard automatically"
+    )
+  );
+  mouseSection.appendChild(
+    controlRow(
+      "Middle-click paste",
+      toggleField(s.pasteWithMiddleClick, (pasteWithMiddleClick) =>
+        updateSettings({ pasteWithMiddleClick })
+      ),
+      "Middle mouse button pastes the clipboard into the terminal"
+    )
+  );
+  body.appendChild(mouseSection);
+
   /* --- Agents --- */
   const agentsSection = section("Agents");
   const agentsLabel = el("span", "settings-label");

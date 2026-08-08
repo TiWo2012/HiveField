@@ -460,8 +460,13 @@ fn open_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("failed to launch 'open': {e}"))?;
     } else if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/C", "start", "", trimmed])
+        // `cmd /C start` would re-parse the URL as a command line and break
+        // on `&` (a legal URL character), truncating the URL and executing
+        // the remainder. rundll32 hands the URL to the shell's protocol
+        // handler as a single argument with no command interpreter involved.
+        Command::new("rundll32")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(trimmed)
             .spawn()
             .map_err(|e| format!("failed to launch 'start': {e}"))?;
     } else {

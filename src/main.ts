@@ -28,6 +28,7 @@ import { initSearch, isSearchOpen, rerunSearch } from "./search";
 import { initPalette } from "./palette";
 import {
   bindWorkspaceSave,
+  clearCurrentWorkspaceIfEmpty,
   getWorkspaceCwd,
   getWorkspaceSlots,
   loadWorkspaces,
@@ -213,6 +214,10 @@ async function init() {
   setupSidebarDndFallback();
 
   getApi().onDidRemovePanel((panel: IDockviewPanel) => {
+    // A workspace that just lost its last panel and has no name is completely
+    // empty: drop it (saved layout included) so it goes away from the
+    // strip/palette and from disk. Named workspaces are kept.
+    clearCurrentWorkspaceIfEmpty();
     const sessionId = panelToSession.get(panel.id);
     if (sessionId === undefined) return;
     const entry = sessions.get(sessionId);

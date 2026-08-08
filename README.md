@@ -115,8 +115,13 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
     most recently opened
   - Click a project to open the default agent there; ✕ forgets a project
   - Drop a folder anywhere to dismiss the splash and continue
-- **Workspaces sidebar** — shows all ten slots (active highlighted, green dot
-  for saved layouts); click to switch, double-click to rename
+- **Workspaces sidebar** — shows every non-empty workspace slot (active
+  highlighted, green dot for saved layouts); click to switch, double-click to
+  rename. A workspace that is completely empty — no open panels and no
+  user-assigned name — goes away: it vanishes from the sidebar and command
+  palette, its saved layout is dropped from disk, and pressing its digit
+  again starts a fresh workspace there. Naming a workspace keeps it around
+  even when all its panels are closed
 
 ### Sidebar & Session Info
 

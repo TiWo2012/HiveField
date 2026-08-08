@@ -561,8 +561,7 @@ export function renderWorkspaceStrip(): void {
 
     const label = document.createElement("span");
     label.className = "workspace-slot-label";
-    label.textContent =
-      ws.name ?? (ws.hasLayout ? `workspace ${ws.slot}` : "empty");
+    label.textContent = ws.name ?? `workspace ${ws.slot}`;
 
     const dot = document.createElement("span");
     dot.className = "workspace-slot-dot";
