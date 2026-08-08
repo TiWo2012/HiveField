@@ -136,9 +136,9 @@ export function createTerminalComponent(): IContentRenderer {
   let fitAddon: FitAddon | null = null;
   let searchAddon: SearchAddon | null = null;
 
-  function sync() {
-    if (sessionId === undefined || !terminal || !fitAddon) return;
-    syncSize(sessionId, fitAddon, terminal);
+  function sync(): boolean {
+    if (sessionId === undefined || !terminal || !fitAddon) return false;
+    return syncSize(sessionId, fitAddon, terminal);
   }
 
   return {
@@ -216,7 +216,7 @@ export function createTerminalComponent(): IContentRenderer {
           // the first fit + pty resize until the next tick (like the fresh-
           // spawn path, which relies on the async spawn timing).
           setTimeout(() => {
-            sync();
+            if (!sync()) requestAnimationFrame(sync);
             // Give every restored terminal its correct cursor rendering
             // (filled only in the active pane, outlined elsewhere).
             syncTerminalCursorFocus();
@@ -233,20 +233,10 @@ export function createTerminalComponent(): IContentRenderer {
       fitAddon = created.fitAddon;
       searchAddon = created.searchAddon;
       terminal.open(element);
-      // Establish xterm's cell geometry before the PTY can emit startup
-      // output. Dockview may finish laying out the panel asynchronously; the
-      // later sync() call re-fits to the final size and sends that size to the
-      // PTY, but without this initial fit xterm can parse the shell's first
-      // screen against its default 80x24 grid and leave the output stranded
-      // in the lower part of the pane after the real resize.
-      try {
-        fitAddon.fit();
-      } catch {
-        // The panel may still be between DOM attach/layout phases. The first
-        // post-spawn sync and dimensions-change callback will retry the fit.
-      }
       // terminal.element is only created by open(); re-apply settings so
-      // element-dependent options (font ligatures) take effect.
+      // element-dependent options (font ligatures) take effect. Do not fit
+      // here: Dockview may still report a zero-size panel, and fitting that
+      // state corrupts xterm's startup buffer with a 2x1 reflow.
       applyTerminalSettings(terminal, getSettings());
 
       // OS file drops over this pane write the quoted path(s) into its PTY.
@@ -428,7 +418,10 @@ export function createTerminalComponent(): IContentRenderer {
             setBaseTitle(panelApi.id, resolved.name);
           }
 
-          sync(); // first pty_resize -> backend flushes the buffered prompt
+          // First pty_resize -> backend flushes the buffered prompt. If
+          // Dockview has not completed layout yet, retry after the next frame;
+          // syncSize refuses to fit zero-sized terminals.
+          if (!sync()) requestAnimationFrame(sync);
           // Reconcile cursor fill/outline state with the active pane instead
           // of unconditionally focusing: the session may have spawned while
           // another pane is focused, and stealing focus would leave this

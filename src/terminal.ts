@@ -217,25 +217,34 @@ export function writeToTerminal(terminal: Terminal, data: string): void {
   });
 }
 
-export function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal) {
+export function syncSize(
+  sessionId: number,
+  fitAddon: FitAddon,
+  terminal: Terminal
+): boolean {
   try {
+    // Never fit a detached or zero-size xterm. FitAddon otherwise clamps the
+    // terminal to its minimum 2x1 grid, and xterm can reflow already-buffered
+    // startup output against that bogus grid. The later resize then leaves
+    // stale/garbled cells in the scrollback (especially in the DOM renderer).
+    const element = terminal.element;
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+
     // Resizing reflows the scrollback; like writes, it can leave the viewport
     // (and xterm's scroll-tracking flag) off the bottom. Snap back when the
     // user was following output or the viewport is at the bottom; never yank
     // a user who scrolled up to read.
     const follow = isAtBottom(terminal) || isFollowing(terminal);
     fitAddon.fit();
+    if (terminal.cols <= 2 || terminal.rows <= 1) return false;
     if (follow) terminal.scrollToBottom();
-    // When the terminal element has no size yet (panel not laid out, element
-    // detached, zero-size container), fit() floors to the minimum terminal
-    // size of 2 cols × 1 row. Sending that to the PTY corrupts the shell's
-    // idea of the terminal size; skip the resize when the computed dimensions
-    // are implausible for a real, visible terminal.
-    if (terminal.cols > 2 && terminal.rows > 1) {
-      invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
-    }
+    invoke("pty_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
+    return true;
   } catch {
     // ignore until the backend is ready
+    return false;
   }
 }
 
