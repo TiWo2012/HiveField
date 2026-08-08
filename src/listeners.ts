@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isAgentModeAll } from "./agents";
 import { customs } from "./modes";
 import { analyzeOutput } from "./input-line";
+import { writeToTerminal } from "./terminal";
 import {
   armIdle,
   armNotify,
@@ -38,9 +39,8 @@ export async function registerGlobalListeners() {
       // Shell-integration markers drive the tab completion indicator; any
       // remaining text is written to the terminal.
       const { markers, text } = analyzeOutput(data);
-      // Ghostty canvas auto-renders via ghostty://cells; we only need
-      // the markers for tab activity/completion indicators.
-      
+      if (text) writeToTerminal(entry.terminal, text);
+      // Parked (background-workspace) sessions keep a status under a unique
       // `parked:<id>` key so they can never collide with a live panel that
       // happens to reuse the same panel id.
       const statusKey = parkedSessions.has(sessionId)
@@ -89,12 +89,12 @@ export async function registerGlobalListeners() {
     // above, so shell-integration markers (OSC 133) don't leak into xterm.js
     // when the pending chunks are replayed. The markers themselves are lost
     // for tab indicators — an acceptable trade-off for a rare edge case.
-      const { text } = analyzeOutput(data);
-      if (text) {
-        const buf = pendingOutputs.get(sessionId) ?? [];
-        buf.push(text);
-        pendingOutputs.set(sessionId, buf);
-      }
+    const { text } = analyzeOutput(data);
+    if (text) {
+      const buf = pendingOutputs.get(sessionId) ?? [];
+      buf.push(text);
+      pendingOutputs.set(sessionId, buf);
+    }
   });
 
   await listen<{ sessionId: number; code: number }>("pty://exit", (event) => {
@@ -105,11 +105,11 @@ export async function registerGlobalListeners() {
     if (entry) {
       if (parkedSessions.has(sessionId)) {
         // The session finished while its workspace was hidden: no panel
-        // removal will come to clean it up, so do it here.
+        // removal will come to clean it up, so do it here. (The "[process
+        // exited]" note would only land in an off-screen terminal.)
         parkedSessions.delete(sessionId);
         sessions.delete(sessionId);
-        // entry.canvas.dispose() not valid for off-screen parked elements.
-        entry.canvas.element.remove();
+        entry.terminal.dispose();
         const parkedKey = parkedKeyFor(sessionId);
         clearIdle(parkedKey);
         clearNotify(parkedKey);
@@ -118,9 +118,7 @@ export async function registerGlobalListeners() {
         scheduleWorkspaceRefresh();
         return;
       }
-      // Ghostty canvas shows exit info via the ghostty://cells event
-      // which includes the backend's exit message.
-      
+      writeToTerminal(entry.terminal, `\r\n[process exited with code ${code}]\r\n`);
     }
   });
 }

@@ -1,13 +1,17 @@
+import { SearchAddon } from "@xterm/addon-search";
+import type { Terminal } from "@xterm/xterm";
 import { matchesKeybind } from "./keybinds";
 import { getSettings } from "./settings";
 import { getTheme } from "./themes";
-import type { GhosttyCanvas } from "./ghostty-canvas";
 
 /**
- * A terminal that can be searched (currently canvas placeholder).
+ * A terminal that can be searched. Every session terminal loads a SearchAddon
+ * alongside its FitAddon, so searching always targets the addon of the active
+ * session.
  */
 export interface SearchableTerminal {
-  canvas: GhosttyCanvas;
+  terminal: Terminal;
+  searchAddon: SearchAddon;
 }
 
 export interface SearchContext {
@@ -49,6 +53,10 @@ let caseBtn: HTMLButtonElement;
 
 let open = false;
 let caseSensitive = false;
+/** Addon of the last terminal we highlighted, so we can clear it on close/switch. */
+let lastSearched: SearchAddon | undefined;
+/** Addons that already got an `onDidChangeResults` listener. */
+const listeners = new WeakSet<SearchAddon>();
 
 function updateCount(resultIndex: number, resultCount: number): void {
   if (resultCount === 0) {
@@ -64,9 +72,36 @@ function updateCount(resultIndex: number, resultCount: number): void {
   }
 }
 
-function runSearch(_direction: "next" | "prev"): void {
-  // Search highlighting is not yet implemented for the canvas renderer.
-  updateCount(0, 0);
+/** Attach the match-counter listener once per addon. */
+function attachResultListener(addon: SearchAddon): void {
+  if (listeners.has(addon)) return;
+  listeners.add(addon);
+  addon.onDidChangeResults((e) => updateCount(e.resultIndex, e.resultCount));
+}
+
+function searchOptions(incremental: boolean) {
+  return { caseSensitive, incremental, decorations: matchDecorations() };
+}
+
+function runSearch(direction: "next" | "prev"): void {
+  const active = context?.getActive();
+  const query = input.value;
+  if (!active || !query) {
+    count.textContent = "";
+    lastSearched?.clearDecorations();
+    lastSearched = undefined;
+    return;
+  }
+  attachResultListener(active.searchAddon);
+  if (lastSearched !== active.searchAddon) {
+    lastSearched?.clearDecorations();
+    lastSearched = active.searchAddon;
+  }
+  if (direction === "next") {
+    active.searchAddon.findNext(query, searchOptions(true));
+  } else {
+    active.searchAddon.findPrevious(query, searchOptions(false));
+  }
 }
 
 function toggleCase(): void {
@@ -92,7 +127,9 @@ export function closeSearch(): void {
   open = false;
   bar.hidden = true;
   count.textContent = "";
-  context?.getActive()?.canvas.focus();
+  lastSearched?.clearDecorations();
+  lastSearched = undefined;
+  context?.getActive()?.terminal.focus();
 }
 
 /** Whether the search bar is currently open (used to guard global shortcuts). */
@@ -106,6 +143,8 @@ export function isSearchOpen(): boolean {
  */
 export function rerunSearch(): void {
   if (!open || !input?.value) return;
+  lastSearched?.clearDecorations();
+  lastSearched = undefined;
   runSearch("next");
 }
 

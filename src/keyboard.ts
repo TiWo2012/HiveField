@@ -72,12 +72,12 @@ export function setupKeyboard() {
       const entry = activeSessionEntry();
       if (entry) {
         void readText()
-          .then((text) => entry.canvas.write(text))
+          .then((text) => entry.terminal.paste(text))
           .catch((err) => console.error("clipboard read failed", err));
       }
     }
     if (matchesKeybind(kb.copy, e)) {
-      const selection = ""; // canvas selection not yet implemented
+      const selection = activeSessionEntry()?.terminal.getSelection() ?? "";
       if (selection) {
         e.preventDefault();
         void writeText(selection).catch((err) =>

@@ -1756,7 +1756,6 @@ dependencies = [
  "tauri-plugin-notification",
  "tempfile",
  "ureq",
- "vtcode-ghostty-core",
  "whisper-rs",
 ]
 
@@ -4845,12 +4844,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
-name = "unicode-width"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
-
-[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4975,15 +4968,6 @@ checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
 dependencies = [
  "cc",
  "libc",
-]
-
-[[package]]
-name = "vtcode-ghostty-core"
-version = "0.128.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b1cc2075a7e52d5e82e4a1649c952fd5d1ae31c0cdc21666465611fce659a7e"
-dependencies = [
- "unicode-width",
 ]
 
 [[package]]

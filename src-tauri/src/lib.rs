@@ -1,6 +1,5 @@
 mod dictation;
 mod fonts;
-mod ghostty_render;
 mod git;
 mod net;
 mod notifications;
@@ -207,29 +206,18 @@ fn pty_write(state: State<'_, PtyState>, session_id: u64, data: String) -> Resul
 /// IPC command: resize a session's PTY to match the frontend terminal viewport.
 #[tauri::command]
 fn pty_resize(
-    app: tauri::AppHandle,
     state: State<'_, PtyState>,
-    ghostty: State<'_, crate::ghostty_render::GhosttyState>,
     session_id: u64,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    pty::resize(&state, session_id, cols, rows).map_err(|e| e.to_string())?;
-    ghostty.resize(session_id, cols as usize, rows as usize);
-    ghostty.flush(&app, session_id);
-    Ok(())
+    pty::resize(&state, session_id, cols, rows).map_err(|e| e.to_string())
 }
 
 /// IPC command: kill a PTY session by id.
 #[tauri::command]
-fn pty_kill(
-    state: State<'_, PtyState>,
-    ghostty: State<'_, crate::ghostty_render::GhosttyState>,
-    session_id: u64,
-) -> Result<(), String> {
-    pty::kill(&state, session_id).map_err(|e| e.to_string())?;
-    ghostty.remove(session_id);
-    Ok(())
+fn pty_kill(state: State<'_, PtyState>, session_id: u64) -> Result<(), String> {
+    pty::kill(&state, session_id).map_err(|e| e.to_string())
 }
 
 /// IPC command: resolve the command the built-in "Editor" agent auto-runs
@@ -490,7 +478,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(PtyState::<tauri::Wry>::default())
-        .manage(crate::ghostty_render::GhosttyState::default())
         .manage(windows::WindowState::default())
         .manage(git::GitCache::default())
         .manage(dictation::DictationState::default())

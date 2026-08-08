@@ -1,8 +1,16 @@
 # Plan: Switch the renderer back to xterm.js (drop Ghostty canvas)
 
-**Status:** proposal — reviewed against the current tree (`HEAD` = `184b67b` on
-`dev`) and the pre-switch xterm.js state (`0355e48^` / `9efb278^`). Nothing in
-this plan has been implemented yet.
+**Status:** implemented — see commit `refactor: switch terminal renderer back to
+xterm.js`. The switchback restored the pre-ghostty files wholesale from
+`fedcd29` (= `9efb278^`), because every commit between `fedcd29` and the old
+HEAD was ghostty-related; `src/ghostty-canvas.ts` and
+`src-tauri/src/ghostty_render.rs` were deleted and `vtcode-ghostty-core` was
+dropped from `Cargo.toml`/`Cargo.lock`. This doc is kept as the record of the
+analysis and the verification checklist.
+
+Original status before implementation: proposal — reviewed against the current
+tree (`HEAD` = `184b67b` on `dev`) and the pre-switch xterm.js state
+(`0355e48^` / `9efb278^`).
 
 ---
 

@@ -7,14 +7,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getSettings } from "./settings";
 import {
-  canvasSessions,
   isPanelActive,
   isWindowFocused,
   panelStatus,
   parkedKeyFor,
   sessions,
+  terminalSessions,
 } from "./state";
-import type { GhosttyCanvas } from "./ghostty-canvas";
+import type { Terminal } from "@xterm/xterm";
 
 /** Last time a bell notification was shown (bursts of BELs must not spam). */
 let lastBellNotifyAt = 0;
@@ -66,13 +66,13 @@ function playBellSound(): void {
  * `echo -e '\a\a\a'`) yields one notification, not a dozen; the sound plays
  * for every bell, like a real terminal.
  */
-export function handleBell(canvas: GhosttyCanvas): void {
+export function handleBell(terminal: Terminal): void {
   const settings = getSettings();
   if (settings.terminalBellSound) playBellSound();
   if (!settings.terminalBellNotify) return;
 
   // The user is looking right at the ringing pane: the sound is enough.
-  const sessionId = canvasSessions.get(canvas);
+  const sessionId = terminalSessions.get(terminal);
   const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
   const panelId = entry?.panel?.id;
   if (panelId !== undefined && isWindowFocused() && isPanelActive(panelId)) return;

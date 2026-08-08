@@ -245,10 +245,6 @@ pub fn spawn<R: Runtime>(
         .lock_unpoisoned()
         .insert(session_id, session);
 
-    // Create ghostty terminal for canvas-based rendering.
-    app.state::<crate::ghostty_render::GhosttyState>()
-        .create(session_id, INITIAL_PTY_COLS as usize, INITIAL_PTY_ROWS as usize);
-
     let reader_app = app.clone();
     std::thread::spawn(move || {
         let mut decoder = Utf8StreamDecoder::new();
@@ -257,15 +253,6 @@ pub fn spawn<R: Runtime>(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    // Feed ghostty terminal with raw bytes (handles VT state).
-                    {
-                        let ghostty = reader_app.state::<crate::ghostty_render::GhosttyState>();
-                        ghostty.feed_bytes(session_id, &buf[..n]);
-                        if ready.load(Ordering::Relaxed) {
-                        ghostty.flush(&reader_app, session_id);
-                        }
-                    }
-
                     let data = decoder.push(&buf[..n]);
                     if !data.is_empty() {
                         // Emit once the frontend is ready; otherwise buffer.

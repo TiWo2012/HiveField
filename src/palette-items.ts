@@ -61,7 +61,7 @@ export function buildPaletteItems(): PaletteItem[] {
         panel.api.setActive();
         const sid = panelToSession.get(panel.id);
         const e = sid !== undefined ? sessions.get(sid) : undefined;
-        e?.canvas.focus();
+        e?.terminal.focus();
       },
     });
   }
@@ -99,7 +99,7 @@ export function buildPaletteItems(): PaletteItem[] {
           () =>
             snippetPickerItems((snippet) => {
               const entry = activeSessionEntry();
-              if (entry) entry.canvas.write(snippet.content);
+              if (entry) entry.terminal.paste(snippet.content);
             }),
           "Pick a prompt to insert…"
         ),

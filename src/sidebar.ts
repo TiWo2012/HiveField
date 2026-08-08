@@ -17,6 +17,7 @@ import { customs, DEFAULT_MODE, sessionModes, type Mode } from "./modes";
 import { getSettings, subscribe } from "./settings";
 import { toggleSettings } from "./settings-ui";
 import { addPanelWithMode, killParkedSession, shortLabel } from "./sessions";
+import { syncTerminalCursorFocus } from "./terminal";
 import { clearIdle, clearNotify, INDICATOR_ACTIVITY, INDICATOR_DONE } from "./titles";
 import {
   getCurrentSlot,
@@ -150,7 +151,7 @@ export function refreshSidebarRunning(): void {
       panel.api.setActive();
       const sid = panelToSession.get(panel.id);
       const e = sid !== undefined ? sessions.get(sid) : undefined;
-      e?.canvas.focus();
+      e?.terminal.focus();
     });
 
     // Hover-only ✕ closes the session (same as Ctrl+Shift+W on its tab).
@@ -513,7 +514,7 @@ function parkWorkspaceSessions(slot: number): void {
     // believing the terminal is still focused, so restoring the session into
     // an inactive pane would paint a filled cursor instead of an outlined one.
     // Blur explicitly first (a no-op for panes that were never focused).
-    entry.canvas.blur();
+    entry.terminal.blur();
     parkedSessions.set(sessionId, { slot, element });
   }
 }
@@ -539,7 +540,7 @@ export function switchToWorkspace(slot: number): void {
     renderWorkspaceStrip();
     // Reconcile cursor fill/outline state with the newly active pane after
     // parked sessions were re-attached and fresh ones spawned.
-    
+    syncTerminalCursorFocus();
   });
 }
 
