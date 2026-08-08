@@ -25,7 +25,13 @@ pub trait Unpoisoned<T> {
 
 impl<T> Unpoisoned<T> for std::sync::Mutex<T> {
     fn lock_unpoisoned(&self) -> std::sync::MutexGuard<'_, T> {
-        self.lock().unwrap_or_else(|e| e.into_inner())
+        self.lock().unwrap_or_else(|e| {
+            log::warn!(
+                "mutex poisoned (a holder panicked while holding the lock); \
+                 recovering with potentially inconsistent state"
+            );
+            e.into_inner()
+        })
     }
 }
 
