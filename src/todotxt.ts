@@ -131,7 +131,11 @@ function buildSendTaskMenu(taskText: string): ContextMenuItem[] {
             // for it to boot so the text doesn't land at the shell
             // prompt before the autorun command runs.
             setTimeout(() => {
-              invoke("pty_write", { sessionId, data: taskText + "\n" }).catch(
+              // \r (carriage return), not \n: TUI agents (pi, opencode,
+              // …) run stdin in raw mode where Enter is \r; a bare \n
+              // maps to shift+enter under the kitty keyboard protocol and
+              // just inserts a newline instead of submitting.
+              invoke("pty_write", { sessionId, data: taskText + "\r" }).catch(
                 (err) => console.error("failed to write task to agent session", err)
               );
             }, 3000);

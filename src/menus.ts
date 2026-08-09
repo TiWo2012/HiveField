@@ -92,7 +92,10 @@ function sendTextToAgent(mode: string, text: string): void {
       // yet (shell init, bashrc, etc.). Wait for the agent to boot
       // before writing, or the text lands at the raw shell prompt.
       setTimeout(() => {
-        invoke("pty_write", { sessionId, data: text }).catch((err) =>
+        // \r (carriage return), not \n: TUI agents run stdin in raw
+        // mode where Enter is \r; a bare \n maps to shift+enter under
+        // the kitty keyboard protocol (just inserts a newline).
+        invoke("pty_write", { sessionId, data: text + "\r" }).catch((err) =>
           console.error("failed to write to agent session", err)
         );
       }, 3000);
