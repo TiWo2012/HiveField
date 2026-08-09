@@ -5,6 +5,7 @@ import {
   formatKeybind,
   keyNeedsModifier,
   keybindEqual,
+  keybindSearchMatches,
   matchesKeybind,
   normalizeKeyName,
   parseKeybind,
@@ -153,5 +154,45 @@ describe("keyNeedsModifier", () => {
     expect(keyNeedsModifier("Enter")).toBe(false);
     expect(keyNeedsModifier("F1")).toBe(false);
     expect(keyNeedsModifier("Control")).toBe(false);
+  });
+});
+
+describe("keybindSearchMatches", () => {
+  const newTab = KEYBIND_ACTIONS.find((a) => a.id === "newTab")!;
+  const binding = DEFAULT_KEYBINDS.newTab; // "Ctrl+Shift+T", group "Sessions", label "New agent tab"
+
+  test("empty or whitespace query matches everything", () => {
+    expect(keybindSearchMatches(newTab, binding, "")).toBe(true);
+    expect(keybindSearchMatches(newTab, binding, "   ")).toBe(true);
+  });
+
+  test("matches by action label", () => {
+    expect(keybindSearchMatches(newTab, binding, "agent")).toBe(true);
+    expect(keybindSearchMatches(newTab, binding, "new tab")).toBe(true);
+  });
+
+  test("matches by group", () => {
+    expect(keybindSearchMatches(newTab, binding, "session")).toBe(true);
+  });
+
+  test("matches by binding string", () => {
+    expect(keybindSearchMatches(newTab, binding, "ctrl+shift+t")).toBe(true);
+    // Tokens may span the binding's '+' separators.
+    expect(keybindSearchMatches(newTab, binding, "ctrl t")).toBe(true);
+    expect(keybindSearchMatches(newTab, binding, "SHIFT+T")).toBe(true);
+  });
+
+  test("unbound entries match by label or group only", () => {
+    expect(keybindSearchMatches(newTab, "", "agent tab")).toBe(true);
+    expect(keybindSearchMatches(newTab, "", "ctrl")).toBe(false);
+  });
+
+  test("every token must match somewhere", () => {
+    expect(keybindSearchMatches(newTab, binding, "agent sessions")).toBe(true);
+    expect(keybindSearchMatches(newTab, binding, "agent worktree")).toBe(false);
+  });
+
+  test("no match returns false", () => {
+    expect(keybindSearchMatches(newTab, binding, "zzz")).toBe(false);
   });
 });

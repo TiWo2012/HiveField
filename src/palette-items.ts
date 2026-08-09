@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isKnownModeAll, modeIconAll } from "./agents";
 import { customs, DEFAULT_MODE, sessionModes } from "./modes";
 import { getSettings } from "./settings";
-import { toggleSettings } from "./settings-ui";
+import { openSettings, toggleSettings } from "./settings-ui";
 import { snippetPickerItems } from "./snippets";
 import { openSearch } from "./search";
 import { openPaletteWith, type PaletteItem } from "./palette";
@@ -178,6 +178,12 @@ export function buildPaletteItems(): PaletteItem[] {
       detail: kb().settings,
       icon: "⚙",
       run: () => toggleSettings(),
+    },
+    {
+      label: "Keybindings…",
+      detail: kb().settings,
+      icon: "⌨",
+      run: () => openSettings("keybinds"),
     },
   ];
   for (const action of actions) {

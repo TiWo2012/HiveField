@@ -1499,6 +1499,33 @@ body {
 }
 
 /* Keybinds tab. */
+.settings-keybind-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--hf-surface2);
+  border-radius: 6px;
+  background: var(--hf-mantle);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  outline: none;
+}
+.settings-keybind-search:focus {
+  border-color: var(--hf-accent);
+}
+.settings-keybind-search::placeholder {
+  color: var(--hf-overlay0);
+}
+
+.settings-keybind-empty {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--hf-overlay0);
+  text-align: center;
+}
+
 .settings-keybind-group {
   margin: 14px 0 4px;
   font-size: 11px;

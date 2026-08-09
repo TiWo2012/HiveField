@@ -186,3 +186,23 @@ export function keybindEqual(a: string, b: string): boolean {
 export function keyNeedsModifier(key: string): boolean {
   return key.length === 1 && !MODIFIER_KEYS.has(key);
 }
+
+/**
+ * Does a keybind entry match a search query? Case-insensitive substring match
+ * over the action's label, its group, and its current binding string. The
+ * query is split on whitespace and every token must match at least one field,
+ * so "new tab" finds "New agent tab" and "ctrl t" finds "Ctrl+Shift+T". An
+ * empty query matches everything.
+ */
+export function keybindSearchMatches(
+  def: KeybindDef,
+  binding: string,
+  query: string
+): boolean {
+  const fields = [def.group, def.label, binding].map((s) => s.toLowerCase());
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  return tokens.every((token) =>
+    fields.some((field) => field.includes(token))
+  );
+}

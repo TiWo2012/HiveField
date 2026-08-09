@@ -1,6 +1,7 @@
 x 2026-08-09 2026-08-09 improve test coverage
 x 2026-08-09 2026-08-09 add built-in updater (GitHub releases check/download/install + install.sh)
 x 2026-08-09 2026-08-09 audit repo infrastructure and document potential additions (docs/INFRA_PLAN.md)
+x 2026-08-09 2026-08-09 add the ability to search for keybindings
 2026-08-09 wire up logging + panic hook (tauri-plugin-log, rotated log file)
 2026-08-09 add diagnostics command (hivefield --doctor / palette "Copy diagnostics")
 2026-08-09 add lint + format gates to CI (cargo fmt/clippy, biome for frontend)

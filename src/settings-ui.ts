@@ -39,6 +39,7 @@ import {
   formatKeybind,
   keyNeedsModifier,
   keybindEqual,
+  keybindSearchMatches,
   parseKeybind,
   type KeybindAction,
 } from "./keybinds";
@@ -67,8 +68,12 @@ let unsubscribe: (() => void) | null = null;
 let renderKeybindRows: (() => void) | null = null;
 /** Refresh the Agents section (checklist + custom-agent editor) on settings change. */
 let renderAgentsSection: (() => void) | null = null;
+/** Switch the settings modal to a given tab (assigned by buildOverlay). */
+let activateTab: ((id: string) => void) | null = null;
 
-export function openSettings(): void {
+export type SettingsTabId = "general" | "updates" | "snippets" | "keybinds";
+
+export function openSettings(tab?: SettingsTabId): void {
   if (!overlay) {
     overlay = buildOverlay();
     unsubscribe = subscribe((s) => {
@@ -82,6 +87,16 @@ export function openSettings(): void {
     document.addEventListener("keydown", onKeydown);
   }
   if (!overlay.isConnected) document.body.appendChild(overlay);
+  if (tab) {
+    activateTab?.(tab);
+    // Pop the Keybinds tab straight into its search field so the palette
+    // action lands the user in a ready-to-type filter.
+    if (tab === "keybinds") {
+      overlay
+        .querySelector<HTMLInputElement>(".settings-keybind-search")
+        ?.focus();
+    }
+  }
 }
 
 export function closeSettings(): void {
@@ -853,6 +868,26 @@ function buildKeybindsTab(): HTMLElement {
     "Click a binding and press the new keys. Backspace unbinds it, Esc cancels. Plain letters/digits/symbols need a modifier (Ctrl/Alt/Meta) so they don't swallow terminal typing.";
   panel.appendChild(hint);
 
+  // Live filter over action label, group, and binding keys (see
+  // keybindSearchMatches). Esc clears the filter when it's non-empty and lets
+  // the modal's Esc-to-close handler take over otherwise.
+  const search = el("input", "settings-keybind-search");
+  search.type = "search";
+  search.placeholder = "Search keybindings…";
+  search.spellcheck = false;
+  search.autocomplete = "off";
+  search.autocapitalize = "off";
+  search.addEventListener("input", () => renderKeybindRows?.());
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && search.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      search.value = "";
+      renderKeybindRows?.();
+    }
+  });
+  panel.appendChild(search);
+
   const list = el("div", "settings-keybinds");
   panel.appendChild(list);
 
@@ -905,8 +940,12 @@ function buildKeybindsTab(): HTMLElement {
     }
 
     list.replaceChildren();
+    const query = search.value;
     let lastGroup = "";
+    let visibleCount = 0;
     for (const def of KEYBIND_ACTIONS) {
+      const binding = kb[def.id];
+      if (!keybindSearchMatches(def, binding, query)) continue;
       if (def.group !== lastGroup) {
         lastGroup = def.group;
         const groupTitle = el("div", "settings-keybind-group");
@@ -921,7 +960,6 @@ function buildKeybindsTab(): HTMLElement {
       const btn = el("button", "settings-keybind-key");
       btn.type = "button";
       btn.dataset.action = def.id;
-      const binding = kb[def.id];
       btn.textContent = binding || "unbound";
       if (!binding) btn.classList.add("unbound");
       if (conflicting.has(def.id)) btn.classList.add("conflict");
@@ -941,6 +979,12 @@ function buildKeybindsTab(): HTMLElement {
       });
       row.appendChild(btn);
       list.appendChild(row);
+      visibleCount++;
+    }
+    if (visibleCount === 0) {
+      const empty = el("div", "settings-keybind-empty");
+      empty.textContent = `No keybindings match “${query}”.`;
+      list.appendChild(empty);
     }
   };
   renderKeybindRows = render;
@@ -1184,7 +1228,7 @@ function buildOverlay(): HTMLElement {
   const tabbar = el("div", "settings-tabs");
   const tabButtons: HTMLButtonElement[] = [];
   const panels: Record<string, HTMLElement> = {};
-  const activateTab = (id: string) => {
+  const switchTab = (id: string) => {
     for (const btn of tabButtons) {
       btn.classList.toggle("active", btn.dataset.tab === id);
     }
@@ -1192,12 +1236,13 @@ function buildOverlay(): HTMLElement {
       panelEl.classList.toggle("active", panelId === id);
     }
   };
+  activateTab = switchTab;
   const addTab = (id: string, label: string, panel: HTMLElement) => {
     const btn = el("button", "settings-tab");
     btn.type = "button";
     btn.textContent = label;
     btn.dataset.tab = id;
-    btn.addEventListener("click", () => activateTab(id));
+    btn.addEventListener("click", () => switchTab(id));
     tabButtons.push(btn);
     tabbar.appendChild(btn);
     panels[id] = panel;
@@ -1208,7 +1253,7 @@ function buildOverlay(): HTMLElement {
   addTab("updates", "Updates", buildUpdatesTab());
   addTab("snippets", "Snippets", buildSnippetsTab());
   addTab("keybinds", "Keybinds", buildKeybindsTab());
-  activateTab("general");
+  switchTab("general");
   modal.appendChild(body);
 
   const footer = el("div", "settings-footer");

@@ -233,6 +233,10 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
 
 - Every keyboard shortcut is rebindable in **Settings → Keybinds** — click a
   binding and press the new keys, `Backspace` unbinds, `Esc` cancels
+- **Search keybindings** — the Keybinds tab has a live filter: type any part of
+  an action name, group, or key combo (`ctrl t` finds `Ctrl+Shift+T`).
+  **Command palette → Keybindings…** jumps straight there with the search field
+  focused
 - Changes apply instantly and persist
 - Sidebar shortcuts, palette details, and context-menu hints follow the
   configured bindings
