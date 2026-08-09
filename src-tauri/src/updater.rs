@@ -19,6 +19,12 @@
 //!     emitting `updater://progress` while the download advances and
 //!     `updater://done` once it is in place.
 //!
+//! On Linux both installers also register a freedesktop `.desktop` menu
+//! entry (and the app icon, shipped inside the release tarball) under
+//! `$XDG_DATA_HOME` (default `~/.local/share`) so the app shows up in the
+//! application launcher — see `register_desktop_entry()` and install.sh's
+//! `install_desktop_entry()`.
+//!
 //! Both honor the `HF_VERSION` env var to pin a specific release tag (used by
 //! tests/CI and matching install.sh).
 //!
@@ -84,6 +90,100 @@ fn default_install_dir(home: Option<String>, local_app_data: Option<String>) -> 
             .to_string_lossy()
             .into_owned())
     }
+}
+
+/// The XDG data home: `XDG_DATA_HOME` when set, else `$HOME/.local/share`.
+/// The Linux `.desktop` entry and app icon are installed under this
+/// directory. Parameterized for tests; mirrors install.sh's data-home logic.
+#[cfg(target_os = "linux")]
+fn xdg_data_home(xdg: Option<String>, home: Option<String>) -> Result<PathBuf, String> {
+    if let Some(dir) = xdg.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    let home = home.ok_or_else(|| {
+        "XDG_DATA_HOME is not set and HOME is unavailable; cannot register a desktop menu entry"
+            .to_string()
+    })?;
+    Ok(Path::new(&home).join(".local").join("share"))
+}
+
+/// The freedesktop `.desktop` entry for an installed hiveField binary. The
+/// Exec path is double-quoted per the Desktop Entry spec so install dirs
+/// containing spaces resolve correctly. Must match install.sh's entry.
+#[cfg(target_os = "linux")]
+fn desktop_entry(exec_path: &Path, icon_name: &str) -> String {
+    format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Version=1.0\n\
+         Name=hiveField Terminal\n\
+         GenericName=Terminal\n\
+         Comment=A desktop terminal for coding-agent workflows\n\
+         Exec=\"{}\"\n\
+         Icon={icon_name}\n\
+         Terminal=false\n\
+         Categories=TerminalEmulator;System;Utility;\n\
+         Keywords=terminal;shell;console;\n\
+         StartupNotify=true\n",
+        exec_path.display()
+    )
+}
+
+/// Linux: write the `.desktop` menu entry — and the app icon, when the
+/// release ships one — under `data_home`: `applications/hivefield.desktop`
+/// and `icons/hicolor/128x128/apps/hivefield.png`. Parameterized on the data
+/// home for tests; `register_desktop_entry` resolves it from the env.
+#[cfg(target_os = "linux")]
+fn register_desktop_entry_in(
+    data_home: &Path,
+    install_path: &Path,
+    icon: Option<&[u8]>,
+) -> Result<(), String> {
+    let icon_name = match icon {
+        Some(bytes) => {
+            let icon_path = data_home
+                .join("icons")
+                .join("hicolor")
+                .join("128x128")
+                .join("apps")
+                .join("hivefield.png");
+            fs::create_dir_all(icon_path.parent().expect("icon path has a parent"))
+                .map_err(|e| format!("failed to create icon dir: {e}"))?;
+            fs::write(&icon_path, bytes)
+                .map_err(|e| format!("failed to write icon {}: {e}", icon_path.display()))?;
+            "hivefield"
+        }
+        // Older releases / bare-binary assets ship no icon: fall back to a
+        // stock terminal icon most themes provide.
+        None => "utilities-terminal",
+    };
+    let apps_dir = data_home.join("applications");
+    fs::create_dir_all(&apps_dir)
+        .map_err(|e| format!("failed to create applications dir {}: {e}", apps_dir.display()))?;
+    let desktop_path = apps_dir.join("hivefield.desktop");
+    fs::write(&desktop_path, desktop_entry(install_path, icon_name)).map_err(|e| {
+        format!(
+            "failed to write desktop entry {}: {e}",
+            desktop_path.display()
+        )
+    })?;
+    log::info!(
+        "registered desktop entry {} for {}",
+        desktop_path.display(),
+        install_path.display()
+    );
+    Ok(())
+}
+
+/// Resolve the XDG data home from the environment and register the desktop
+/// entry there (see `register_desktop_entry_in`).
+#[cfg(target_os = "linux")]
+fn register_desktop_entry(install_path: &Path, icon: Option<&[u8]>) -> Result<(), String> {
+    let data_home = xdg_data_home(
+        std::env::var("XDG_DATA_HOME").ok(),
+        std::env::var("HOME").ok(),
+    )?;
+    register_desktop_entry_in(&data_home, install_path, icon)
 }
 
 /// OS/arch keys used in release asset names (must match `install.sh`).
@@ -376,17 +476,23 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
     // the error tells the user to close the app and retry.
     let staged = install_path.with_file_name(format!(".{}.new", bin_name(os)));
     let _ = fs::remove_file(&staged);
-    let stage_result = (|| -> Result<(), String> {
-        if archive_path
+    let stage_result: Result<Option<Vec<u8>>, String> = (|| {
+        // Tarballs carry the app icon (hivefield.png) next to the binary so
+        // the .desktop menu entry can be registered with a proper icon.
+        let icon = if archive_path
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("gz") || e.eq_ignore_ascii_case("tgz"))
         {
-            extract_binary_from_tar_gz(&archive_path, &staged, os)?;
+            let (bin, icon) = extract_archive(&archive_path, os)?;
+            fs::write(&staged, bin)
+                .map_err(|e| format!("failed to write staged binary: {e}"))?;
+            icon
         } else {
             fs::copy(&archive_path, &staged)
                 .map_err(|e| format!("failed to copy downloaded binary: {e}"))?;
-        }
+            None
+        };
         // Keep the executable bit (no-op on Windows).
         #[cfg(unix)]
         {
@@ -398,13 +504,17 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
             fs::set_permissions(&staged, perms)
                 .map_err(|e| format!("failed to chmod staged binary: {e}"))?;
         }
-        Ok(())
+        Ok(icon)
     })();
-    if let Err(e) = stage_result {
-        let _ = fs::remove_file(&staged);
-        let _ = fs::remove_file(&archive_path);
-        return Err(e);
-    }
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    let icon_bytes = match stage_result {
+        Ok(icon) => icon,
+        Err(e) => {
+            let _ = fs::remove_file(&staged);
+            let _ = fs::remove_file(&archive_path);
+            return Err(e);
+        }
+    };
 
     fs::rename(&staged, &install_path).map_err(|e| {
         let _ = fs::remove_file(&staged);
@@ -414,6 +524,16 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
         )
     })?;
     let _ = fs::remove_file(&archive_path);
+
+    // Linux: (re)write the .desktop menu entry so the app shows up in the
+    // launcher with the right icon, pointing at the current install path.
+    // Best-effort — the binary is already in place and runnable; a menu
+    // entry that fails to write (e.g. a read-only XDG_DATA_HOME) must not
+    // turn a successful update into a reported failure.
+    #[cfg(target_os = "linux")]
+    if let Err(e) = register_desktop_entry(&install_path, icon_bytes.as_deref()) {
+        log::warn!("{e}");
+    }
 
     let done = UpdateDone {
         version: version.clone(),
@@ -427,15 +547,19 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
     Ok(done)
 }
 
-/// Extract the `hivefield` (or `hivefield.exe`) binary from a `.tar.gz`
-/// archive into `dest`, wherever it is nested inside the archive.
-fn extract_binary_from_tar_gz(archive_path: &Path, dest: &Path, os: &str) -> Result<(), String> {
+/// Extract the `hivefield` (or `hivefield.exe`) binary and, when present,
+/// the app icon (`hivefield.png` or `128x128.png`) from a `.tar.gz` archive,
+/// wherever they are nested inside it. Returns `(binary bytes, icon bytes)`;
+/// the icon backs the Linux `.desktop` entry and is only looked up there.
+fn extract_archive(archive_path: &Path, os: &str) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
     let file = fs::File::open(archive_path)
         .map_err(|e| format!("failed to open downloaded archive: {e}"))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     let wanted = bin_name(os);
-    let mut bytes: Option<Vec<u8>> = None;
+    let want_icon = cfg!(target_os = "linux");
+    let mut bin: Option<Vec<u8>> = None;
+    let mut icon: Option<Vec<u8>> = None;
     for entry in archive
         .entries()
         .map_err(|e| format!("failed to read archive: {e}"))?
@@ -451,12 +575,21 @@ fn extract_binary_from_tar_gz(archive_path: &Path, dest: &Path, os: &str) -> Res
             entry
                 .read_to_end(&mut buf)
                 .map_err(|e| format!("failed to extract {wanted}: {e}"))?;
-            bytes = Some(buf);
+            bin = Some(buf);
+        } else if want_icon && icon.is_none() && (name == "hivefield.png" || name == "128x128.png")
+        {
+            let mut buf = Vec::new();
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("failed to extract {name}: {e}"))?;
+            icon = Some(buf);
+        }
+        if bin.is_some() && (icon.is_some() || !want_icon) {
             break;
         }
     }
-    let bytes = bytes.ok_or_else(|| format!("archive does not contain a {wanted} binary"))?;
-    fs::write(dest, bytes).map_err(|e| format!("failed to write staged binary: {e}"))
+    let bin = bin.ok_or_else(|| format!("archive does not contain a {wanted} binary"))?;
+    Ok((bin, icon))
 }
 
 #[cfg(test)]
@@ -649,5 +782,133 @@ mod tests {
         let asset = select_asset(&release, "linux", "x86_64").expect("asset found");
         assert_eq!(asset.name, "hivefield");
         assert_eq!(asset.size, 21294736);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xdg_data_home_honors_the_env_override() {
+        assert_eq!(
+            xdg_data_home(Some("/custom/data".to_string()), Some("/home/u".to_string())).unwrap(),
+            PathBuf::from("/custom/data")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xdg_data_home_defaults_to_home_local_share() {
+        assert_eq!(
+            xdg_data_home(None, Some("/home/u".to_string())).unwrap(),
+            PathBuf::from("/home/u/.local/share")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xdg_data_home_requires_home_without_override() {
+        assert!(xdg_data_home(None, None).is_err());
+        assert!(xdg_data_home(Some("  ".to_string()), None).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn desktop_entry_points_at_the_installed_binary() {
+        let entry = desktop_entry(Path::new("/home/u/.local/bin/hivefield"), "hivefield");
+        assert!(entry.contains("Exec=\"/home/u/.local/bin/hivefield\""));
+        assert!(entry.contains("Icon=hivefield"));
+        assert!(entry.contains("Type=Application"));
+        assert!(entry.contains("Terminal=false"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn desktop_entry_quotes_exec_paths_with_spaces() {
+        // The Desktop Entry spec requires quoting so install dirs containing
+        // spaces (e.g. a custom HF_INSTALL_DIR) still resolve.
+        let entry = desktop_entry(Path::new("/opt/My Apps/hivefield"), "hivefield");
+        assert!(entry.contains("Exec=\"/opt/My Apps/hivefield\""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn register_desktop_entry_writes_menu_entry_and_icon() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_home = tmp.path().join("data");
+        let bin = tmp.path().join("bin").join("hivefield");
+        register_desktop_entry_in(&data_home, &bin, Some(&[1, 2, 3])).unwrap();
+
+        let desktop = data_home.join("applications").join("hivefield.desktop");
+        assert!(desktop.exists());
+        let text = fs::read_to_string(&desktop).unwrap();
+        assert!(text.contains(&format!("Exec=\"{}\"", bin.display())));
+        assert!(text.contains("Icon=hivefield"));
+
+        let icon = data_home
+            .join("icons")
+            .join("hicolor")
+            .join("128x128")
+            .join("apps")
+            .join("hivefield.png");
+        assert_eq!(fs::read(&icon).unwrap(), vec![1, 2, 3]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn register_desktop_entry_without_icon_falls_back_to_a_generic_icon() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_home = tmp.path().join("data");
+        let bin = tmp.path().join("bin").join("hivefield");
+        register_desktop_entry_in(&data_home, &bin, None).unwrap();
+
+        let desktop = data_home.join("applications").join("hivefield.desktop");
+        let text = fs::read_to_string(&desktop).unwrap();
+        assert!(text.contains("Icon=utilities-terminal"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn extract_archive_returns_the_binary_and_icon_wherever_they_are_nested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("release.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        let mut bin_header = tar::Header::new_gnu();
+        bin_header.set_size(4);
+        bin_header.set_mode(0o755);
+        bin_header.set_cksum();
+        tar.append_data(&mut bin_header, "release/hivefield", &b"BIN\0"[..])
+            .unwrap();
+        let mut icon_header = tar::Header::new_gnu();
+        icon_header.set_size(3);
+        icon_header.set_mode(0o644);
+        icon_header.set_cksum();
+        tar.append_data(&mut icon_header, "release/hivefield.png", &b"ICO"[..])
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let (bin, icon) = extract_archive(&archive, "linux").unwrap();
+        assert_eq!(bin, b"BIN\0");
+        assert_eq!(icon.as_deref(), Some(&b"ICO"[..]));
+    }
+
+    #[test]
+    fn extract_archive_returns_none_icon_when_archive_has_no_icon() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("release.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(3);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "hivefield", &b"BIN"[..]).unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let (bin, icon) = extract_archive(&archive, "linux").unwrap();
+        assert_eq!(bin, b"BIN");
+        assert!(icon.is_none());
     }
 }

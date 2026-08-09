@@ -15,6 +15,10 @@
 #   HF_INSTALL_DIR  directory to install into
 #                   (default: $HOME/.local/bin, created if missing)
 #
+# On Linux the installer also registers a .desktop menu entry (and app
+# icon) under $XDG_DATA_HOME (default ~/.local/share) so hiveField shows up
+# in the application launcher — see install_desktop_entry().
+#
 # Prints where the binary was installed. Exits non-zero on any failure.
 set -e
 
@@ -33,6 +37,73 @@ install_dir() {
     else
         die "HOME is not set; set HF_INSTALL_DIR to choose an install location"
     fi
+}
+
+# Linux only: install the app icon (when the release ships one) and write a
+# .desktop menu entry so hiveField shows up in the application launcher. The
+# entry lives in $XDG_DATA_HOME/applications (default
+# $HOME/.local/share/applications) and the icon in the hicolor theme under
+# the same data dir — the standard user-local locations, no root needed.
+# Best-effort: a failure here must not undo a successful binary install.
+# Must mirror updater.rs `register_desktop_entry()` — same paths, same entry.
+install_desktop_entry() {
+    bin_path="$1"
+    stagedir="$2"
+
+    if [ -z "${XDG_DATA_HOME:-}" ] && [ -z "${HOME:-}" ]; then
+        return 1
+    fi
+    if [ -n "${XDG_DATA_HOME:-}" ]; then
+        data_home="$XDG_DATA_HOME"
+    else
+        data_home="$HOME/.local/share"
+    fi
+
+    # New releases ship hivefield.png in the tarball next to the binary;
+    # older releases / bare-binary assets have none, so fall back to a stock
+    # terminal icon in the entry.
+    icon_src=""
+    for candidate in "$stagedir/hivefield.png" "$stagedir/128x128.png"; do
+        [ -f "$candidate" ] && icon_src="$candidate" && break
+    done
+    if [ -z "$icon_src" ]; then
+        icon_src="$(find "$stagedir" -type f \( -name 'hivefield.png' -o -name '128x128.png' \) 2>/dev/null | head -n1)"
+    fi
+    if [ -n "$icon_src" ]; then
+        icon_dir="$data_home/icons/hicolor/128x128/apps"
+        mkdir -p "$icon_dir" || return 1
+        cp "$icon_src" "$icon_dir/hivefield.png" || return 1
+        icon_name="hivefield"
+        # Refresh icon caches when the tooling exists (best-effort) so the
+        # launcher picks the icon up immediately.
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t "$data_home/icons/hicolor" >/dev/null 2>&1 || true
+        fi
+    else
+        icon_name="utilities-terminal"
+    fi
+
+    apps_dir="$data_home/applications"
+    mkdir -p "$apps_dir" || return 1
+    desktop_file="$apps_dir/hivefield.desktop"
+    {
+        printf '[Desktop Entry]\n'
+        printf 'Type=Application\n'
+        printf 'Version=1.0\n'
+        printf 'Name=hiveField Terminal\n'
+        printf 'GenericName=Terminal\n'
+        printf 'Comment=A desktop terminal for coding-agent workflows\n'
+        printf 'Exec="%s"\n' "$bin_path"
+        printf 'Icon=%s\n' "$icon_name"
+        printf 'Terminal=false\n'
+        printf 'Categories=TerminalEmulator;System;Utility;\n'
+        printf 'Keywords=terminal;shell;console;\n'
+        printf 'StartupNotify=true\n'
+    } > "$desktop_file" || return 1
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+    fi
+    say "Registered a desktop menu entry ($desktop_file)"
 }
 
 # Map `uname` output to the OS/arch keys used in release asset names.
@@ -125,6 +196,13 @@ download_and_install() {
     [ "$os_key" = "windows" ] && dest="$INSTALL_DIR/$BIN_NAME.exe"
     cp "$bin" "$dest" || die "failed to install to $dest"
     chmod +x "$dest" 2>/dev/null || true
+
+    # Linux: register a .desktop menu entry so the app shows up in the
+    # application launcher (best-effort, see install_desktop_entry).
+    if [ "$os_key" = "linux" ]; then
+        install_desktop_entry "$dest" "$tmpdir" || \
+            say "warning: could not register a desktop menu entry — hivefield is still installed and runnable"
+    fi
 
     say ""
     say "Installed hiveField $version to $dest"

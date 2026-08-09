@@ -452,6 +452,14 @@ share the rule):
 1. `$HF_INSTALL_DIR` when set, otherwise
 2. `$HOME/.local/bin` (unix) / `%LOCALAPPDATA%\hivefield\bin` (Windows)
 
+On **Linux**, installing also registers hiveField in your application
+launcher: a `.desktop` entry is written to
+`$XDG_DATA_HOME/applications/hivefield.desktop` (`~/.local/share/applications`
+by default) and the app icon is installed into the hicolor theme under the
+same data directory. The entry is (re)written on every install or update, so
+it always points at the current install location; if a release ships no icon,
+the entry falls back to a stock terminal icon.
+
 `install.sh` / `install.ps1` also honor `HF_VERSION` to pin a release tag
 (`HF_VERSION=v0.2.0`). The release assets are named
 `hivefield-<os>-<arch>.tar.gz` (containing the `hivefield` binary) on unix and
