@@ -437,6 +437,21 @@ fn dir_exists(path: String) -> bool {
     std::path::Path::new(&path).is_dir()
 }
 
+/// IPC command: read the entire contents of a file at `path` as a UTF-8
+/// string. Used by the todo.txt renderer and other custom panels that need
+/// direct file access without spawning a shell.
+#[tauri::command]
+fn file_read(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("failed to read {path}: {e}"))
+}
+
+/// IPC command: write `content` into the file at `path`, overwriting it.
+/// Creates the file if it does not exist; parent directories must exist.
+#[tauri::command]
+fn file_write(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content).map_err(|e| format!("failed to write {path}: {e}"))
+}
+
 /// Only schemes the terminal should ever hand to the OS opener.
 fn allowed_url_scheme(url: &str) -> bool {
     let lower = url.to_lowercase();
@@ -516,6 +531,8 @@ pub fn run() {
             git_worktree_auto_create,
             git_diff_report,
             dir_exists,
+            file_read,
+            file_write,
             open_url,
             fonts::list_system_fonts,
             dictation::dictation_devices,

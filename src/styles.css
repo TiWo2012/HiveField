@@ -2096,3 +2096,125 @@ body {
   color: var(--hf-accent);
   text-decoration-color: var(--hf-accent);
 }
+
+/* ---------------------------------------------------------------------------
+ * Todo.txt panel (custom renderer, no terminal)
+ * ------------------------------------------------------------------------- */
+
+.todotxt-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--hf-base);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 13px;
+  line-height: 1.6;
+  user-select: none;
+}
+
+.todotxt-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.todotxt-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--hf-overlay0);
+  font-style: italic;
+}
+
+.todotxt-task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: default;
+  transition: background 80ms ease;
+}
+
+.todotxt-task:hover {
+  background: color-mix(in srgb, var(--hf-surface0) 50%, transparent);
+}
+
+.todotxt-task.done .todotxt-desc {
+  text-decoration: line-through;
+  color: var(--hf-overlay0);
+}
+
+.todotxt-checkbox {
+  flex: 0 0 auto;
+  cursor: pointer;
+  font-size: 15px;
+  color: var(--hf-overlay0);
+  transition: color 100ms ease;
+  user-select: none;
+}
+
+.todotxt-checkbox:hover {
+  color: var(--hf-green);
+}
+
+.todotxt-task.done .todotxt-checkbox {
+  color: var(--hf-green);
+}
+
+.todotxt-priority {
+  flex: 0 0 auto;
+  min-width: 28px;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--hf-accent);
+}
+
+.todotxt-desc {
+  flex: 1;
+  word-break: break-word;
+}
+
+.todotxt-tag {
+  color: var(--hf-teal);
+  font-weight: 500;
+}
+
+.todotxt-dates {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--hf-overlay0);
+  white-space: nowrap;
+}
+
+.todotxt-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--hf-surface1);
+  background: var(--hf-mantle);
+}
+
+.todotxt-input-icon {
+  flex: 0 0 auto;
+  font-size: 15px;
+  color: var(--hf-green);
+  font-weight: 700;
+}
+
+.todotxt-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 13px;
+  outline: none;
+  padding: 4px 0;
+}
+
+.todotxt-input::placeholder {
+  color: var(--hf-overlay0);
+  font-style: italic;
+}

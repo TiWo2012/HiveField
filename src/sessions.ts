@@ -21,11 +21,11 @@ import {
   isKnownModeAll,
   modeCommandAll,
   EDITOR_CMD,
-  TODO_CMD,
 } from "./agents";
 import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
 import { copyText, readClipboardText } from "./clipboard";
+import { setupTodoTxtPanel } from "./todotxt";
 import { registerTerminalRoot } from "./file-drop";
 import {
   applyTerminalSettings,
@@ -274,6 +274,18 @@ export function createTerminalComponent(): IContentRenderer {
       // Let right-click handlers map a terminal back to its panel cheaply.
       element.dataset.panelId = panelApi.id;
 
+      // --- todo.txt: custom renderer, no terminal / PTY ---
+      if (mode === "todotxt") {
+        invoke<string>("workspace_cwd")
+          .then((resolvedCwd) =>
+            setupTodoTxtPanel(element, resolvedCwd, () => panelApi.setActive())
+          )
+          .catch(() =>
+            setupTodoTxtPanel(element, "", () => panelApi.setActive())
+          );
+        return;
+      }
+
       // A restored layout may carry the sessionId of a session parked in the
       // background when its workspace was left. Reuse that session: its PTY
       // kept running and its terminal (scrollback and all) was kept alive
@@ -486,15 +498,6 @@ export function createTerminalComponent(): IContentRenderer {
                 autorun = await invoke<string>("editor_command");
               } catch {
                 autorun = "vi";
-              }
-            } else if (command === TODO_CMD) {
-              // Opens todo.txt in the current directory using the
-              // resolved editor (same logic as the Editor agent).
-              try {
-                autorun = await invoke<string>("editor_command");
-                autorun = `${autorun} todo.txt`;
-              } catch {
-                autorun = "vi todo.txt";
               }
             } else if (command !== undefined && command !== mode) {
               autorun = command;

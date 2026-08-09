@@ -66,6 +66,8 @@ describe("built-in registry (src/agents.json)", () => {
     expect(agentForModeAll("editor", NO_CUSTOMS)?.command).toBe(EDITOR_CMD);
     // Agents whose id is the command need no override.
     expect(agentForModeAll("opencode", NO_CUSTOMS)?.command).toBeUndefined();
+    // Todo.txt has no command override (it uses a custom renderer, not a shell).
+    expect(agentForModeAll("todotxt", NO_CUSTOMS)?.command).toBeUndefined();
   });
 
   test("editor and todotxt opt out of isolated worktrees", () => {

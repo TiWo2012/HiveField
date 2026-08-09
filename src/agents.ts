@@ -60,13 +60,6 @@ export const RAW_MODE = "raw";
 export const EDITOR_CMD = "$EDITOR";
 
 /**
- * Sentinel command for the built-in "Todo.txt" agent: resolved at spawn
- * time via the `todo_command` IPC command, falling back to `$EDITOR` then
- * `vi`. Opens the todo.txt file in the launch directory (or creates one).
- */
-export const TODO_CMD = "$TODO";
-
-/**
  * The major coding-agent CLIs, in sidebar order, imported from the shared
  * `src/agents.json` registry (single source of truth — the Rust PTY layer
  * reads the same file in a contract test, and a docs-drift test requires the
