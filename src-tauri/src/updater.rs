@@ -19,11 +19,24 @@
 //!     emitting `updater://progress` while the download advances and
 //!     `updater://done` once it is in place.
 //!
-//! On Linux both installers also register a freedesktop `.desktop` menu
-//! entry (and the app icon, shipped inside the release tarball) under
-//! `$XDG_DATA_HOME` (default `~/.local/share`) so the app shows up in the
-//! application launcher — see `register_desktop_entry()` and install.sh's
-//! `install_desktop_entry()`.
+//! Every platform also gets an application-launcher entry, (re)written on
+//! each install/update so it always points at the current install location:
+//!
+//!   - Linux: a freedesktop `.desktop` menu entry (and the app icon PNG,
+//!     shipped inside the release tarball) under `$XDG_DATA_HOME` (default
+//!     `~/.local/share`) — `register_desktop_entry()` / install.sh's
+//!     `install_desktop_entry()`.
+//!   - macOS: a minimal `.app` bundle in `~/Applications` (Launchpad,
+//!     Spotlight, Finder) wrapping the installed binary, with the icon
+//!     (`hivefield.icns`) shipped inside the release tarball —
+//!     `register_app_bundle()` / install.sh's `install_app_bundle()`.
+//!   - Windows: a Start Menu shortcut (`hiveField.lnk` under
+//!     `%APPDATA%\Microsoft\Windows\Start Menu\Programs`) created via
+//!     PowerShell's WScript.Shell COM — `register_start_menu_shortcut()` /
+//!     install.ps1's `New-StartMenuShortcut`.
+//!
+//! All three are best-effort: a launcher entry that fails to write (read-only
+//! data dirs, missing HOME/APPDATA) warns but never fails the install.
 //!
 //! Both honor the `HF_VERSION` env var to pin a specific release tag (used by
 //! tests/CI and matching install.sh).
@@ -70,7 +83,10 @@ pub fn install_dir() -> Result<String, String> {
 }
 
 /// The platform default install dir, parameterized for tests.
-fn default_install_dir(home: Option<String>, local_app_data: Option<String>) -> Result<String, String> {
+fn default_install_dir(
+    home: Option<String>,
+    local_app_data: Option<String>,
+) -> Result<String, String> {
     if cfg!(target_os = "windows") {
         let base = local_app_data.ok_or_else(|| {
             format!("{INSTALL_DIR_ENV} is not set and LOCALAPPDATA is unavailable; set {INSTALL_DIR_ENV} to choose an install location")
@@ -158,8 +174,12 @@ fn register_desktop_entry_in(
         None => "utilities-terminal",
     };
     let apps_dir = data_home.join("applications");
-    fs::create_dir_all(&apps_dir)
-        .map_err(|e| format!("failed to create applications dir {}: {e}", apps_dir.display()))?;
+    fs::create_dir_all(&apps_dir).map_err(|e| {
+        format!(
+            "failed to create applications dir {}: {e}",
+            apps_dir.display()
+        )
+    })?;
     let desktop_path = apps_dir.join("hivefield.desktop");
     fs::write(&desktop_path, desktop_entry(install_path, icon_name)).map_err(|e| {
         format!(
@@ -184,6 +204,196 @@ fn register_desktop_entry(install_path: &Path, icon: Option<&[u8]>) -> Result<()
         std::env::var("HOME").ok(),
     )?;
     register_desktop_entry_in(&data_home, install_path, icon)
+}
+
+/// The Info.plist for the minimal Launchpad `.app` bundle. `version` is the
+/// full release version (e.g. `"0.1.2-build.12"`); the short version string
+/// (shown by Finder/About) drops the `-build.N` suffix. Must match
+/// install.sh's plist.
+#[cfg(target_os = "macos")]
+fn info_plist(version: &str) -> String {
+    let short = version.split("-build.").next().unwrap_or(version);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>hiveField</string>
+  <key>CFBundleDisplayName</key>
+  <string>hiveField Terminal</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.hivefield.terminal</string>
+  <key>CFBundleExecutable</key>
+  <string>hivefield</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>{version}</string>
+  <key>CFBundleShortVersionString</key>
+  <string>{short}</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+</dict>
+</plist>
+"#,
+        version = version,
+        short = short,
+    )
+}
+
+/// macOS: create/refresh a minimal `.app` bundle around the installed
+/// binary under `apps_dir` (`~/Applications`) so hiveField shows up in
+/// Launchpad, Spotlight, and Finder's Applications. The bundle is assembled
+/// in a temp dir and swapped in, so an interrupted registration never leaves
+/// a half-written bundle behind; the new bundle replaces the old one on
+/// every update. Parameterized on the applications dir for tests;
+/// `register_app_bundle` resolves it from the environment.
+#[cfg(target_os = "macos")]
+fn register_app_bundle_in(
+    apps_dir: &Path,
+    install_path: &Path,
+    version: &str,
+    icon: Option<&[u8]>,
+) -> Result<(), String> {
+    fs::create_dir_all(apps_dir).map_err(|e| {
+        format!(
+            "failed to create applications dir {}: {e}",
+            apps_dir.display()
+        )
+    })?;
+    let app_dir = apps_dir.join("hiveField Terminal.app");
+    let tmp_dir = apps_dir.join(format!("hiveField Terminal.app.new.{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp_dir);
+    let macos_dir = tmp_dir.join("Contents").join("MacOS");
+    let resources_dir = tmp_dir.join("Contents").join("Resources");
+    fs::create_dir_all(&macos_dir)
+        .and_then(|_| fs::create_dir_all(&resources_dir))
+        .map_err(|e| format!("failed to create bundle dirs: {e}"))?;
+
+    fs::copy(install_path, macos_dir.join("hivefield"))
+        .map_err(|e| format!("failed to copy binary into the app bundle: {e}"))?;
+    fs::write(
+        tmp_dir.join("Contents").join("Info.plist"),
+        info_plist(version),
+    )
+    .map_err(|e| format!("failed to write Info.plist: {e}"))?;
+    if let Some(bytes) = icon {
+        fs::write(resources_dir.join("icon.icns"), bytes)
+            .map_err(|e| format!("failed to write icon.icns: {e}"))?;
+    }
+
+    // rename(2) cannot replace a non-empty directory, so drop the old bundle
+    // first. The binary itself lives in ~/.local/bin — the bundle copy is not
+    // what the user is running — so this never kills a live app.
+    let _ = fs::remove_dir_all(&app_dir);
+    fs::rename(&tmp_dir, &app_dir).map_err(|e| {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        format!("failed to install app bundle {}: {e}", app_dir.display())
+    })?;
+    log::info!(
+        "registered app bundle {} for {}",
+        app_dir.display(),
+        install_path.display()
+    );
+    Ok(())
+}
+
+/// Resolve `~/Applications` from the environment and register the Launchpad
+/// app bundle there (see `register_app_bundle_in`).
+#[cfg(target_os = "macos")]
+fn register_app_bundle(
+    install_path: &Path,
+    version: &str,
+    icon: Option<&[u8]>,
+) -> Result<(), String> {
+    let home = std::env::var("HOME")
+        .ok()
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| "HOME is unavailable; cannot register the app in Launchpad".to_string())?;
+    register_app_bundle_in(
+        &Path::new(&home).join("Applications"),
+        install_path,
+        version,
+        icon,
+    )
+}
+
+/// The user's Start Menu "Programs" directory. Parameterized for tests;
+/// mirrors install.ps1's shortcut location.
+#[cfg(target_os = "windows")]
+fn start_menu_programs_dir(appdata: Option<String>) -> Result<PathBuf, String> {
+    let appdata = appdata
+        .ok_or_else(|| "APPDATA is unavailable; cannot create a Start Menu shortcut".to_string())?;
+    Ok(Path::new(&appdata)
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs"))
+}
+
+/// Windows: create/refresh the Start Menu shortcut pointing at the installed
+/// executable. Writes the `.lnk` through PowerShell's WScript.Shell COM —
+/// the same mechanism install.ps1 uses; reimplementing the MS-SHLLINK
+/// binary format by hand is not worth it. The shortcut is rewritten on every
+/// install/update so it always points at the current install location.
+/// Best-effort: a failure (no PowerShell, locked Start Menu dir, …) is
+/// returned to the caller, which only logs it.
+#[cfg(target_os = "windows")]
+fn register_start_menu_shortcut_in(programs_dir: &Path, install_path: &Path) -> Result<(), String> {
+    fs::create_dir_all(programs_dir).map_err(|e| {
+        format!(
+            "failed to create Start Menu dir {}: {e}",
+            programs_dir.display()
+        )
+    })?;
+    let lnk_path = programs_dir.join("hiveField.lnk");
+    // Single-quoted PowerShell strings are literal except '' -> '; double any
+    // quotes in the paths (rare, but install dirs are user-controlled).
+    let ps_quote = |s: std::borrow::Cow<'_, str>| s.replace('\'', "''");
+    let script = format!(
+        "$ws = New-Object -ComObject WScript.Shell; \
+         $s = $ws.CreateShortcut('{lnk}'); \
+         $s.TargetPath = '{exe}'; \
+         $s.WorkingDirectory = '{wd}'; \
+         $s.Description = 'hiveField Terminal'; \
+         $s.Save()",
+        lnk = ps_quote(lnk_path.to_string_lossy()),
+        exe = ps_quote(install_path.to_string_lossy()),
+        wd = ps_quote(
+            install_path
+                .parent()
+                .map(Path::to_string_lossy)
+                .unwrap_or_default()
+        ),
+    );
+    let script: &str = &script;
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .map_err(|e| format!("failed to run powershell to create the shortcut: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "powershell failed to create the Start Menu shortcut: {}",
+            stderr.trim()
+        ));
+    }
+    log::info!(
+        "registered Start Menu shortcut {} for {}",
+        lnk_path.display(),
+        install_path.display()
+    );
+    Ok(())
+}
+
+/// Resolve the Start Menu programs dir from the environment and register the
+/// shortcut there (see `register_start_menu_shortcut_in`).
+#[cfg(target_os = "windows")]
+fn register_start_menu_shortcut(install_path: &Path) -> Result<(), String> {
+    let programs_dir = start_menu_programs_dir(std::env::var("APPDATA").ok())?;
+    register_start_menu_shortcut_in(&programs_dir, install_path)
 }
 
 /// OS/arch keys used in release asset names (must match `install.sh`).
@@ -258,7 +468,10 @@ fn select_asset(release: &serde_json::Value, os: &str, arch: &str) -> Option<Ass
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default()
                     .to_string(),
-                size: asset.get("size").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                size: asset
+                    .get("size")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
             });
         }
     }
@@ -449,20 +662,15 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
 
     // Stream the asset to a temp file in the system temp dir (never a
     // half-written file in the install dir).
-    let archive_path = std::env::temp_dir().join(format!(
-        "hivefield-update-{version}-{}",
-        asset.name
-    ));
+    let archive_path =
+        std::env::temp_dir().join(format!("hivefield-update-{version}-{}", asset.name));
     let _ = fs::remove_file(&archive_path);
     {
         let app = app.clone();
         let total = asset.size;
         client
             .get_to_file(&asset.url, &archive_path, move |percent| {
-                let _ = app.emit(
-                    "updater://progress",
-                    UpdateProgress { percent, total },
-                );
+                let _ = app.emit("updater://progress", UpdateProgress { percent, total });
             })
             .map_err(|e| {
                 let _ = fs::remove_file(&archive_path);
@@ -477,16 +685,16 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
     let staged = install_path.with_file_name(format!(".{}.new", bin_name(os)));
     let _ = fs::remove_file(&staged);
     let stage_result: Result<Option<Vec<u8>>, String> = (|| {
-        // Tarballs carry the app icon (hivefield.png) next to the binary so
-        // the .desktop menu entry can be registered with a proper icon.
+        // Tarballs carry the app icon (hivefield.png on Linux, hivefield.icns
+        // on macOS) next to the binary so the launcher entry can be
+        // registered with a proper icon.
         let icon = if archive_path
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("gz") || e.eq_ignore_ascii_case("tgz"))
         {
             let (bin, icon) = extract_archive(&archive_path, os)?;
-            fs::write(&staged, bin)
-                .map_err(|e| format!("failed to write staged binary: {e}"))?;
+            fs::write(&staged, bin).map_err(|e| format!("failed to write staged binary: {e}"))?;
             icon
         } else {
             fs::copy(&archive_path, &staged)
@@ -506,7 +714,10 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
         }
         Ok(icon)
     })();
-    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "macos")),
+        allow(unused_variables)
+    )]
     let icon_bytes = match stage_result {
         Ok(icon) => icon,
         Err(e) => {
@@ -525,13 +736,20 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
     })?;
     let _ = fs::remove_file(&archive_path);
 
-    // Linux: (re)write the .desktop menu entry so the app shows up in the
-    // launcher with the right icon, pointing at the current install path.
-    // Best-effort — the binary is already in place and runnable; a menu
-    // entry that fails to write (e.g. a read-only XDG_DATA_HOME) must not
-    // turn a successful update into a reported failure.
+    // Launcher integration, best-effort on every platform: the binary is
+    // already in place and runnable, so a launcher entry that fails to write
+    // (read-only data dirs, missing HOME/APPDATA, …) must not turn a
+    // successful update into a reported failure.
     #[cfg(target_os = "linux")]
     if let Err(e) = register_desktop_entry(&install_path, icon_bytes.as_deref()) {
+        log::warn!("{e}");
+    }
+    #[cfg(target_os = "macos")]
+    if let Err(e) = register_app_bundle(&install_path, &version, icon_bytes.as_deref()) {
+        log::warn!("{e}");
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(e) = register_start_menu_shortcut(&install_path) {
         log::warn!("{e}");
     }
 
@@ -548,16 +766,18 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
 }
 
 /// Extract the `hivefield` (or `hivefield.exe`) binary and, when present,
-/// the app icon (`hivefield.png` or `128x128.png`) from a `.tar.gz` archive,
-/// wherever they are nested inside it. Returns `(binary bytes, icon bytes)`;
-/// the icon backs the Linux `.desktop` entry and is only looked up there.
+/// the app icon from a `.tar.gz` archive, wherever they are nested inside
+/// it. Returns `(binary bytes, icon bytes)`; the icon backs the Linux
+/// `.desktop` entry (PNG) and the macOS Launchpad bundle (`hivefield.icns`),
+/// see `icon_asset_names()`. Windows assets are bare executables and never
+/// reach this function.
 fn extract_archive(archive_path: &Path, os: &str) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
     let file = fs::File::open(archive_path)
         .map_err(|e| format!("failed to open downloaded archive: {e}"))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     let wanted = bin_name(os);
-    let want_icon = cfg!(target_os = "linux");
+    let icon_names = icon_asset_names();
     let mut bin: Option<Vec<u8>> = None;
     let mut icon: Option<Vec<u8>> = None;
     for entry in archive
@@ -576,20 +796,33 @@ fn extract_archive(archive_path: &Path, os: &str) -> Result<(Vec<u8>, Option<Vec
                 .read_to_end(&mut buf)
                 .map_err(|e| format!("failed to extract {wanted}: {e}"))?;
             bin = Some(buf);
-        } else if want_icon && icon.is_none() && (name == "hivefield.png" || name == "128x128.png")
-        {
+        } else if icon.is_none() && icon_names.contains(&name.as_str()) {
             let mut buf = Vec::new();
             entry
                 .read_to_end(&mut buf)
                 .map_err(|e| format!("failed to extract {name}: {e}"))?;
             icon = Some(buf);
         }
-        if bin.is_some() && (icon.is_some() || !want_icon) {
+        if bin.is_some() && (icon.is_some() || icon_names.is_empty()) {
             break;
         }
     }
     let bin = bin.ok_or_else(|| format!("archive does not contain a {wanted} binary"))?;
     Ok((bin, icon))
+}
+
+/// The file names a release tarball may carry the app icon under, per OS:
+/// Linux ships a PNG for the `.desktop` entry, macOS ships an `.icns` for
+/// the Launchpad app bundle. Windows assets are bare executables (never
+/// tarballs), so there is no icon to look up.
+fn icon_asset_names() -> &'static [&'static str] {
+    if cfg!(target_os = "linux") {
+        &["hivefield.png", "128x128.png"]
+    } else if cfg!(target_os = "macos") {
+        &["hivefield.icns"]
+    } else {
+        &[]
+    }
 }
 
 #[cfg(test)]
@@ -615,10 +848,22 @@ mod tests {
 
     #[test]
     fn asset_name_matches_convention() {
-        assert_eq!(asset_name("linux", "x86_64"), "hivefield-linux-x86_64.tar.gz");
-        assert_eq!(asset_name("linux", "aarch64"), "hivefield-linux-aarch64.tar.gz");
-        assert_eq!(asset_name("macos", "aarch64"), "hivefield-macos-aarch64.tar.gz");
-        assert_eq!(asset_name("windows", "x86_64"), "hivefield-windows-x86_64.exe");
+        assert_eq!(
+            asset_name("linux", "x86_64"),
+            "hivefield-linux-x86_64.tar.gz"
+        );
+        assert_eq!(
+            asset_name("linux", "aarch64"),
+            "hivefield-linux-aarch64.tar.gz"
+        );
+        assert_eq!(
+            asset_name("macos", "aarch64"),
+            "hivefield-macos-aarch64.tar.gz"
+        );
+        assert_eq!(
+            asset_name("windows", "x86_64"),
+            "hivefield-windows-x86_64.exe"
+        );
     }
 
     #[test]
@@ -728,7 +973,9 @@ mod tests {
         ]);
         let asset = select_asset(&release, "linux", "x86_64").expect("asset found");
         assert_eq!(asset.name, "hivefield-linux-x86_64.tar.gz");
-        assert!(asset.url.starts_with("https://github.com/TiWo2012/HiveField"));
+        assert!(asset
+            .url
+            .starts_with("https://github.com/TiWo2012/HiveField"));
     }
 
     #[test]
@@ -762,7 +1009,10 @@ mod tests {
 
     #[test]
     fn select_asset_ignores_unrelated_assets() {
-        let release = release_json(&["hivefield_0.2.0_amd64.deb", "hivefield-linux-x86_64.AppImage"]);
+        let release = release_json(&[
+            "hivefield_0.2.0_amd64.deb",
+            "hivefield-linux-x86_64.AppImage",
+        ]);
         assert!(select_asset(&release, "linux", "x86_64").is_none());
     }
 
@@ -788,7 +1038,11 @@ mod tests {
     #[test]
     fn xdg_data_home_honors_the_env_override() {
         assert_eq!(
-            xdg_data_home(Some("/custom/data".to_string()), Some("/home/u".to_string())).unwrap(),
+            xdg_data_home(
+                Some("/custom/data".to_string()),
+                Some("/home/u".to_string())
+            )
+            .unwrap(),
             PathBuf::from("/custom/data")
         );
     }
@@ -903,12 +1157,134 @@ mod tests {
         header.set_size(3);
         header.set_mode(0o755);
         header.set_cksum();
-        tar.append_data(&mut header, "hivefield", &b"BIN"[..]).unwrap();
+        tar.append_data(&mut header, "hivefield", &b"BIN"[..])
+            .unwrap();
         let encoder = tar.into_inner().unwrap();
         encoder.finish().unwrap();
 
         let (bin, icon) = extract_archive(&archive, "linux").unwrap();
         assert_eq!(bin, b"BIN");
         assert!(icon.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn info_plist_contains_required_keys_and_version() {
+        let plist = info_plist("0.1.2-build.12");
+        assert!(plist.contains("<key>CFBundleIdentifier</key>"));
+        assert!(plist.contains("<string>dev.hivefield.terminal</string>"));
+        assert!(plist.contains("<key>CFBundleExecutable</key>"));
+        assert!(plist.contains("<string>hivefield</string>"));
+        assert!(plist.contains("<string>0.1.2-build.12</string>"));
+        assert!(plist.contains("<key>CFBundleShortVersionString</key>"));
+        // The short version string drops the build suffix Finder shows.
+        assert!(plist.contains("<string>0.1.2</string>"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn info_plist_keeps_versions_without_a_build_suffix() {
+        let plist = info_plist("0.2.0");
+        assert!(plist.contains("<string>0.2.0</string>"));
+        assert!(!plist.contains("build"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn register_app_bundle_writes_bundle_structure_and_icon() {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps_dir = tmp.path().join("Applications");
+        let bin = tmp.path().join("bin").join("hivefield");
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        fs::write(&bin, b"BIN").unwrap();
+
+        register_app_bundle_in(&apps_dir, &bin, "0.1.2-build.12", Some(&[1, 2, 3])).unwrap();
+
+        let app = apps_dir.join("hiveField Terminal.app");
+        assert!(app
+            .join("Contents")
+            .join("MacOS")
+            .join("hivefield")
+            .exists());
+        assert_eq!(
+            fs::read(app.join("Contents").join("MacOS").join("hivefield")).unwrap(),
+            b"BIN"
+        );
+        let plist = fs::read_to_string(app.join("Contents").join("Info.plist")).unwrap();
+        assert!(plist.contains("<string>0.1.2-build.12</string>"));
+        assert_eq!(
+            fs::read(app.join("Contents").join("Resources").join("icon.icns")).unwrap(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn register_app_bundle_replaces_the_previous_bundle_on_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps_dir = tmp.path().join("Applications");
+        let bin = tmp.path().join("bin").join("hivefield");
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        fs::write(&bin, b"BIN").unwrap();
+
+        register_app_bundle_in(&apps_dir, &bin, "0.1.2-build.12", Some(&[1, 2, 3])).unwrap();
+        // A newer release with no icon: the plist version must move forward
+        // and the stale icon must be gone, not merged with the old bundle.
+        register_app_bundle_in(&apps_dir, &bin, "0.2.0-build.13", None).unwrap();
+
+        let app = apps_dir.join("hiveField Terminal.app");
+        let plist = fs::read_to_string(app.join("Contents").join("Info.plist")).unwrap();
+        assert!(plist.contains("<string>0.2.0-build.13</string>"));
+        assert!(!plist.contains("0.1.2"));
+        assert!(!app
+            .join("Contents")
+            .join("Resources")
+            .join("icon.icns")
+            .exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn extract_archive_pulls_the_icns_on_macos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("release.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        let mut bin_header = tar::Header::new_gnu();
+        bin_header.set_size(4);
+        bin_header.set_mode(0o755);
+        bin_header.set_cksum();
+        tar.append_data(&mut bin_header, "release/hivefield", &b"BIN\0"[..])
+            .unwrap();
+        let mut icns_header = tar::Header::new_gnu();
+        icns_header.set_size(3);
+        icns_header.set_mode(0o644);
+        icns_header.set_cksum();
+        tar.append_data(&mut icns_header, "release/hivefield.icns", &b"ICN"[..])
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let (bin, icon) = extract_archive(&archive, "macos").unwrap();
+        assert_eq!(bin, b"BIN\0");
+        assert_eq!(icon.as_deref(), Some(&b"ICN"[..]));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn start_menu_programs_dir_resolves_under_appdata() {
+        assert_eq!(
+            start_menu_programs_dir(Some("C:\\Users\\u\\AppData\\Roaming".to_string())).unwrap(),
+            PathBuf::from(
+                "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs"
+            )
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn start_menu_programs_dir_requires_appdata() {
+        assert!(start_menu_programs_dir(None).is_err());
     }
 }

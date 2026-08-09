@@ -17,7 +17,10 @@
 #
 # On Linux the installer also registers a .desktop menu entry (and app
 # icon) under $XDG_DATA_HOME (default ~/.local/share) so hiveField shows up
-# in the application launcher — see install_desktop_entry().
+# in the application launcher — see install_desktop_entry(). On macOS it
+# registers a minimal .app bundle in ~/Applications (Launchpad/Spotlight) —
+# see install_app_bundle(). Both are best-effort and rewritten on every
+# install/update.
 #
 # Prints where the binary was installed. Exits non-zero on any failure.
 set -e
@@ -104,6 +107,77 @@ install_desktop_entry() {
         update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
     fi
     say "Registered a desktop menu entry ($desktop_file)"
+}
+
+# macOS only: create/refresh a minimal .app bundle in $HOME/Applications so
+# hiveField shows up in Launchpad, Spotlight, and Finder's Applications. The
+# bundle wraps a copy of the installed binary plus an Info.plist (the
+# release tarball optionally ships the icon as hivefield.icns). It is
+# rewritten on every install/update so it always runs the current binary.
+# Best-effort: a failure here must not undo a successful binary install.
+# Must mirror updater.rs `register_app_bundle()` — same paths, same plist.
+install_app_bundle() {
+    bin_path="$1"
+    stagedir="$2"
+    version="${3#v}"
+
+    [ -n "${HOME:-}" ] || return 1
+    apps_dir="$HOME/Applications"
+    app_dir="$apps_dir/hiveField Terminal.app"
+    tmp_app="$apps_dir/hiveField Terminal.app.new.$$"
+
+    mkdir -p "$apps_dir" || return 1
+    rm -rf "$tmp_app"
+    mkdir -p "$tmp_app/Contents/MacOS" "$tmp_app/Contents/Resources" || { rm -rf "$tmp_app"; return 1; }
+
+    cp "$bin_path" "$tmp_app/Contents/MacOS/hivefield" || { rm -rf "$tmp_app"; return 1; }
+    chmod +x "$tmp_app/Contents/MacOS/hivefield" 2>/dev/null || true
+
+    # New releases ship hivefield.icns in the tarball; older releases have
+    # none, in which case Launchpad shows a generic icon.
+    icns=""
+    for candidate in "$stagedir/hivefield.icns" "$stagedir/icon.icns"; do
+        [ -f "$candidate" ] && icns="$candidate" && break
+    done
+    if [ -z "$icns" ]; then
+        icns="$(find "$stagedir" -type f -name '*.icns' 2>/dev/null | head -n1)"
+    fi
+    if [ -n "$icns" ]; then
+        cp "$icns" "$tmp_app/Contents/Resources/icon.icns" || true
+    fi
+
+    # Finder/About show the short version (drop the "-build.N" suffix);
+    # CFBundleVersion carries the full tag so Launchpad can tell builds apart.
+    short_version="${version%%-build.*}"
+    cat > "$tmp_app/Contents/Info.plist" <<EOF || { rm -rf "$tmp_app"; return 1; }
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>hiveField</string>
+  <key>CFBundleDisplayName</key>
+  <string>hiveField Terminal</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.hivefield.terminal</string>
+  <key>CFBundleExecutable</key>
+  <string>hivefield</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>$version</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$short_version</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+</dict>
+</plist>
+EOF
+
+    # Swap the new bundle in (rename over a non-empty dir fails on unix, so
+    # drop the old one first; Launchpad re-indexes ~/Applications).
+    rm -rf "$app_dir" && mv "$tmp_app" "$app_dir" || { rm -rf "$tmp_app"; return 1; }
+    say "Registered the app in Launchpad ($app_dir)"
 }
 
 # Map `uname` output to the OS/arch keys used in release asset names.
@@ -202,6 +276,13 @@ download_and_install() {
     if [ "$os_key" = "linux" ]; then
         install_desktop_entry "$dest" "$tmpdir" || \
             say "warning: could not register a desktop menu entry — hivefield is still installed and runnable"
+    fi
+
+    # macOS: register a Launchpad .app bundle (best-effort, see
+    # install_app_bundle).
+    if [ "$os_key" = "macos" ]; then
+        install_app_bundle "$dest" "$tmpdir" "$version" || \
+            say "warning: could not register the app in Launchpad — hivefield is still installed and runnable"
     fi
 
     say ""

@@ -127,9 +127,14 @@ jobs:
         run: |
           mkdir -p release-artifacts updater-asset
           # Updater assets: tarball + bare binary named exactly as install.sh
-          # and updater.rs expect (hivefield-macos-<arch>.tar.gz).
+          # and updater.rs expect (hivefield-macos-<arch>.tar.gz). The tarball
+          # also carries the app icon (hivefield.icns, converted from the
+          # 1024px PNG with sips) so install.sh and updater.rs can give the
+          # ~/Applications bundle a real icon (see install.sh
+          # install_app_bundle / updater.rs register_app_bundle).
           cp src-tauri/target/release/hivefield updater-asset/hivefield-macos-${{ matrix.arch }}
-          tar -czf updater-asset/hivefield-macos-${{ matrix.arch }}.tar.gz -C src-tauri/target/release hivefield
+          sips -s format icns src-tauri/icons/icon.png --out src-tauri/target/release/hivefield.icns
+          tar -czf updater-asset/hivefield-macos-${{ matrix.arch }}.tar.gz -C src-tauri/target/release hivefield hivefield.icns
           # GUI installers: the .dmg plus the .app bundle zipped for direct
           # drag-into-Applications installs.
           cp src-tauri/target/release/bundle/dmg/*.dmg release-artifacts/
