@@ -14,6 +14,7 @@ import type {
   GroupNavigationDirection,
   GroupPanelPartInitParameters,
   IContentRenderer,
+  IDockviewPanel,
 } from "dockview";
 import {
   agentUsesWorktreeAll,
@@ -600,7 +601,7 @@ export function addPanelWithMode(
   position?: AddPanelPositionOptions,
   cwd?: string,
   titleOverride?: string
-) {
+): IDockviewPanel {
   // A fresh agent session without a pinned cwd gets a codename (the tab
   // title and the auto-created worktree's branch are both derived from it).
   // Agents that opt out of worktrees (the Editor) keep the plain mode title.
@@ -619,6 +620,7 @@ export function addPanelWithMode(
     ...(position ? { position } : {}),
   });
   panel.api.setActive();
+  return panel;
 }
 
 /** The terminal entry backing the currently focused panel, if any. */
@@ -644,6 +646,27 @@ export function movePaneFocus(direction: GroupNavigationDirection): boolean {
   // Activate the group via its active panel; our component's
   // onDidActiveChange handler then focuses the terminal there.
   adjacent.activePanel?.api.setActive();
+  return true;
+}
+
+/**
+ * Cycle focus to the next/previous tab (panel) in the workspace, wrapping
+ * around at both ends (Ctrl+Tab / Ctrl+Shift+Tab). Panels cycle in dockview's
+ * layout order — group by group, then left to right within a group — the same
+ * order the command palette lists them in. Returns true when a panel was
+ * active (so the caller always consumes the key); false when the layout has
+ * no active panel at all.
+ */
+export function cycleTab(direction: 1 | -1): boolean {
+  const api = getApi();
+  const active = api.activePanel;
+  if (!active) return false;
+  const panels = api.panels;
+  if (panels.length > 1) {
+    const index = panels.indexOf(active);
+    const next = panels[(index + direction + panels.length) % panels.length];
+    next.api.setActive();
+  }
   return true;
 }
 

@@ -9,7 +9,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { matchesKeybind, type KeybindAction } from "./keybinds";
 import { getSettings, updateSettings, FONT_SIZE_MAX, FONT_SIZE_MIN } from "./settings";
 import { toggleSettings } from "./settings-ui";
-import { activeSessionEntry, addPanelWithMode, movePaneFocus } from "./sessions";
+import { activeSessionEntry, addPanelWithMode, cycleTab, movePaneFocus } from "./sessions";
 import { renamePanel } from "./titles";
 import { openSearch, isSearchOpen } from "./search";
 import { isPaletteOpen } from "./palette";
@@ -165,6 +165,22 @@ export function setupKeyboard() {
           e.stopPropagation();
           return;
         }
+      }
+      // Tab cycling: Ctrl+Tab / Ctrl+Shift+Tab move to the next/previous
+      // panel in the workspace (wrapping). Intercepted unconditionally — an
+      // active panel is effectively always present, and Tab would otherwise
+      // reach the shell as a literal tab character.
+      if (matchesKeybind(kb.nextTab, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        cycleTab(1);
+        return;
+      }
+      if (matchesKeybind(kb.previousTab, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        cycleTab(-1);
+        return;
       }
       // Broadcast toggle: stop the combo from reaching the shell when
       // rebound to a printable key.

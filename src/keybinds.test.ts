@@ -36,6 +36,23 @@ describe("keybind registry", () => {
   test("DEFAULT_KEYBINDS keys are exactly the action ids", () => {
     expect(Object.keys(DEFAULT_KEYBINDS).sort()).toEqual([...KEYBIND_ACTIONS.map((a) => a.id)].sort());
   });
+
+  test("tab cycling defaults are Ctrl+Tab / Ctrl+Shift+Tab", () => {
+    expect(DEFAULT_KEYBINDS.nextTab).toBe("Ctrl+Tab");
+    expect(DEFAULT_KEYBINDS.previousTab).toBe("Ctrl+Shift+Tab");
+  });
+
+  test("Ctrl+Tab / Ctrl+Shift+Tab match the tab-cycling bindings", () => {
+    expect(matchesKeybind(DEFAULT_KEYBINDS.nextTab, keyEvent({ key: "Tab", ctrlKey: true }))).toBe(true);
+    expect(
+      matchesKeybind(DEFAULT_KEYBINDS.previousTab, keyEvent({ key: "Tab", ctrlKey: true, shiftKey: true }))
+    ).toBe(true);
+    // Missing or extra modifiers must not match.
+    expect(matchesKeybind(DEFAULT_KEYBINDS.nextTab, keyEvent({ key: "Tab" }))).toBe(false);
+    expect(
+      matchesKeybind(DEFAULT_KEYBINDS.nextTab, keyEvent({ key: "Tab", ctrlKey: true, shiftKey: true }))
+    ).toBe(false);
+  });
 });
 
 describe("normalizeKeyName", () => {

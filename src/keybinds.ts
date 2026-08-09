@@ -22,6 +22,8 @@ export type KeybindAction =
   | "focusDown"
   | "focusUp"
   | "focusRight"
+  | "nextTab"
+  | "previousTab"
   | "zoomIn"
   | "zoomOut"
   | "dictate"
@@ -59,6 +61,8 @@ export const KEYBIND_ACTIONS: KeybindDef[] = [
   { id: "focusDown", label: "Focus pane down", group: "Pane focus", default: "Ctrl+J" },
   { id: "focusUp", label: "Focus pane up", group: "Pane focus", default: "Ctrl+K" },
   { id: "focusRight", label: "Focus pane right", group: "Pane focus", default: "Ctrl+L" },
+  { id: "nextTab", label: "Next tab", group: "Tabs", default: "Ctrl+Tab" },
+  { id: "previousTab", label: "Previous tab", group: "Tabs", default: "Ctrl+Shift+Tab" },
   { id: "zoomIn", label: "Increase font size", group: "Font", default: "Ctrl+=" },
   { id: "zoomOut", label: "Decrease font size", group: "Font", default: "Ctrl+-" },
   { id: "dictate", label: "Dictate (hold)", group: "Dictation", default: "Ctrl+Alt+D" },
