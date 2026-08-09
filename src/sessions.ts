@@ -14,6 +14,7 @@ import type {
   GroupNavigationDirection,
   GroupPanelPartInitParameters,
   IContentRenderer,
+  IDockviewPanel,
 } from "dockview";
 import {
   agentUsesWorktreeAll,
@@ -600,7 +601,7 @@ export function addPanelWithMode(
   position?: AddPanelPositionOptions,
   cwd?: string,
   titleOverride?: string
-) {
+): IDockviewPanel {
   // A fresh agent session without a pinned cwd gets a codename (the tab
   // title and the auto-created worktree's branch are both derived from it).
   // Agents that opt out of worktrees (the Editor) keep the plain mode title.
@@ -619,6 +620,7 @@ export function addPanelWithMode(
     ...(position ? { position } : {}),
   });
   panel.api.setActive();
+  return panel;
 }
 
 /** The terminal entry backing the currently focused panel, if any. */
