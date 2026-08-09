@@ -35,6 +35,7 @@ describe("built-in registry (src/agents.json)", () => {
       "cody",
       "openhands",
       "editor",
+      "todotxt",
     ]);
   });
 
@@ -67,9 +68,11 @@ describe("built-in registry (src/agents.json)", () => {
     expect(agentForModeAll("opencode", NO_CUSTOMS)?.command).toBeUndefined();
   });
 
-  test("only the editor opts out of isolated worktrees", () => {
+  test("editor and todotxt opt out of isolated worktrees", () => {
     for (const a of AGENTS) {
-      expect(agentUsesWorktreeAll(a.id, NO_CUSTOMS)).toBe(a.id !== "editor");
+      expect(agentUsesWorktreeAll(a.id, NO_CUSTOMS)).toBe(
+        a.id !== "editor" && a.id !== "todotxt"
+      );
     }
   });
 });

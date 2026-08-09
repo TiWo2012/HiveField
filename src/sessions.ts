@@ -21,6 +21,7 @@ import {
   isKnownModeAll,
   modeCommandAll,
   EDITOR_CMD,
+  TODO_CMD,
 } from "./agents";
 import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
@@ -485,6 +486,15 @@ export function createTerminalComponent(): IContentRenderer {
                 autorun = await invoke<string>("editor_command");
               } catch {
                 autorun = "vi";
+              }
+            } else if (command === TODO_CMD) {
+              // Opens todo.txt in the current directory using the
+              // resolved editor (same logic as the Editor agent).
+              try {
+                autorun = await invoke<string>("editor_command");
+                autorun = `${autorun} todo.txt`;
+              } catch {
+                autorun = "vi todo.txt";
               }
             } else if (command !== undefined && command !== mode) {
               autorun = command;

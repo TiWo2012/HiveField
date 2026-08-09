@@ -5,6 +5,8 @@
  */
 
 import type { IDockviewPanel } from "dockview";
+import { invoke } from "@tauri-apps/api/core";
+import { isAgentModeAll } from "./agents";
 import { sessionModes } from "./modes";
 import { getSettings } from "./settings";
 import { showContextMenu, type ContextMenuItem } from "./context-menu";
@@ -69,6 +71,33 @@ function pasteIntoTerminal(panel: IDockviewPanel): void {
     .catch((err) => console.error("paste failed", err));
 }
 
+/**
+ * Open a new agent session and paste `text` into it once the PTY is ready.
+ * Retries for a couple of seconds, then gives up (best-effort, like file
+ * drops on the splash).
+ */
+function sendTextToAgent(mode: string, text: string): void {
+  addPanelWithMode(mode);
+  let attempts = 0;
+  const tryWrite = () => {
+    // Find the panel we just created by scanning for the newest one whose
+    // session has the requested mode and has a sessionId (PTY is ready).
+    const panels = getApi().panels;
+    for (const panel of [...panels].reverse()) {
+      const sessionId = panelToSession.get(panel.id);
+      if (sessionId === undefined) continue;
+      const entry = sessions.get(sessionId);
+      if (entry?.mode !== mode) continue;
+      invoke("pty_write", { sessionId, data: text }).catch((err) =>
+        console.error("failed to write to agent session", err)
+      );
+      return;
+    }
+    if (++attempts < 40) setTimeout(tryWrite, 50);
+  };
+  tryWrite();
+}
+
 /** Context menu for a right-clicked terminal pane. */
 function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
   const sessionId = panelToSession.get(panel.id);
@@ -96,6 +125,21 @@ function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
       run: () => copyTerminalSelection(panel),
     },
     { label: "Paste", icon: "⎘", run: () => pasteIntoTerminal(panel) },
+    {
+      label: "Send selection to",
+      icon: "↗",
+      disabled: !hasSelection,
+      submenu: sessionModes()
+        .filter((s) => s.mode !== "raw")
+        .map(({ mode, label, icon }) => ({
+          label,
+          icon,
+          run: () => {
+            const text = entry?.terminal.getSelection();
+            if (text) sendTextToAgent(mode, text);
+          },
+        })),
+    },
     { separator: true },
     {
       label: "Find",

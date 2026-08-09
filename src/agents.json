@@ -20,5 +20,13 @@
     "command": "$EDITOR",
     "worktree": false,
     "note": "Runs $EDITOR (resolved via editor_command at spawn). No worktree: an editor edits real files, and a throwaway checkout would swallow them."
+  },
+  {
+    "id": "todotxt",
+    "label": "Todo.txt",
+    "icon": "☑",
+    "command": "$TODO",
+    "worktree": false,
+    "note": "Opens todo.txt in the resolved editor (same as Editor agent). No worktree: todo.txt is a real file."
   }
 ]

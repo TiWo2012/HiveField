@@ -65,7 +65,7 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
   area to open it as a split; `Ctrl+Shift+T` opens an agent as a tab
 - **Built-in agents** — opencode, pi, Codex, GitHub Copilot, Claude Code,
   Gemini CLI, Aider, Cursor, Amp, Qwen Code, Goose, Crush, Cody, OpenHands,
-  and an Editor mode that runs `$EDITOR`
+  an Editor mode that runs `$EDITOR`, and a todotxt mode for task management
 - **Raw shell sessions** — plain terminal with no agent auto-run, always available
 - **Custom agents** — define your own in **Settings → Agents** with a name and
   full command line (e.g. `opencode --model gpt-5`); they appear in the
@@ -77,6 +77,9 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
 - **Editor agent** — `$EDITOR` resolved at spawn (honors `.bashrc`/`.zshrc`
   profiles, falls back to `vi`/`notepad`), and runs in the launch directory
   so edited files are never swallowed by a throwaway worktree
+- **todotxt agent** — opens `todo.txt` in the resolved editor for task
+  management. Select a task and right-click → "Send selection to" to
+  delegate it to any coding agent
 
 ### Tabs, Splits & Navigation
 
