@@ -166,7 +166,8 @@ impl Default for DictationInner {
 /// `"cloud"`. When the `whisper` feature is enabled the default is
 /// `"whisper"`; when it is disabled the default (and the only local choice)
 /// is `"cloud"`. Unknown/None values degrade to the default for the build.
-fn parse_engine(engine: Option<String>) -> String {
+/// `pub(crate)` so the diagnostics blob can report the resolved engine.
+pub(crate) fn parse_engine(engine: Option<String>) -> String {
     #[cfg(feature = "whisper")]
     const DEFAULT: &str = "whisper";
     #[cfg(not(feature = "whisper"))]

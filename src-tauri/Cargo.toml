@@ -20,6 +20,10 @@ serde_json = "1"
 log = "0.4"
 portable-pty = "0.9"
 fontdb = "0.24.0"
+# Resolve the platform's config/data dirs without a running Tauri app, so
+# `hivefield --doctor` (a pre-boot arg check in main.rs) can report the same
+# app-scoped paths Tauri resolves in-process (see diagnostics.rs).
+dirs = "6"
 # ureq v3 — v2 is unmaintained upstream. TLS (rustls) is a default feature
 # in v3 (the old `tls` feature no longer exists). v3 dropped `Error::Status`,
 # so HTTP status handling uses the per-request `http_status_as_error(false)`

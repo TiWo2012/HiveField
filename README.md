@@ -261,6 +261,16 @@ with a `localStorage` fallback:
 | **Keybinds** | Remap any shortcut |
 | **Snippets** | Prompt snippet library |
 
+### Diagnostics
+
+- **Copy diagnostics** (command palette) — copies a flat environment context
+  blob to the clipboard for pasting into bug reports: app version, OS/arch,
+  install dir, launch dir, git repo/commit (when inside one), settings schema
+  version, worktree base dir, dictation engine, and the log file path
+- `hivefield --doctor` prints the same blob as pretty JSON to stdout and
+  exits without opening the app (on Windows release builds the console is
+  hidden, so use the palette action there)
+
 ---
 
 ## Architecture
@@ -401,6 +411,7 @@ backend for each spawned shell).
 | JS → Rust   | `ntfy_send`                | `{ title, body }` — publish a push notification to the configured ntfy server/topic (no-op when disabled) |
 | JS → Rust   | `updater_check`            | () → latest release info from TiWo2012/HiveField (`{ currentVersion, latestVersion, publishedAt, changelog, htmlUrl, assetName, assetUrl, assetSize, installDir, updateAvailable }`) |
 | JS → Rust   | `updater_install`          | () → download the latest release and install it to the shared install dir; emits `updater://progress` / `updater://done` — returns `{ version, path }` |
+| JS → Rust   | `diagnostics`              | () → flat diagnostics blob for bug reports: `{ app, version, os, arch, installDir, launchDir, gitRepo, gitCommit, settingsSchemaVersion, worktreeBaseDir, dictationEngine, logFile }` (same data as `hivefield --doctor`) |
 
 Workspace persistence commands are keyed by the canonicalized launch directory
 (`cwd`), not by session.
