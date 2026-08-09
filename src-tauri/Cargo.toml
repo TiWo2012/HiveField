@@ -30,7 +30,14 @@ rubato = "4.0.0"
 # whisper-rs is a binding to whisper.cpp and 0.16 is its newest crate release;
 # it pins a specific whisper.cpp revision, so bump deliberately — the bundled
 # binary format must stay compatible with the ggml-base.en.bin model.
-whisper-rs = "0.16"
+# Gated behind the `whisper` feature: when off, only cloud dictation is
+# available and the build does not need cmake or a C++ compiler.
+whisper-rs = { version = "0.16", optional = true }
+
+[features]
+default = []
+# Enable local Whisper transcription (requires cmake + C++ compiler to build whisper.cpp).
+whisper = ["dep:whisper-rs"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -79,6 +79,7 @@ impl HttpClient {
     /// download percentage (0..=100) whenever it advances. The caller decides
     /// where the file lands and how to finalize partial downloads. `Err` on
     /// transport errors or non-2xx.
+    #[allow(dead_code)]
     pub fn get_to_file(
         &self,
         url: &str,

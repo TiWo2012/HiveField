@@ -12,22 +12,29 @@
 //!     downloaded at first use. When disabled, dictation fails with a clear
 //!     status message telling the user where to place the model.
 
+#[cfg(feature = "whisper")]
 use std::fs;
+#[cfg(feature = "whisper")]
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "whisper")]
 use tauri::{AppHandle, Manager};
 
+#[cfg(feature = "whisper")]
 use crate::net::HttpClient;
 
 /// Whisper model file name inside the model directory.
+#[cfg(feature = "whisper")]
 pub const MODEL_FILE: &str = "ggml-base.en.bin";
 
 /// Default download URL for the Whisper model. Override via the
 /// `dictationModelUrl` setting (see the module docs).
+#[cfg(feature = "whisper")]
 pub const DEFAULT_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
 
 /// Read a trimmed, non-empty string setting, if present.
+#[cfg(feature = "whisper")]
 fn setting(app: &AppHandle, key: &str) -> Option<String> {
     let store = crate::settings::SettingsStore::load(app).ok()?;
     store
@@ -41,6 +48,7 @@ fn setting(app: &AppHandle, key: &str) -> Option<String> {
 
 /// Resolve the directory that holds local dictation models: the
 /// `dictationModelDir` setting when set, otherwise `<app_config_dir>/models`.
+#[cfg(feature = "whisper")]
 pub fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     match setting(app, "dictationModelDir") {
         Some(dir) => Ok(PathBuf::from(dir)),
@@ -53,6 +61,7 @@ pub fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Whether a missing model should be downloaded automatically at first use
 /// (`dictationAutoDownload` setting; default true).
+#[cfg(feature = "whisper")]
 pub fn auto_download(app: &AppHandle) -> bool {
     let settings = crate::settings::SettingsStore::load(app)
         .map(|store| store.read())
@@ -65,11 +74,13 @@ pub fn auto_download(app: &AppHandle) -> bool {
 
 /// The URL to download the Whisper model from (`dictationModelUrl` override,
 /// falling back to [`DEFAULT_MODEL_URL`]).
+#[cfg(feature = "whisper")]
 pub fn model_url(app: &AppHandle) -> String {
     setting(app, "dictationModelUrl").unwrap_or_else(|| DEFAULT_MODEL_URL.to_string())
 }
 
 /// Path to the Whisper model file under a models dir.
+#[cfg(feature = "whisper")]
 pub fn model_path(models_dir: &Path) -> PathBuf {
     models_dir.join(MODEL_FILE)
 }
@@ -78,6 +89,7 @@ pub fn model_path(models_dir: &Path) -> PathBuf {
 /// download percentage (0..=100) as it advances. The file is written to a
 /// `.part` temp file first and renamed into place on success, so a failed or
 /// interrupted download never leaves a half-written model behind.
+#[cfg(feature = "whisper")]
 pub fn download_whisper_model(
     app: &AppHandle,
     dest: &Path,
@@ -96,6 +108,7 @@ pub fn download_whisper_model(
 }
 
 #[cfg(test)]
+#[cfg(feature = "whisper")]
 mod tests {
     use super::*;
 

@@ -3,8 +3,10 @@
 //!
 //!   - [`audio`] — microphone capture (cpal), resampling, PCM/WAV encoding.
 //!   - [`model`] — local Whisper model location / download policy (configurable).
-//!   - [`whisper`] — the local Whisper transcription engine.
-//!   - [`cloud`] — the OpenAI-compatible cloud transcription engine.
+//!   - [`whisper`] — the local Whisper transcription engine (requires the
+//!     `whisper` Cargo feature; requires cmake + C++ compiler to build).
+//!   - [`cloud`] — the OpenAI-compatible cloud transcription engine (always
+//!     available; uses pure-Rust `ureq` + `rustls`).
 //!
 //! This module owns the state machine (idle → listening → transcribing → …),
 //! the `DictationState` shared across all commands, and the IPC surface:
@@ -29,10 +31,13 @@
 mod audio;
 mod cloud;
 mod model;
+#[cfg(feature = "whisper")]
 mod whisper;
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+#[cfg(feature = "whisper")]
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -70,10 +75,12 @@ impl DictationStatus {
         Self::new("transcribing", None)
     }
 
+    #[allow(dead_code)]
     fn model_loading() -> Self {
         Self::new("model_loading", None)
     }
 
+    #[allow(dead_code)]
     fn downloading(detail: &str) -> Self {
         Self::new("downloading", Some(detail))
     }
@@ -120,12 +127,13 @@ impl Default for DictationState {
 }
 
 /// Inner, lock-protected state.
-#[derive(Default)]
 pub struct DictationInner {
     status: String,
     detail: Option<String>,
     engine: String,
+    #[allow(dead_code)]
     model_busy: bool,
+    #[cfg(feature = "whisper")]
     ctx: Option<Arc<whisper_rs::WhisperContext>>,
     capture: Option<audio::ActiveCapture>,
     /// Window label of the window that started the current capture. Only that
@@ -138,18 +146,42 @@ pub struct DictationInner {
     session_id: Option<u64>,
 }
 
-/// Normalize the engine argument to a known engine id: `"whisper"` (default)
-/// or `"cloud"`. Unknown/None map to `"whisper"` (a saved `"vosk"` setting
-/// from an older version degrades to whisper).
+impl Default for DictationInner {
+    fn default() -> Self {
+        Self {
+            status: String::new(),
+            detail: None,
+            engine: String::new(),
+            model_busy: false,
+            #[cfg(feature = "whisper")]
+            ctx: None,
+            capture: None,
+            window_label: None,
+            session_id: None,
+        }
+    }
+}
+
+/// Normalize the engine argument to a known engine id: `"whisper"` or
+/// `"cloud"`. When the `whisper` feature is enabled the default is
+/// `"whisper"`; when it is disabled the default (and the only local choice)
+/// is `"cloud"`. Unknown/None values degrade to the default for the build.
 fn parse_engine(engine: Option<String>) -> String {
+    #[cfg(feature = "whisper")]
+    const DEFAULT: &str = "whisper";
+    #[cfg(not(feature = "whisper"))]
+    const DEFAULT: &str = "cloud";
+
     let engine = engine
         .as_deref()
         .map(str::trim)
-        .unwrap_or("whisper")
+        .unwrap_or(DEFAULT)
         .to_lowercase();
     match engine.as_str() {
-        "whisper" | "cloud" => engine,
-        _ => "whisper".to_string(),
+        #[cfg(feature = "whisper")]
+        "whisper" => engine,
+        "cloud" => engine,
+        _ => DEFAULT.to_string(),
     }
 }
 
@@ -159,8 +191,10 @@ enum StartAction {
     /// Begin capturing immediately.
     Start,
     /// Download the Whisper model on a background thread, then wait.
+    #[cfg(feature = "whisper")]
     DownloadWhisper,
     /// Load the Whisper context on a background thread.
+    #[cfg(feature = "whisper")]
     LoadWhisper,
 }
 
@@ -190,9 +224,11 @@ pub fn dictation_start(
 ) -> Result<(), String> {
     let engine = parse_engine(engine);
     let window_label = window.label().to_string();
+    #[cfg(feature = "whisper")]
     let models_dir = model::models_dir(&app)?;
 
     let action = {
+        #[allow(unused_mut)]
         let mut inner = state.inner.lock().map_err(poisoned)?;
 
         if inner.capture.is_some() {
@@ -230,8 +266,8 @@ pub fn dictation_start(
                 }
                 StartAction::Start
             }
-            _ => {
-                // whisper
+            #[cfg(feature = "whisper")]
+            "whisper" => {
                 let model_path = model::model_path(&models_dir);
                 if !model_path.exists() {
                     if !model::auto_download(&app) {
@@ -263,6 +299,21 @@ pub fn dictation_start(
                 } else {
                     StartAction::Start
                 }
+            }
+            _ => {
+                // Unknown engine after parse_engine is defensive; demand the
+                // cloud API key, otherwise fail with a clear message.
+                if std::env::var("OPENAI_API_KEY").is_err() {
+                    set_status_to(
+                        &app,
+                        &window_label,
+                        &DictationStatus::error(
+                            "OPENAI_API_KEY environment variable is not set",
+                        ),
+                    );
+                    return Err("OPENAI_API_KEY environment variable is not set".to_string());
+                }
+                StartAction::Start
             }
         }
     };
@@ -296,6 +347,7 @@ pub fn dictation_start(
             set_status(&app, &DictationStatus::listening());
             Ok(())
         }
+        #[cfg(feature = "whisper")]
         StartAction::DownloadWhisper => {
             set_status(&app, &DictationStatus::downloading("0%"));
             let app = app.clone();
@@ -306,6 +358,7 @@ pub fn dictation_start(
             });
             Ok(())
         }
+        #[cfg(feature = "whisper")]
         StartAction::LoadWhisper => {
             set_status(&app, &DictationStatus::model_loading());
             let app = app.clone();
@@ -392,7 +445,8 @@ pub fn dictation_stop(
                 Ok(key) => cloud::transcribe(&samples, capture.sample_rate, &key),
                 Err(_) => Err("OPENAI_API_KEY environment variable is not set".to_string()),
             },
-            _ => {
+            #[cfg(feature = "whisper")]
+            "whisper" => {
                 let ctx = app.try_state::<DictationState>().and_then(|state| {
                     state.inner.lock().ok().and_then(|inner| inner.ctx.clone())
                 });
@@ -401,6 +455,7 @@ pub fn dictation_stop(
                     None => Err("whisper model is not loaded".to_string()),
                 }
             }
+            other => Err(format!("unknown dictation engine: {other}")),
         };
         match result {
             Ok(text) => {
@@ -464,6 +519,7 @@ fn set_status_to(app: &AppHandle, window_label: &str, status: &DictationStatus) 
 }
 
 /// Clear the `model_busy` guard and publish the final download status.
+#[cfg(feature = "whisper")]
 fn finish_model_download(app: &AppHandle, result: Result<(), String>, err_label: &str) {
     if let Some(state) = app.try_state::<DictationState>() {
         if let Ok(mut inner) = state.inner.lock() {
@@ -485,12 +541,13 @@ fn finish_model_download(app: &AppHandle, result: Result<(), String>, err_label:
 /// On success the context is stored and the status returns to `idle` so a
 /// still-held dictation key can retry and start capture; on failure an error
 /// status is emitted (instead of the badge hanging on "Loading…" forever).
+#[cfg(feature = "whisper")]
 fn load_whisper_in_background(app: &AppHandle, path: &std::path::Path) {
     match whisper::load_context(path) {
         Ok(ctx) => {
             if let Some(state) = app.try_state::<DictationState>() {
                 if let Ok(mut inner) = state.inner.lock() {
-                    inner.ctx.get_or_insert(ctx);
+                    inner.ctx = Some(ctx);
                     inner.model_busy = false;
                 }
             }
@@ -534,6 +591,7 @@ pub fn stop_capture_for_window(app: &AppHandle, window_label: &str) {
 
 /// Download the Whisper model to `dest`, emitting download-progress status
 /// events (runs on a background thread; see [`model::download_whisper_model`]).
+#[cfg(feature = "whisper")]
 fn download_whisper(app: &AppHandle, dest: &std::path::Path) -> Result<(), String> {
     model::download_whisper_model(app, dest, |percent| {
         set_status(app, &DictationStatus::downloading(&format!("{percent}%")));
@@ -572,12 +630,22 @@ mod tests {
 
     #[test]
     fn parse_engine_normalizes_inputs() {
-        assert_eq!(parse_engine(None), "whisper");
-        assert_eq!(parse_engine(Some("whisper".to_string())), "whisper");
+        #[cfg(feature = "whisper")]
+        {
+            assert_eq!(parse_engine(None), "whisper");
+            assert_eq!(parse_engine(Some("whisper".to_string())), "whisper");
+            assert_eq!(parse_engine(Some("vosk".to_string())), "whisper");
+            assert_eq!(parse_engine(Some("bogus".to_string())), "whisper");
+            assert_eq!(parse_engine(Some("".to_string())), "whisper");
+        }
+        #[cfg(not(feature = "whisper"))]
+        {
+            assert_eq!(parse_engine(None), "cloud");
+            assert_eq!(parse_engine(Some("bogus".to_string())), "cloud");
+            assert_eq!(parse_engine(Some("".to_string())), "cloud");
+        }
+        // cloud is always recognized.
         assert_eq!(parse_engine(Some("cloud".to_string())), "cloud");
         assert_eq!(parse_engine(Some("  CLOUD  ".to_string())), "cloud");
-        assert_eq!(parse_engine(Some("vosk".to_string())), "whisper");
-        assert_eq!(parse_engine(Some("bogus".to_string())), "whisper");
-        assert_eq!(parse_engine(Some("".to_string())), "whisper");
     }
 }
