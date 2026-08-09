@@ -21,6 +21,13 @@
 //!
 //! Both honor the `HF_VERSION` env var to pin a specific release tag (used by
 //! tests/CI and matching install.sh).
+//!
+//! Version comparison: release tags are `v<version>-build.<run_number>` (see
+//! `.github/workflows/release.yml`), so the running binary embeds its own CI
+//! build number at compile time (build.rs reads `HF_BUILD_NUMBER`) and reports
+//! e.g. `0.1.1-build.9` as its version. Without the build number a freshly
+//! installed release would compare as older than its own tag and the updater
+//! would claim an update is available forever.
 
 use std::cmp::Ordering;
 use std::fs;
@@ -192,6 +199,22 @@ fn version_cmp(a: &str, b: &str) -> Ordering {
     left.cmp(&right)
 }
 
+/// Build a version string from a package version and an optional build
+/// number: `("0.1.1", Some("9"))` → `"0.1.1-build.9"`, `("0.1.1", None)`
+/// → `"0.1.1"`. Blank build numbers are treated as absent (local/dev builds).
+fn full_version(pkg_version: &str, build: Option<&str>) -> String {
+    match build.map(str::trim) {
+        Some(b) if !b.is_empty() => format!("{pkg_version}-build.{b}"),
+        _ => pkg_version.to_string(),
+    }
+}
+
+/// The full version of the running binary: `CARGO_PKG_VERSION` plus the CI
+/// build number embedded by build.rs (`HF_BUILD_NUMBER`), when present.
+fn current_version() -> String {
+    full_version(env!("CARGO_PKG_VERSION"), option_env!("HF_BUILD_NUMBER"))
+}
+
 /// The `updater_check` result: what the latest release is, which asset
 /// matches this platform, and where it would be installed.
 #[derive(Serialize)]
@@ -254,7 +277,7 @@ fn check_blocking() -> Result<UpdateInfo, String> {
         .unwrap_or("")
         .trim_start_matches('v')
         .to_string();
-    let current = env!("CARGO_PKG_VERSION").to_string();
+    let current = current_version();
     let update_available = version_cmp(&latest, &current) == Ordering::Greater;
     Ok(UpdateInfo {
         current_version: current,
@@ -488,6 +511,67 @@ mod tests {
         assert_eq!(version_cmp("0.1.2", "0.1.1"), Ordering::Greater);
         assert_eq!(version_cmp("0.1.1-build.5", "0.1.1"), Ordering::Greater);
         assert_eq!(version_cmp("v0.1.1", "0.1.1"), Ordering::Equal);
+    }
+
+    #[test]
+    fn full_version_appends_build_number_when_present() {
+        assert_eq!(full_version("0.1.1", Some("9")), "0.1.1-build.9");
+        assert_eq!(full_version("0.1.1", Some(" 12 ")), "0.1.1-build.12");
+    }
+
+    #[test]
+    fn full_version_omits_build_suffix_when_absent() {
+        assert_eq!(full_version("0.1.1", None), "0.1.1");
+        assert_eq!(full_version("0.1.1", Some("")), "0.1.1");
+        assert_eq!(full_version("0.1.1", Some("   ")), "0.1.1");
+    }
+
+    #[test]
+    fn current_version_always_starts_with_the_package_version() {
+        assert!(current_version().starts_with(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn current_version_matches_the_embedded_build_number() {
+        // Verifies build.rs wiring: when HF_BUILD_NUMBER is set at compile
+        // time, current_version() must carry the same suffix release tags do.
+        // Vacuously true when the env var is absent (local/dev builds).
+        if let Some(build) = option_env!("HF_BUILD_NUMBER") {
+            assert_eq!(
+                current_version(),
+                format!("{}-build.{}", env!("CARGO_PKG_VERSION"), build.trim())
+            );
+        }
+    }
+
+    #[test]
+    fn same_release_tag_compares_equal_when_build_number_is_embedded() {
+        // Regression: a release tag "v0.1.1-build.9" used to compare Greater
+        // than the running "0.1.1" (no build number), so the updater claimed
+        // an update was available even right after installing that release.
+        // A binary built from the release embeds the build number and must
+        // compare equal to its own tag.
+        assert_eq!(
+            version_cmp("0.1.1-build.9", &full_version("0.1.1", Some("9"))),
+            Ordering::Equal
+        );
+        // A newer build of the same version still counts as an update.
+        assert_eq!(
+            version_cmp("0.1.1-build.10", &full_version("0.1.1", Some("9"))),
+            Ordering::Greater
+        );
+        // And a newer version series wins over an older, higher build.
+        assert_eq!(
+            version_cmp("0.1.2-build.1", &full_version("0.1.1", Some("50"))),
+            Ordering::Greater
+        );
+        // Without an embedded build number the tag still reads as newer — the
+        // old bug, kept here to document what build.rs's HF_BUILD_NUMBER
+        // embedding fixes.
+        assert_eq!(
+            version_cmp("0.1.1-build.9", &full_version("0.1.1", None)),
+            Ordering::Greater
+        );
     }
 
     fn release_json(assets: &[&str]) -> serde_json::Value {

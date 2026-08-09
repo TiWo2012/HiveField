@@ -17,6 +17,12 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      # Embedded into the binary by src-tauri/build.rs so the built-in updater
+      # knows this build's number: release tags are v<version>-build.<run_number>,
+      # and a binary that only knows "0.1.1" would compare as older than every
+      # tagged release and perpetually report an update available.
+      HF_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
