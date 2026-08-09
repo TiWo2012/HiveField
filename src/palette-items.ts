@@ -137,6 +137,21 @@ export function buildPaletteItems(): PaletteItem[] {
       run: () => movePaneFocus("down"),
     },
     {
+      label: getApi().hasMaximizedGroup()
+        ? "Restore pane size"
+        : "Maximize active pane",
+      detail: kb().maximizePane,
+      icon: "⛶",
+      run: () => {
+        if (getApi().hasMaximizedGroup()) {
+          getApi().exitMaximizedGroup();
+        } else {
+          const panel = getApi().activePanel;
+          if (panel) getApi().maximizeGroup(panel);
+        }
+      },
+    },
+    {
       label: "Rename active tab",
       detail: kb().renameTab,
       run: () => {

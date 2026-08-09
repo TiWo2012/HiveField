@@ -60,6 +60,17 @@ export function setupKeyboard() {
       const panel = getApi().activePanel;
       if (panel) void renamePanel(panel);
     }
+    if (matchesKeybind(kb.maximizePane, e)) {
+      e.preventDefault();
+      const panel = getApi().activePanel;
+      if (panel) {
+        if (getApi().hasMaximizedGroup()) {
+          getApi().exitMaximizedGroup();
+        } else {
+          getApi().maximizeGroup(panel);
+        }
+      }
+    }
     if (matchesKeybind(kb.settings, e)) {
       e.preventDefault();
       toggleSettings();
@@ -155,6 +166,18 @@ export function setupKeyboard() {
         ["focusRight", "right"],
       ] as const) {
         if (matchesKeybind(kb[id], e) && movePaneFocus(direction)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+      // Maximize/restore the active pane: stop the combo from reaching the
+      // terminal if there is an active panel (the bubble-phase handler does
+      // the actual maximize/restore). When nothing is open the key falls
+      // through (this never happens in practice, but defends against a
+      // zero-panel edge case).
+      if (matchesKeybind(kb.maximizePane, e)) {
+        if (getApi().activePanel) {
           e.preventDefault();
           e.stopPropagation();
           return;
