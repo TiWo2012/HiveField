@@ -201,6 +201,27 @@ function setupMiddleClickPaste(
     },
     true
   );
+  // Prevent xterm's own middle-click paste from firing on release — the
+  // mousedown handler above already covers the paste, so mouseup/auxclick
+  // must be suppressed to avoid a double paste.
+  panelEl.addEventListener(
+    "mouseup",
+    (e) => {
+      if (e.button !== 1 || !getSettings().pasteWithMiddleClick) return;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    true
+  );
+  panelEl.addEventListener(
+    "auxclick",
+    (e) => {
+      if (e.button !== 1 || !getSettings().pasteWithMiddleClick) return;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    true
+  );
 }
 
 export function createTerminalComponent(): IContentRenderer {
