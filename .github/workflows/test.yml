@@ -1,7 +1,11 @@
 name: Tests
 
 # Runs on any push / merge to `dev`, and can be invoked from other
-# workflows (release.yml runs it before building Linux executables).
+# workflows (release.yml runs it before building executables). The backend
+# tests run on the full OS matrix (Linux, macOS, Windows) so the
+# platform-specific code paths — `open_url`'s `open`/`rundll32`/`xdg-open`
+# branches, updater.rs's `LOCALAPPDATA` fallback, the macOS `Info.plist`
+# wiring — are exercised on every merge.
 on:
   push:
     branches: [dev]
@@ -30,8 +34,12 @@ jobs:
         run: bun test
 
   backend:
-    name: Backend (cargo test)
-    runs-on: ubuntu-24.04
+    name: Backend (cargo test) — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +54,8 @@ jobs:
       - name: Build frontend
         run: bun run build
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux only)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -66,3 +75,33 @@ jobs:
       - name: Run Rust tests
         working-directory: src-tauri
         run: cargo test
+
+  install-script:
+    name: install.sh — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # End-to-end test of the repo installer against a mock GitHub release
+      # (curl is stubbed, so no network is needed). Runs on macOS to prove
+      # install.sh's Darwin detection + tarball install path work there.
+      - name: Run install.sh end-to-end test (mock GitHub release)
+        run: .github/scripts/test-install.sh
+        shell: bash
+
+  install-powershell:
+    name: install.ps1 — windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # End-to-end test of the Windows installer against a mock GitHub
+      # release (a local HttpListener, pointed at via HF_API_BASE /
+      # HF_DOWNLOAD_BASE, so no network is needed).
+      - name: Run install.ps1 end-to-end test (mock GitHub release)
+        run: .github/scripts/test-install.ps1
+        shell: pwsh

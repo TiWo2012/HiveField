@@ -6,7 +6,7 @@ x 2026-08-09 2026-08-09 add tab cycling via ctrl-tab (Ctrl+Tab / Ctrl+Shift+Tab)
 2026-08-09 wire up logging + panic hook (tauri-plugin-log, rotated log file)
 x 2026-08-09 2026-08-09 add diagnostics command (hivefield --doctor / palette "Copy diagnostics")
 2026-08-09 add lint + format gates to CI (cargo fmt/clippy, biome for frontend)
-2026-08-09 cross-platform test matrix + macOS/Windows release assets
+x 2026-08-09 2026-08-09 cross-platform test matrix + macOS/Windows release assets
 2026-08-09 updater checksum verification (SHA-256 in release) + dependabot
 2026-08-09 single-source app version + CI sync check (package.json/Cargo.toml/tauri.conf.json)
 2026-08-09 release workflow_dispatch + changelog generation (git-cliff)

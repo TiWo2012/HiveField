@@ -6,14 +6,18 @@ with first-class support for launching coding agents (opencode, pi, Codex,
 Claude Code, Gemini CLI, Aider, Cursor, Cody, and more) in isolated git
 worktrees — all inside a tabbed, split-pane interface.
 
-[![CI](https://github.com/hivefield/hivefield-terminal/actions/workflows/test.yml/badge.svg)](https://github.com/hivefield/hivefield-terminal/actions/workflows/test.yml)
-[![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue)](#)
+[![CI](https://github.com/TiWo2012/HiveField/actions/workflows/test.yml/badge.svg)](https://github.com/TiWo2012/HiveField/actions/workflows/test.yml)
+[![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue)](#installation)
 
 ---
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Installation](#installation)
+  - [Linux](#linux)
+  - [macOS](#macos)
+  - [Windows](#windows)
 - [Features](#features)
   - [Sessions & Agents](#sessions--agents)
   - [Tabs, Splits & Navigation](#tabs-splits--navigation)
@@ -41,7 +45,7 @@ worktrees — all inside a tabbed, split-pane interface.
 
 ## Quick Start
 
-Download the latest release from the [releases page](https://github.com/hivefield/hivefield-terminal/releases)
+Download the latest release from the [releases page](https://github.com/TiWo2012/HiveField/releases)
 and launch it from your project directory:
 
 ```sh
@@ -54,6 +58,68 @@ time you launch from `my-project`, your tabs and splits are restored.
 
 To open a new window for a different project, press `Ctrl+Shift+N` or use
 **File → New Window**.
+
+---
+
+## Installation
+
+hiveField ships prebuilt binaries for **Linux**, **macOS**, and **Windows**
+(every release is built by CI and tested on all three OSes). Choose your
+platform:
+
+### Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TiWo2012/HiveField/master/install.sh | sh
+```
+
+The script downloads the latest release, installs `hivefield` to
+`~/.local/bin` (or `$HF_INSTALL_DIR`), and prints a PATH hint when needed.
+`.deb`, `.rpm`, and AppImage packages are also attached to each
+[release](https://github.com/TiWo2012/HiveField/releases).
+
+### macOS
+
+The same installer works on macOS — both Intel (`x86_64`) and Apple Silicon
+(`aarch64`) — it detects your architecture automatically:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TiWo2012/HiveField/master/install.sh | sh
+```
+
+This installs the `hivefield` CLI to `~/.local/bin`. Prefer a GUI app?
+Download the `.dmg` (drag `hiveField Terminal.app` into Applications) or the
+`.app` zip from the [releases page](https://github.com/TiWo2012/HiveField/releases).
+
+> **Note:** macOS binaries are currently **unsigned and not notarized**.
+> The first time you launch the app, right-click it and choose **Open**
+> (Gatekeeper), or run the raw binary from a terminal.
+
+### Windows
+
+Install from **PowerShell** (no git clone needed):
+
+```powershell
+irm https://raw.githubusercontent.com/TiWo2012/HiveField/master/install.ps1 | iex
+```
+
+The script downloads the latest release, installs `hivefield.exe` to
+`%LOCALAPPDATA%\hivefield\bin`, and adds that directory to your **user PATH**
+so `hivefield` works from any terminal. Open a new terminal afterwards for the
+PATH change to take effect.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `HF_VERSION` | latest release | Pin a release tag, e.g. `v0.2.0` |
+| `HF_INSTALL_DIR` | `%LOCALAPPDATA%\hivefield\bin` | Install elsewhere |
+| `HF_NO_PATH` | unset | Set to `1` to skip the PATH update |
+
+Prefer an installer? Grab the **NSIS setup** (`.exe`) or **MSI** package from
+the [releases page](https://github.com/TiWo2012/HiveField/releases); the
+installer ensures WebView2 is present if missing.
+
+> **Note:** Windows binaries are unsigned; SmartScreen may show a warning —
+> choose **More info → Run anyway**.
 
 ---
 
@@ -368,23 +434,30 @@ release with its changelog, and the install location; *Check for updates*
 queries GitHub and *Download & install* fetches the release (with a progress
 bar) and installs it. Restart hiveField to run the new version.
 
-**Terminal (`install.sh`)** — the same install, from a shell:
+**Terminal** — the same install, from a shell:
 
 ```sh
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/TiWo2012/HiveField/master/install.sh | sh
 ```
 
-Both install to the **same location** (the app's updater and `install.sh`
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/TiWo2012/HiveField/master/install.ps1 | iex
+```
+
+Both install to the **same location** (the app's updater and the installers
 share the rule):
 
 1. `$HF_INSTALL_DIR` when set, otherwise
 2. `$HOME/.local/bin` (unix) / `%LOCALAPPDATA%\hivefield\bin` (Windows)
 
-`install.sh` also honors `HF_VERSION` to pin a release tag (`HF_VERSION=v0.2.0`).
-The release assets are named `hivefield-<os>-<arch>.tar.gz` (containing the
-`hivefield` binary) on unix and `hivefield-windows-<arch>.exe` on Windows;
-the release workflow publishes them automatically. If a release lacks the
-tarball, a bare `hivefield-<os>-<arch>` binary is used instead.
+`install.sh` / `install.ps1` also honor `HF_VERSION` to pin a release tag
+(`HF_VERSION=v0.2.0`). The release assets are named
+`hivefield-<os>-<arch>.tar.gz` (containing the `hivefield` binary) on unix and
+`hivefield-windows-<arch>.exe` on Windows; the release workflow publishes them
+automatically for Linux, macOS (x86_64 + aarch64), and Windows. If a release
+lacks the tarball, a bare `hivefield-<os>-<arch>` binary is used instead.
 
 ## IPC Contract
 

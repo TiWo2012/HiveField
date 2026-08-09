@@ -1,10 +1,29 @@
 name: Release
 
-# Builds Linux executables and publishes a GitHub release, but only on
-# pushes / merges to `master`. Tests run first via the shared test workflow.
+# Builds Linux, macOS, and Windows executables and publishes a GitHub release
+# on pushes / merges to `master`. Tests run first via the shared test
+# workflow (which itself runs the backend matrix on all three OSes).
+#
+# Every build job publishes two kinds of artifacts:
+#   - `release-artifacts/` — the platform's GUI installers (.deb/.rpm/
+#     AppImage, .dmg/.app, NSIS/.msi)
+#   - `updater-asset/`     — the exact files the built-in updater,
+#     install.sh, and install.ps1 download by name (see
+#     src-tauri/src/updater.rs `asset_name()` / install.sh
+#     `asset_candidates()`): hivefield-<os>-<arch>.tar.gz on unix and
+#     hivefield-windows-<arch>.exe on Windows.
+# A single `publish` job then creates one release with every platform's
+# artifacts, so the tag always carries the full cross-platform set.
 on:
   push:
     branches: [master]
+
+env:
+  # Embedded into the binary by src-tauri/build.rs so the built-in updater
+  # knows this build's number: release tags are v<version>-build.<run_number>,
+  # and a binary that only knows "0.1.1" would compare as older than every
+  # tagged release and perpetually report an update available.
+  HF_BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
   tests:
@@ -15,16 +34,10 @@ jobs:
     name: Build Linux executables
     needs: tests
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    env:
-      # Embedded into the binary by src-tauri/build.rs so the built-in updater
-      # knows this build's number: release tags are v<version>-build.<run_number>,
-      # and a binary that only knows "0.1.1" would compare as older than every
-      # tagged release and perpetually report an update available.
-      HF_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -66,8 +79,6 @@ jobs:
           cp src-tauri/target/release/hivefield updater-asset/hivefield-linux-x86_64
           tar -czf updater-asset/hivefield-linux-x86_64.tar.gz -C src-tauri/target/release hivefield
           ls -lh release-artifacts/ updater-asset/
-          APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -77,23 +88,148 @@ jobs:
             release-artifacts
             updater-asset
 
+  build-macos:
+    name: Build macOS executables (${{ matrix.arch }})
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13   # Intel
+            arch: x86_64
+          - runner: macos-14   # Apple Silicon
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build macOS bundles (app, dmg)
+        run: bun run tauri build --bundles app,dmg
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p release-artifacts updater-asset
+          # Updater assets: tarball + bare binary named exactly as install.sh
+          # and updater.rs expect (hivefield-macos-<arch>.tar.gz).
+          cp src-tauri/target/release/hivefield updater-asset/hivefield-macos-${{ matrix.arch }}
+          tar -czf updater-asset/hivefield-macos-${{ matrix.arch }}.tar.gz -C src-tauri/target/release hivefield
+          # GUI installers: the .dmg plus the .app bundle zipped for direct
+          # drag-into-Applications installs.
+          cp src-tauri/target/release/bundle/dmg/*.dmg release-artifacts/
+          (cd src-tauri/target/release/bundle/macos && zip -qr "$GITHUB_WORKSPACE/release-artifacts/hiveField Terminal_${{ matrix.arch }}.app.zip" "hiveField Terminal.app")
+          ls -lh release-artifacts/ updater-asset/
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hivefield-macos-${{ matrix.arch }}
+          path: |
+            release-artifacts
+            updater-asset
+
+  build-windows:
+    name: Build Windows executables
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Windows bundles (nsis, msi)
+        run: bun run tauri build --bundles nsis,msi
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-artifacts, updater-asset | Out-Null
+          # Updater asset: the exact name updater.rs / install.ps1 expect
+          # (hivefield-windows-x86_64.exe).
+          Copy-Item src-tauri/target/release/hivefield.exe updater-asset/hivefield-windows-x86_64.exe
+          Copy-Item src-tauri/target/release/bundle/nsis/*.exe release-artifacts/
+          Copy-Item src-tauri/target/release/bundle/msi/*.msi release-artifacts/
+          Get-ChildItem release-artifacts, updater-asset | Select-Object FullName, Length
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hivefield-windows
+          path: |
+            release-artifacts
+            updater-asset
+
+  publish:
+    name: Publish GitHub release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      # All three build jobs upload one artifact each; merge-multiple flattens
+      # them into a single directory (the file names are unique per platform).
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: Resolve app version
+        run: |
+          APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
       # A new tag is minted per master push (version + build number) so every
       # release lands without manual tag management; bump the version in
-      # tauri.conf.json / Cargo.toml to start a new version series.
+      # tauri.conf.json / Cargo.toml / package.json to start a new version series.
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
           name: hiveField Terminal v${{ env.APP_VERSION }} (build ${{ github.run_number }})
           body: |
-            Automated Linux release built from `master` at `${{ github.sha }}`.
+            Automated cross-platform release built from `master` at `${{ github.sha }}`.
 
-            - Updater tarball (`hivefield-linux-x86_64.tar.gz`) — used by
-              the built-in updater and `install.sh`
-            - Raw executable
-            - `.deb` package
-            - `.rpm` package
-            - AppImage
-          files: |
-            release-artifacts/*
-            updater-asset/*
+            ## Linux
+            - Updater tarball (`hivefield-linux-x86_64.tar.gz`) — used by the built-in updater and `install.sh`
+            - Raw executable, `.deb` package, `.rpm` package, AppImage
+
+            ## macOS
+            - Updater tarballs (`hivefield-macos-{x86_64,aarch64}.tar.gz`) — used by the built-in updater and `install.sh`
+            - `.dmg` and `.app` bundles per architecture
+
+            ## Windows
+            - Updater executable (`hivefield-windows-x86_64.exe`) — used by the built-in updater and `install.ps1`
+            - NSIS installer (`.exe`) and MSI package
+
+            > macOS binaries are unsigned and not notarized — right-click the
+            > app and choose **Open** the first time (Gatekeeper). Windows
+            > binaries are unsigned — SmartScreen may prompt. See the README.
+          files: dist-artifacts/*
