@@ -22,93 +22,12 @@ import { addPanelWithMode } from "./sessions";
 import { getApi, panelToSession, sessions } from "./state";
 import { showContextMenu, type ContextMenuItem } from "./context-menu";
 import { sessionModes } from "./modes";
-
-/** A parsed todo.txt task. */
-interface TodoTask {
-  /** Raw line from the file. */
-  raw: string;
-  /** Whether the task is completed (starts with `x `). */
-  done: boolean;
-  /** Priority letter A-Z, or null. */
-  priority: string | null;
-  /** Creation date YYYY-MM-DD, or null. */
-  created: string | null;
-  /** Completion date YYYY-MM-DD, or null (only when done). */
-  completed: string | null;
-  /** The task description (everything after priority/dates). */
-  text: string;
-}
-
-/** Today's date in YYYY-MM-DD (local timezone, what todo.txt apps expect). */
-function todayStr(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
- * Parse one todo.txt line into a structured task. The grammar is:
- *   [x] [(P)] [YYYY-MM-DD] [YYYY-MM-DD] <description>
- */
-function parseLine(line: string): TodoTask {
-  let rest = line.trim();
-  const raw = rest;
-
-  // Completion marker.
-  let done = false;
-  let completed: string | null = null;
-  if (rest.startsWith("x ")) {
-    done = true;
-    rest = rest.slice(2).trimStart();
-  }
-
-  // Priority (A-Z) in parens.
-  let priority: string | null = null;
-  const prioMatch = /^\(([A-Z])\)\s+/.exec(rest);
-  if (prioMatch) {
-    priority = prioMatch[1];
-    rest = rest.slice(prioMatch[0].length);
-  }
-
-  // One or two dates.
-  let created: string | null = null;
-  const firstWord = rest.split(/\s+/, 1)[0];
-  if (DATE_RE.test(firstWord)) {
-    created = firstWord;
-    rest = rest.slice(firstWord.length).trimStart();
-    const secondWord = rest.split(/\s+/, 1)[0];
-    if (DATE_RE.test(secondWord)) {
-      if (done) {
-        completed = created;
-        created = secondWord;
-      } else {
-        // Two dates on an incomplete task: treat first as creation.
-        completed = null;
-      }
-      rest = rest.slice(secondWord.length).trimStart();
-    }
-  }
-
-  return { raw, done, priority, created, completed, text: rest };
-}
-
-/**
- * Re-serialize a task back to a todo.txt line reflecting its current state.
- */
-function serializeTask(t: TodoTask): string {
-  const parts: string[] = [];
-  if (t.done) parts.push("x");
-  if (t.priority) parts.push(`(${t.priority})`);
-  if (t.completed && t.done) parts.push(t.completed);
-  if (t.created) parts.push(t.created);
-  else if (t.done && !t.completed && !t.created) parts.push(todayStr());
-  if (t.text) parts.push(t.text);
-  return parts.join(" ");
-}
+import {
+  addTask as addTaskPure,
+  parseLine,
+  toggleTask as toggleTaskPure,
+  type TodoTask,
+} from "./todotxt-core";
 
 /** Build the "Send task to agent" right-click submenu for a given task. */
 function buildSendTaskMenu(taskText: string): ContextMenuItem[] {
@@ -157,21 +76,8 @@ async function toggleTask(
   index: number,
   filePath: string
 ): Promise<TodoTask[]> {
-  const t = tasks[index];
-  if (!t) return tasks;
-  if (t.done) {
-    t.done = false;
-    t.completed = null;
-  } else {
-    t.done = true;
-    t.completed = todayStr();
-    if (!t.created) t.created = todayStr();
-  }
-  t.raw = serializeTask(t);
-  const content = tasks.map((t2) => t2.raw).join("\n") + "\n";
-  await invoke("file_write", { path: filePath, content }).catch((err) =>
-    console.error("failed to write todo.txt", err)
-  );
+  toggleTaskPure(tasks, index);
+  await writeTasks(tasks, filePath);
   return tasks;
 }
 
@@ -183,16 +89,17 @@ async function addTask(
   text: string,
   filePath: string
 ): Promise<TodoTask[]> {
-  const t = parseLine(text.trim());
-  if (!t.text) return tasks; // ignore blank input
-  if (!t.created) t.created = todayStr();
-  t.raw = serializeTask(t);
-  tasks.push(t);
+  addTaskPure(tasks, text);
+  await writeTasks(tasks, filePath);
+  return tasks;
+}
+
+/** Persist the current task list to the todo.txt file (best-effort). */
+async function writeTasks(tasks: TodoTask[], filePath: string): Promise<void> {
   const content = tasks.map((t2) => t2.raw).join("\n") + "\n";
   await invoke("file_write", { path: filePath, content }).catch((err) =>
     console.error("failed to write todo.txt", err)
   );
-  return tasks;
 }
 
 /**
