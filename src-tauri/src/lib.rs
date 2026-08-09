@@ -1,4 +1,5 @@
 mod dictation;
+mod diagnostics;
 mod fonts;
 mod git;
 mod net;
@@ -494,6 +495,23 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// IPC command: return a flat diagnostics blob — version, OS/arch, install
+/// dir, launch dir, git context, settings schema version, worktree base dir,
+/// dictation engine, and the log file path — for pasting into bug reports
+/// (palette action "Copy diagnostics"). Same data as `hivefield --doctor`
+/// (see [`diagnostics_cli`]).
+#[tauri::command]
+fn diagnostics(app: tauri::AppHandle) -> serde_json::Value {
+    diagnostics::from_app(&app)
+}
+
+/// The diagnostics blob for `hivefield --doctor`: same data as the
+/// `diagnostics` IPC command, resolved without a Tauri app so `main()` can
+/// print it before the app boots.
+pub fn diagnostics_cli() -> serde_json::Value {
+    diagnostics::collect_cli()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Capture the repo + HEAD commit the app launched against, so the UI can
@@ -543,7 +561,8 @@ pub fn run() {
             notifications::notify_desktop,
             notifications::ntfy_send,
             updater::updater_check,
-            updater::updater_install
+            updater::updater_install,
+            diagnostics
         ])
         // A minimal File menu exposing "New Window" (plus the standard app
         // menu on macOS). The menu item asks the *focused* window to open the

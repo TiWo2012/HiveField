@@ -11,6 +11,7 @@ import { getSettings } from "./settings";
 import { toggleSettings } from "./settings-ui";
 import { snippetPickerItems } from "./snippets";
 import { openSearch } from "./search";
+import { copyDiagnostics } from "./diagnostics";
 import { openPaletteWith, type PaletteItem } from "./palette";
 import {
   activeSessionEntry,
@@ -171,6 +172,15 @@ export function buildPaletteItems(): PaletteItem[] {
         // Each close goes through onDidRemovePanel, which kills the session
         // and tears down its terminal/worktree as usual.
         for (const panel of [...getApi().panels]) panel.api.close();
+      },
+    },
+    {
+      label: "Copy diagnostics",
+      icon: "🩺",
+      run: () => {
+        // Best-effort: an IPC/clipboard failure shouldn't crash the palette;
+        // the user can retry or use `hivefield --doctor` instead.
+        void copyDiagnostics().catch((err) => console.error(err));
       },
     },
     {
