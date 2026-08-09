@@ -132,6 +132,38 @@ describe("settings normalization", () => {
     expect(getSettings().visibleAgents).toEqual([]);
   });
 
+  test("defaultMode keeps known modes and the empty (nothing) value", async () => {
+    // Built-in agent id.
+    await updateSettings({ defaultMode: "pi" } as never);
+    expect(getSettings().defaultMode).toBe("pi");
+    // Raw shell is a valid default.
+    await updateSettings({ defaultMode: "raw" } as never);
+    expect(getSettings().defaultMode).toBe("raw");
+    // Empty string = don't auto-open anything.
+    await updateSettings({ defaultMode: "" } as never);
+    expect(getSettings().defaultMode).toBe("");
+  });
+
+  test("defaultMode drops unknown ids and wrong types", async () => {
+    // A stale id whose agent was removed falls back to the first built-in.
+    await updateSettings({ defaultMode: "no-such-agent" } as never);
+    expect(getSettings().defaultMode).toBe(DEFAULT_SETTINGS.defaultMode);
+    // A non-string value falls back too.
+    await updateSettings({ defaultMode: 42 } as never);
+    expect(getSettings().defaultMode).toBe(DEFAULT_SETTINGS.defaultMode);
+  });
+
+  test("defaultMode accepts a custom-agent id and drops it when removed", async () => {
+    await updateSettings({
+      customAgents: [{ id: "custom-1", label: "Custom", command: "echo hi" }],
+      defaultMode: "custom-1",
+    } as never);
+    expect(getSettings().defaultMode).toBe("custom-1");
+    // Removing the custom agent makes the id stale → falls back.
+    await updateSettings({ customAgents: [] } as never);
+    expect(getSettings().defaultMode).toBe(DEFAULT_SETTINGS.defaultMode);
+  });
+
   test("invalid custom agents are dropped, valid ones are kept", async () => {
     await updateSettings({
       customAgents: [

@@ -12,6 +12,7 @@ import {
   AGENTS,
   RAW_MODE,
   allAgents,
+  isKnownModeAll,
   type CustomAgentDef,
 } from "./agents";
 import { getSettings, subscribe } from "./settings";
@@ -19,8 +20,26 @@ import { getSettings, subscribe } from "./settings";
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */
 export type Mode = string;
 
-/** Default session mode when none is requested (the first agent). */
+/**
+ * Fallback session mode when none is requested and none is configured (the
+ * first built-in agent). `defaultMode()` below is the *configured* default;
+ * this constant only covers malformed/missing panel params and the setting's
+ * own fallback.
+ */
 export const DEFAULT_MODE: Mode = AGENTS[0].id;
+
+/**
+ * The configured default session mode (Settings → Agents → Default agent):
+ * a built-in or custom agent id, `RAW_MODE` for a plain shell, or undefined
+ * when the setting is empty ("don't auto-open anything"). Every auto-open
+ * path (fresh start, splash Skip/Continue with no saved layout, "New agent
+ * tab", opening a recent project) resolves through this, so the app opens
+ * exactly the agent the user picked.
+ */
+export function defaultMode(): Mode | undefined {
+  const mode = getSettings().defaultMode;
+  return isKnownModeAll(mode, customs()) ? mode : undefined;
+}
 
 /** The user-defined agents currently configured (shortcut for call sites). */
 export function customs(): readonly CustomAgentDef[] {

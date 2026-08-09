@@ -19,8 +19,8 @@ import {
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
 import "./styles.css";
-import { isKnownModeAll } from "./agents";
-import { customs, DEFAULT_MODE, sessionModes } from "./modes";
+import { isKnownModeAll, RAW_MODE } from "./agents";
+import { customs, defaultMode, sessionModes } from "./modes";
 import { getSettings, loadSettings, subscribe } from "./settings";
 import { getTheme } from "./themes";
 import { initDictation } from "./dictation";
@@ -377,15 +377,20 @@ async function init() {
         );
         if (isDir) {
           // Nothing saved here: open the dropped folder as the session's dir.
-          addPanelWithMode(DEFAULT_MODE, undefined, dropPath);
+          // The default agent when configured, else a plain shell.
+          addPanelWithMode(defaultMode() ?? RAW_MODE, undefined, dropPath);
           void invoke("project_touch", { cwd: dropPath }).catch(() => {});
         } else {
-          addPanelWithMode(DEFAULT_MODE);
+          addPanelWithMode(defaultMode() ?? RAW_MODE);
           writeIntoActiveSession(shellQuote(dropPath));
         }
       }
     } else if (!restored) {
-      addPanelWithMode(DEFAULT_MODE);
+      // Fresh start with no saved layout: open the configured default agent.
+      // When the setting is "nothing", leave the workspace empty — sessions
+      // are started from the sidebar or palette instead.
+      const mode = defaultMode();
+      if (mode) addPanelWithMode(mode);
     }
   }
 
@@ -400,17 +405,29 @@ async function init() {
     splash = mountSplash(document.getElementById("terminal")!, {
       cwd: getWorkspaceCwd(),
       hasSavedWorkspace,
+      // Whether a default session is configured (the resume button label
+      // and the skip link reflect it: "nothing" opens an empty workspace).
+      hasDefaultSession: defaultMode() !== undefined,
       // The first few visible agents (respecting the settings filter) plus
       // the raw shell, matching the sidebar's session sources.
       quickAgents: sessionModes().slice(0, 4),
       onContinue: () => void continueFromSplash(),
       onOpenProject: (path) => {
-        // Open the default agent in the chosen directory and mark it recent.
-        addPanelWithMode(DEFAULT_MODE, undefined, path);
+        // Open the configured default agent in the chosen directory and mark
+        // it recent; with no default configured, open a plain shell there.
+        addPanelWithMode(defaultMode() ?? RAW_MODE, undefined, path);
         void invoke("project_touch", { cwd: path }).catch(() => {});
       },
       onNewSession: (mode) => addPanelWithMode(mode),
-      onSkip: () => addPanelWithMode(DEFAULT_MODE),
+      onSkip: () => {
+        // "Skip — open a fresh session here": open the configured default
+        // agent; with the setting at "nothing", dismiss the splash and leave
+        // the workspace empty (sessions are started from the sidebar or
+        // palette).
+        const mode = defaultMode();
+        if (mode) addPanelWithMode(mode);
+        else splash.hide();
+      },
       onForgetProject: (path) => {
         void invoke("workspace_set", { cwd: path, layout: null }).catch(() => {});
       },

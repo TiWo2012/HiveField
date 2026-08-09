@@ -124,6 +124,11 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
     most recently opened
   - Click a project to open the default agent there; ✕ forgets a project
   - Drop a folder anywhere to dismiss the splash and continue
+- **Default agent** (Settings → Agents) — the session that auto-opens on a
+  fresh start (splash Skip / Continue with no saved layout), for the **New
+  agent tab** shortcut (`Ctrl+Shift+T`), and when opening a recent project.
+  Pick any built-in or custom agent, the raw shell, or **Nothing** to start
+  with an empty workspace and choose a session yourself
 - **Workspaces sidebar** — shows every non-empty workspace slot (active
   highlighted, green dot for saved layouts); click to switch, double-click to
   rename. A workspace that is completely empty — no open panels and no
@@ -255,7 +260,7 @@ with a `localStorage` fallback:
 |----------|---------|
 | **Font** | Family, size (6–48), weight (normal/bold), line height, letter spacing, ligatures |
 | **Theme** | 11 built-in themes, background opacity |
-| **Agents** | Show/hide built-in agents, define custom agents (name + command line) |
+| **Agents** | Show/hide built-in agents, define custom agents (name + command line), choose a default agent — or none, to open with an empty workspace |
 | **Worktrees** | Base directory for auto-created worktrees (default `/tmp`) |
 | **Notifications** | Desktop notifications on/off, ntfy server/topic/token |
 | **Terminal Bell** | Sound on/off, notification on/off |

@@ -1211,6 +1211,12 @@ body {
   margin: 8px 0 2px;
 }
 
+/* "Default agent" dropdown (Settings → Agents), above the visibility
+   checklist. */
+.settings-agents-default {
+  margin: 2px 0 4px;
+}
+
 .settings-custom-agents {
   margin-top: 14px;
   padding-top: 10px;

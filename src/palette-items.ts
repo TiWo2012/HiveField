@@ -6,7 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { isKnownModeAll, modeIconAll } from "./agents";
-import { customs, DEFAULT_MODE, sessionModes } from "./modes";
+import { customs, defaultMode, DEFAULT_MODE, sessionModes } from "./modes";
 import { getSettings } from "./settings";
 import { openSettings, toggleSettings } from "./settings-ui";
 import { snippetPickerItems } from "./snippets";
@@ -80,7 +80,7 @@ export function buildPaletteItems(): PaletteItem[] {
     // finder keeps 30 actions navigable (type "cop" to jump to Copilot).
     ...sessionModes().map(({ mode, label, icon }) => ({
       label: `New ${label} tab`,
-      detail: mode === DEFAULT_MODE ? kb().newTab : undefined,
+      detail: mode === defaultMode() ? kb().newTab : undefined,
       icon,
       run: () => addPanelWithMode(mode),
     })),

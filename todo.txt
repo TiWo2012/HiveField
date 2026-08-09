@@ -14,3 +14,4 @@ x 2026-08-09 2026-08-09 add diagnostics command (hivefield --doctor / palette "C
 2026-08-09 security: set CSP + scope file_read/file_write paths
 2026-08-09 dev-experience glue: pre-commit hook, .editorconfig, CHANGELOG.md
 x 2026-08-09 2026-08-09 add fullscreen support for splits/tabs via Ctrl+F
+x 2026-08-09 2026-08-09 add a configurable default agent (Settings → Agents) with an option to open nothing

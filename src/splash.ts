@@ -34,6 +34,13 @@ export interface SplashOptions {
   cwd?: string;
   /** Whether the launch directory has a saved workspace to resume. */
   hasSavedWorkspace: boolean;
+  /**
+   * Whether a default session is configured (the "Default agent" setting is
+   * not "nothing"). Controls the resume button label when there is no saved
+   * workspace to resume: it either starts the default agent or opens an
+   * empty workspace.
+   */
+  hasDefaultSession: boolean;
   /** Session quick-start buttons (first one is the primary action). */
   quickAgents: SplashAgent[];
   /** Resume the launch directory's latest session (deferred auto-resume). */
@@ -127,7 +134,9 @@ export function mountSplash(container: HTMLElement, opts: SplashOptions): Splash
   resumeLabel.className = "resume-label";
   resumeLabel.textContent = opts.hasSavedWorkspace
     ? "Continue latest session"
-    : "Start a session here";
+    : opts.hasDefaultSession
+      ? "Start a session here"
+      : "Start with an empty workspace";
   const resumeArrow = document.createElement("span");
   resumeArrow.className = "resume-arrow";
   resumeArrow.textContent = "→";
@@ -141,7 +150,9 @@ export function mountSplash(container: HTMLElement, opts: SplashOptions): Splash
   const resumePath = opts.cwd ?? "this directory";
   resumeHint.textContent = opts.hasSavedWorkspace
     ? `Resumes the last layout for ${resumePath}.`
-    : `No saved session for ${resumePath} yet — starts fresh.`;
+    : opts.hasDefaultSession
+      ? `No saved session for ${resumePath} yet — starts fresh.`
+      : `No saved session for ${resumePath} — opens an empty workspace; start a session from the sidebar or palette.`;
   resumeSection.append(resumeHeading, resumeBtn, resumeHint);
   inner.appendChild(resumeSection);
 
@@ -194,11 +205,14 @@ export function mountSplash(container: HTMLElement, opts: SplashOptions): Splash
   recentSection.append(list, empty);
   inner.appendChild(recentSection);
 
-  // Skip link (opens a fresh session in the launch directory).
+  // Skip link (opens a fresh session in the launch directory, or an empty
+  // workspace when no default agent is configured).
   const skip = document.createElement("button");
   skip.type = "button";
   skip.className = "splash-skip";
-  skip.textContent = "Skip — open a fresh session here";
+  skip.textContent = opts.hasDefaultSession
+    ? "Skip — open a fresh session here"
+    : "Skip — start with an empty workspace";
   skip.addEventListener("click", () => opts.onSkip());
   inner.appendChild(skip);
 

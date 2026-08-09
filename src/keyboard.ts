@@ -16,7 +16,8 @@ import { isPaletteOpen } from "./palette";
 import { isContextMenuOpen } from "./context-menu";
 import { switchToWorkspace } from "./sidebar";
 import { openNewWindow } from "./windows";
-import { DEFAULT_MODE } from "./modes";
+import { defaultMode } from "./modes";
+import { RAW_MODE } from "./agents";
 import { getApi, panelToSession } from "./state";
 import { startDictation, stopDictation } from "./dictation";
 import { toggleBroadcast } from "./broadcast";
@@ -44,7 +45,9 @@ export function setupKeyboard() {
     const kb = getSettings().keybinds;
     if (matchesKeybind(kb.newTab, e)) {
       e.preventDefault();
-      addPanelWithMode(DEFAULT_MODE);
+      // "New agent tab": the configured default agent, or a plain shell
+      // when the setting is "don't auto-open anything".
+      addPanelWithMode(defaultMode() ?? RAW_MODE);
     }
     // Open a new app window (see openNewWindow).
     if (matchesKeybind(kb.newWindow, e)) {

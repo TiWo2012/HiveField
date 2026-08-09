@@ -148,6 +148,14 @@ export interface AppSettings {
    */
   visibleAgents: string[];
   /**
+   * The session that auto-opens on a fresh start (splash Skip / Continue with
+   * no saved layout, "New agent tab", opening a recent project). A built-in
+   * or custom agent id, `RAW_MODE` for a plain shell, or an empty string to
+   * open nothing (an empty workspace — sessions are started from the sidebar
+   * or palette instead).
+   */
+  defaultMode: string;
+  /**
    * User-defined agents (Settings → Agents → Custom agents), merged with the
    * built-in registry at runtime. Each has its own command line, so agents
    * with custom flags/args are supported (e.g. `opencode --model gpt-5`).
@@ -193,6 +201,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ntfyTopic: "",
   ntfyToken: "",
   visibleAgents: AGENTS.map((a) => a.id),
+  // Matches the historical DEFAULT_MODE (the first built-in agent), so
+  // existing behavior is preserved until the user picks something else.
+  defaultMode: AGENTS[0].id,
   customAgents: [],
   keybinds: { ...DEFAULT_KEYBINDS },
   promptSnippets: DEFAULT_PROMPT_SNIPPETS,
@@ -356,6 +367,19 @@ function normalize(value: unknown): AppSettings {
     ...DEFAULT_SETTINGS.visibleAgents,
     ...customAgents.map((a) => a.id),
   ];
+  // The default session mode must be a known mode id (built-in or custom
+  // agent, or the raw shell) or the empty string ("nothing"). A stale id
+  // whose agent was removed falls back to the first built-in agent.
+  const defaultKnown = new Set([
+    ...AGENT_MODES,
+    RAW_MODE,
+    ...customAgents.map((a) => a.id),
+  ]);
+  const defaultMode =
+    typeof v.defaultMode === "string" &&
+    (v.defaultMode === "" || defaultKnown.has(v.defaultMode))
+      ? v.defaultMode
+      : DEFAULT_SETTINGS.defaultMode;
 
   // The document's own schema version: keep what the file says (a newer
   // version means an older app loaded a newer document — it must not stamp
@@ -422,6 +446,7 @@ function normalize(value: unknown): AppSettings {
     ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),
     ntfyToken: pickStr("ntfyToken", DEFAULT_SETTINGS.ntfyToken),
     visibleAgents: pickAgents("visibleAgents", allDefaultVisible, customAgents),
+    defaultMode,
     customAgents,
     keybinds: pickKeybinds(v.keybinds),
     promptSnippets: pickSnippets("promptSnippets", DEFAULT_SETTINGS.promptSnippets),

@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   allAgents,
   makeCustomAgentId,
+  RAW_MODE,
   type CustomAgentDef,
 } from "./agents";
 import { THEMES } from "./themes";
@@ -266,6 +267,28 @@ function toggleField(value: boolean, onChange?: (v: boolean) => void): HTMLEleme
   input.checked = value;
   input.addEventListener("change", () => onChange?.(input.checked));
   return input;
+}
+
+/**
+ * The "Default agent" dropdown: which session auto-opens on a fresh start
+ * (splash Skip / Continue with no saved layout, "New agent tab", opening a
+ * recent project). The empty option is "nothing" — the app opens an empty
+ * workspace and sessions are started from the sidebar or palette.
+ */
+function defaultAgentSelect(): HTMLElement {
+  const s = getSettings();
+  return selectField(
+    s.defaultMode,
+    [
+      { value: "", label: "Nothing (don't auto-open)" },
+      ...allAgents(s.customAgents).map((a) => ({
+        value: a.id,
+        label: `${a.icon} ${a.label}`,
+      })),
+      { value: RAW_MODE, label: "raw term" },
+    ],
+    (defaultMode) => updateSettings({ defaultMode })
+  );
 }
 
 /**
@@ -650,6 +673,8 @@ function buildGeneralTab(): HTMLElement {
 
   /* --- Agents --- */
   const agentsSection = section("Agents");
+  const defaultAgentContainer = el("div", "settings-agents-default");
+  agentsSection.appendChild(defaultAgentContainer);
   const agentsLabel = el("span", "settings-label");
   agentsLabel.textContent = "Show in sidebar";
   agentsSection.appendChild(agentsLabel);
@@ -659,9 +684,17 @@ function buildGeneralTab(): HTMLElement {
   agentsHint.textContent =
     "Which coding agents are offered as new-session sources (sidebar, context menu, palette). The raw shell is always available.";
   agentsSection.appendChild(agentsHint);
-  // Rebuild the checklist + custom-agent editor whenever settings change
-  // (adding/removing a custom agent updates both immediately).
+  // Rebuild the default-agent dropdown + checklist + custom-agent editor
+  // whenever settings change (adding/removing a custom agent updates all
+  // three immediately).
   renderAgentsSection = () => {
+    defaultAgentContainer.replaceChildren(
+      controlRow(
+        "Default agent",
+        defaultAgentSelect(),
+        "Which session opens automatically on a fresh start (splash Skip / Continue with no saved layout), for the New agent tab shortcut, and when opening a recent project. “Nothing” opens an empty workspace — start sessions from the sidebar or palette."
+      )
+    );
     agentsContainer.replaceChildren(agentChecklist(), customAgentEditor());
   };
   renderAgentsSection();

@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { AGENTS, RAW_MODE } from "./agents";
-import { customs, DEFAULT_MODE, sessionModes } from "./modes";
+import { customs, defaultMode, DEFAULT_MODE, sessionModes } from "./modes";
 import { updateSettings } from "./settings";
 import {
   bumpPanelCounter,
@@ -46,6 +46,44 @@ describe("modes.ts (session-mode catalog)", () => {
       expect(modes.map((m) => m.mode)).toEqual([AGENTS[0].id, RAW_MODE]);
     } finally {
       await updateSettings({ visibleAgents: AGENTS.map((a) => a.id) });
+    }
+  });
+
+  test("defaultMode() returns the first built-in agent by default", () => {
+    expect(defaultMode()).toBe(AGENTS[0].id);
+  });
+
+  test("defaultMode() returns a configured agent, raw, or nothing", async () => {
+    try {
+      await updateSettings({ defaultMode: AGENTS[1].id });
+      expect(defaultMode()).toBe(AGENTS[1].id);
+
+      await updateSettings({ defaultMode: RAW_MODE });
+      expect(defaultMode()).toBe(RAW_MODE);
+
+      // Empty string = "don't auto-open anything".
+      await updateSettings({ defaultMode: "" });
+      expect(defaultMode()).toBeUndefined();
+    } finally {
+      await updateSettings({ defaultMode: AGENTS[0].id });
+    }
+  });
+
+  test("defaultMode() resolves a custom agent configured as default", async () => {
+    const custom = {
+      id: "custom-1",
+      label: "Custom",
+      command: "echo hi",
+      icon: "✦",
+    };
+    try {
+      await updateSettings({
+        customAgents: [custom],
+        defaultMode: "custom-1",
+      });
+      expect(defaultMode()).toBe("custom-1");
+    } finally {
+      await updateSettings({ customAgents: [], defaultMode: AGENTS[0].id });
     }
   });
 });
