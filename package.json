@@ -1,7 +1,7 @@
 {
   "name": "hivefield-terminal",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "A basic terminal built with Tauri and xterm.js",
   "scripts": {

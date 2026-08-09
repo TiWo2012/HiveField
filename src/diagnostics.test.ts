@@ -3,7 +3,7 @@ import { formatDiagnostics, type Diagnostics } from "./diagnostics";
 
 const sample: Diagnostics = {
   app: "hivefield",
-  version: "0.1.1",
+  version: "0.1.2",
   os: "linux",
   arch: "x86_64",
   installDir: "/home/u/.local/bin",
@@ -20,7 +20,7 @@ describe("formatDiagnostics", () => {
   test("renders every field as key: value lines", () => {
     const text = formatDiagnostics(sample);
     expect(text).toContain("hiveField diagnostics");
-    expect(text).toContain("version: 0.1.1");
+    expect(text).toContain("version: 0.1.2");
     expect(text).toContain("os: linux");
     expect(text).toContain("gitRepo: /home/u/projects/foo");
     expect(text).toContain(
