@@ -24,7 +24,8 @@ import { showContextMenu, type ContextMenuItem } from "./context-menu";
 import { sessionModes } from "./modes";
 import {
   addTask as addTaskPure,
-  parseLine,
+  parseTasks,
+  tasksKey,
   toggleTask as toggleTaskPure,
   type TodoTask,
 } from "./todotxt-core";
@@ -123,10 +124,7 @@ export async function setupTodoTxtPanel(
     // File doesn't exist yet: start empty.
     raw = "";
   }
-  let tasks: TodoTask[] = raw
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map(parseLine);
+  let tasks: TodoTask[] = parseTasks(raw);
 
   // --- build DOM ---
   const list = document.createElement("div");
@@ -241,4 +239,35 @@ export async function setupTodoTxtPanel(
 
   // Initial focus
   setTimeout(() => input.focus(), 50);
+
+  // --- poll for external edits ---
+  // Other processes (a coding agent ticking off its task, an editor, a git
+  // checkout…) may rewrite todo.txt behind this panel's back. Re-read the
+  // file every 30s and refresh the list when the on-disk content diverges
+  // from what's shown. Local edits already write the file immediately, so a
+  // poll that reads back identical content is a no-op — no flicker, and the
+  // input bar (which lives outside the list) keeps focus while typing.
+  const POLL_MS = 30_000;
+
+  async function pollForUpdates(): Promise<void> {
+    // Panel closed (dockview removed the element): stop polling.
+    if (!element.isConnected) {
+      clearInterval(pollTimer);
+      return;
+    }
+    let raw: string;
+    try {
+      raw = await invoke<string>("file_read", { path: filePath });
+    } catch {
+      // Unreadable (transient error or file deleted): keep showing the
+      // current list rather than wiping it on a spurious failure.
+      return;
+    }
+    const fresh = parseTasks(raw);
+    if (tasksKey(fresh) === tasksKey(tasks)) return;
+    tasks = fresh;
+    refreshList();
+  }
+
+  const pollTimer = window.setInterval(pollForUpdates, POLL_MS);
 }

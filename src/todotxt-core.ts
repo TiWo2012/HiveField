@@ -106,6 +106,27 @@ export function serializeTask(t: TodoTask): string {
 }
 
 /**
+ * Parse todo.txt file contents into a task list. Blank lines are dropped
+ * (matching the panel's own serialization, which joins raws with \n).
+ */
+export function parseTasks(raw: string): TodoTask[] {
+  return raw
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map(parseLine);
+}
+
+/**
+ * Stable comparison key for a task list: the raw lines joined with \n.
+ * Two lists compare equal iff they serialize to the same file content, so
+ * the panel's external-edit poller can cheaply detect on-disk changes
+ * without a deep diff.
+ */
+export function tasksKey(tasks: TodoTask[]): string {
+  return tasks.map((t) => t.raw).join("\n");
+}
+
+/**
  * Toggle a task's completion state in place: add/remove the `x ` prefix and
  * set/clear the completion date (and stamp a creation date when one is
  * missing). Returns the same array for chaining.
