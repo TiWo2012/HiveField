@@ -17,8 +17,10 @@ import {
   activeSessionEntry,
   addPanelWithMode,
   cycleTab,
+  isFullscreen,
   movePaneFocus,
   shortLabel,
+  toggleFullscreen,
 } from "./sessions";
 import { renamePanel } from "./titles";
 import { switchToWorkspace, renameWorkspacePrompt } from "./sidebar";
@@ -155,6 +157,12 @@ export function buildPaletteItems(): PaletteItem[] {
         const panel = getApi().activePanel;
         if (panel) void renamePanel(panel);
       },
+    },
+    {
+      label: isFullscreen() ? "Exit fullscreen" : "Fullscreen active pane",
+      detail: kb().fullscreen,
+      icon: "⛶",
+      run: () => toggleFullscreen(),
     },
     {
       label: "Close active panel",

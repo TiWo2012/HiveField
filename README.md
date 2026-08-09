@@ -94,6 +94,8 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
 - `Ctrl+Tab` / `Ctrl+Shift+Tab` — cycle to the next/previous tab (panel) in
   the workspace, wrapping around; panels cycle in layout order (group by
   group, then left to right within a group)
+- `Ctrl+F` — **fullscreen** the active split or tab: its group fills the whole
+  terminal area (other splits/tabs hide); press again to restore the layout
 - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
 - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
 - **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is

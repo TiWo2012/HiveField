@@ -12,7 +12,7 @@ import { getSettings } from "./settings";
 import { showContextMenu, type ContextMenuItem } from "./context-menu";
 import { copyText, readClipboardText } from "./clipboard";
 import { openSearch } from "./search";
-import { addPanelWithMode } from "./sessions";
+import { addPanelWithMode, isFullscreen, toggleFullscreen } from "./sessions";
 import { panelForTabElement, renamePanel } from "./titles";
 import {
   getApi,
@@ -155,6 +155,12 @@ function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
       run: () => openSearch(),
     },
     {
+      label: isFullscreen() ? "Exit fullscreen" : "Fullscreen",
+      icon: "⛶",
+      shortcut: getSettings().keybinds.fullscreen,
+      run: () => toggleFullscreen(),
+    },
+    {
       label: "Rename tab",
       icon: "✎",
       shortcut: getSettings().keybinds.renameTab,
@@ -176,6 +182,12 @@ function buildTabContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
   return [
     { label: "New split", icon: "▣", submenu: newSplitMenuItems(panel) },
     { separator: true },
+    {
+      label: isFullscreen() ? "Exit fullscreen" : "Fullscreen",
+      icon: "⛶",
+      shortcut: getSettings().keybinds.fullscreen,
+      run: () => toggleFullscreen(),
+    },
     {
       label: "Rename tab",
       icon: "✎",

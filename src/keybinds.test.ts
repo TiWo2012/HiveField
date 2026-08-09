@@ -42,16 +42,19 @@ describe("keybind registry", () => {
     expect(DEFAULT_KEYBINDS.previousTab).toBe("Ctrl+Shift+Tab");
   });
 
-  test("Ctrl+Tab / Ctrl+Shift+Tab match the tab-cycling bindings", () => {
-    expect(matchesKeybind(DEFAULT_KEYBINDS.nextTab, keyEvent({ key: "Tab", ctrlKey: true }))).toBe(true);
+  test("fullscreen default is Ctrl+F", () => {
+    expect(DEFAULT_KEYBINDS.fullscreen).toBe("Ctrl+F");
+    // Must not collide with the find binding (Ctrl+Shift+F).
+    expect(DEFAULT_KEYBINDS.find).toBe("Ctrl+Shift+F");
+  });
+
+  test("Ctrl+F matches the fullscreen binding", () => {
+    expect(matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F", ctrlKey: true }))).toBe(true);
+    // Ctrl+Shift+F is find, not fullscreen; bare F must not match.
     expect(
-      matchesKeybind(DEFAULT_KEYBINDS.previousTab, keyEvent({ key: "Tab", ctrlKey: true, shiftKey: true }))
-    ).toBe(true);
-    // Missing or extra modifiers must not match.
-    expect(matchesKeybind(DEFAULT_KEYBINDS.nextTab, keyEvent({ key: "Tab" }))).toBe(false);
-    expect(
-      matchesKeybind(DEFAULT_KEYBINDS.nextTab, keyEvent({ key: "Tab", ctrlKey: true, shiftKey: true }))
+      matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F", ctrlKey: true, shiftKey: true }))
     ).toBe(false);
+    expect(matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F" }))).toBe(false);
   });
 });
 

@@ -671,6 +671,32 @@ export function cycleTab(direction: 1 | -1): boolean {
 }
 
 /**
+ * True when a panel is currently fullscreened (dockview has a maximized
+ * group). With a single panel the workspace is trivially fullscreen, but the
+ * flag stays false so a Ctrl+F toggle does nothing there.
+ */
+export function isFullscreen(): boolean {
+  return getApi().hasMaximizedGroup();
+}
+
+/**
+ * Toggle fullscreen on the active panel (Ctrl+F): maximize its group so the
+ * active split/tab fills the whole terminal area, hiding every other group;
+ * pressing again restores the layout. Returns true when a panel was active.
+ */
+export function toggleFullscreen(): boolean {
+  const api = getApi();
+  const panel = api.activePanel;
+  if (!panel) return false;
+  if (api.hasMaximizedGroup()) {
+    api.exitMaximizedGroup();
+  } else {
+    api.maximizeGroup(panel);
+  }
+  return true;
+}
+
+/**
  * Open a session at the given client coordinates, mirroring dockview's own
  * drop-target zones: split the hovered group by edge quadrant, dock to the
  * outer layout edge, or (fallback) split the active panel to the right.

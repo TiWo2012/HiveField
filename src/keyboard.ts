@@ -9,7 +9,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { matchesKeybind, type KeybindAction } from "./keybinds";
 import { getSettings, updateSettings, FONT_SIZE_MAX, FONT_SIZE_MIN } from "./settings";
 import { toggleSettings } from "./settings-ui";
-import { activeSessionEntry, addPanelWithMode, cycleTab, movePaneFocus } from "./sessions";
+import { activeSessionEntry, addPanelWithMode, cycleTab, movePaneFocus, toggleFullscreen } from "./sessions";
 import { renamePanel } from "./titles";
 import { openSearch, isSearchOpen } from "./search";
 import { isPaletteOpen } from "./palette";
@@ -180,6 +180,16 @@ export function setupKeyboard() {
         e.preventDefault();
         e.stopPropagation();
         cycleTab(-1);
+        return;
+      }
+      // Fullscreen the active split/tab (Ctrl+F): maximize its group so it
+      // fills the whole terminal area; pressing again restores the layout.
+      // Intercepted unconditionally — Ctrl+F is forward-char in the shell,
+      // and dockview's own maximize toggle happens right here.
+      if (matchesKeybind(kb.fullscreen, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFullscreen();
         return;
       }
       // Broadcast toggle: stop the combo from reaching the shell when
