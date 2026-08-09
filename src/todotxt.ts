@@ -19,7 +19,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { addPanelWithMode } from "./sessions";
-import { getApi, panelToSession, sessions } from "./state";
+import { panelToSession } from "./state";
 import { showContextMenu, type ContextMenuItem } from "./context-menu";
 import { sessionModes } from "./modes";
 import {
@@ -38,30 +38,31 @@ function buildSendTaskMenu(taskText: string): ContextMenuItem[] {
       label,
       icon,
       run: () => {
-        addPanelWithMode(mode);
+        // Target the session of the panel we just created. Scanning for
+        // *any* session with this mode would match an older session of the
+        // same agent (whose task already finished, or which has exited), so
+        // the text would land in the wrong place on a second send.
+        const panel = addPanelWithMode(mode);
+        const panelId = panel.id;
         let attempts = 0;
         const tryWrite = () => {
-          const panels = getApi().panels;
-          for (const panel of [...panels].reverse()) {
-            const sessionId = panelToSession.get(panel.id);
-            if (sessionId === undefined) continue;
-            const entry = sessions.get(sessionId);
-            if (entry?.mode !== mode) continue;
-            // PTY is ready, but the agent hasn't started yet — wait
-            // for it to boot so the text doesn't land at the shell
-            // prompt before the autorun command runs.
-            setTimeout(() => {
-              // \r (carriage return), not \n: TUI agents (pi, opencode,
-              // …) run stdin in raw mode where Enter is \r; a bare \n
-              // maps to shift+enter under the kitty keyboard protocol and
-              // just inserts a newline instead of submitting.
-              invoke("pty_write", { sessionId, data: taskText + "\r" }).catch(
-                (err) => console.error("failed to write task to agent session", err)
-              );
-            }, 3000);
+          const sessionId = panelToSession.get(panelId);
+          if (sessionId === undefined) {
+            if (++attempts < 40) setTimeout(tryWrite, 50);
             return;
           }
-          if (++attempts < 40) setTimeout(tryWrite, 50);
+          // PTY is ready, but the agent hasn't started yet — wait
+          // for it to boot so the text doesn't land at the shell
+          // prompt before the autorun command runs.
+          setTimeout(() => {
+            // \r (carriage return), not \n: TUI agents (pi, opencode,
+            // …) run stdin in raw mode where Enter is \r; a bare \n
+            // maps to shift+enter under the kitty keyboard protocol and
+            // just inserts a newline instead of submitting.
+            invoke("pty_write", { sessionId, data: taskText + "\r" }).catch(
+              (err) => console.error("failed to write task to agent session", err)
+            );
+          }, 3000);
         };
         tryWrite();
       },
