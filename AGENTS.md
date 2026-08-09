@@ -45,6 +45,24 @@ lets you (or another agent) pick it up later.
   but when a fix is still in progress, an explicit `wip:` commit that fails
   checks is still better than leaving the work uncommitted.
 
+## Hard rule: tick off your task in todo.txt
+
+`src-tauri/todo.txt` is the shared task list. Every task sent to an agent
+corresponds to a line in it.
+
+- When you finish the exact task you were sent, mark its line as done using
+todo.txt syntax: put an `x` and the completion date at the start of the line,
+keeping the original creation date:
+
+  ```
+  x 2026-08-09 2026-08-09 improve test coverage
+  ```
+
+- Tick the task off in the same commit (or a commit as close as possible to)
+the work that completes it — do not leave the todo list behind the code.
+- Only tick off tasks that are actually complete. If the work is still a `wip:`
+commit, leave the todo line untouched until it is truly done.
+
 ## Hard rule: merge as soon as a feature is done
 
 Do not let finished work sit on a side branch. The moment a unit of work — a
