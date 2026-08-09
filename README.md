@@ -32,6 +32,7 @@ worktrees — all inside a tabbed, split-pane interface.
 - [Requirements](#requirements)
 - [Development](#development)
 - [Build a Release](#build-a-release)
+- [Updating](#updating)
 - [IPC Contract](#ipc-contract)
 - [Contributing](#contributing)
 - [License](#license)
@@ -332,6 +333,35 @@ Outputs are in `src-tauri/target/release/bundle/`.
 
 ---
 
+## Updating
+
+hiveField can update itself from the [TiWo2012/HiveField](https://github.com/TiWo2012/HiveField)
+GitHub releases — the app checks the releases API, downloads the latest
+release, and installs it. There are two ways to update:
+
+**In-app (Settings → Updates)** — shows your current version, the latest
+release with its changelog, and the install location; *Check for updates*
+queries GitHub and *Download & install* fetches the release (with a progress
+bar) and installs it. Restart hiveField to run the new version.
+
+**Terminal (`install.sh`)** — the same install, from a shell:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TiWo2012/HiveField/master/install.sh | sh
+```
+
+Both install to the **same location** (the app's updater and `install.sh`
+share the rule):
+
+1. `$HF_INSTALL_DIR` when set, otherwise
+2. `$HOME/.local/bin` (unix) / `%LOCALAPPDATA%\hivefield\bin` (Windows)
+
+`install.sh` also honors `HF_VERSION` to pin a release tag (`HF_VERSION=v0.2.0`).
+The release assets are named `hivefield-<os>-<arch>.tar.gz` (containing the
+`hivefield` binary) on unix and `hivefield-windows-<arch>.exe` on Windows;
+the release workflow publishes them automatically. If a release lacks the
+tarball, a bare `hivefield-<os>-<arch>` binary is used instead.
+
 ## IPC Contract
 
 All commands/events are addressed by a `sessionId` (a number allocated by the
@@ -341,6 +371,8 @@ backend for each spawned shell).
 |-------------|----------------------------|---------|
 | Rust → JS   | `pty://output`             | `{ sessionId, data }` (UTF-8 string) |
 | Rust → JS   | `pty://exit`               | `{ sessionId, code }` |
+| Rust → JS   | `updater://progress`       | `{ percent, total }` — update download progress |
+| Rust → JS   | `updater://done`           | `{ version, path }` — update installed |
 | JS → Rust   | `pty_spawn`                | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"`; `cwd` optionally pins the start directory (e.g. a worktree); `autorun` overrides the command when the CLI binary differs from the mode id → returns `sessionId` |
 | JS → Rust   | `editor_command`           | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with per-platform fallback (`${EDITOR:-vi}` on unix, `%EDITOR%`/`notepad` on Windows) |
 | JS → Rust   | `pty_write`                | `{ sessionId, data }` |
@@ -360,6 +392,8 @@ backend for each spawned shell).
 | JS → Rust   | `open_url`                 | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
 | JS → Rust   | `notify_desktop`           | `{ title, body }` — show a native desktop notification |
 | JS → Rust   | `ntfy_send`                | `{ title, body }` — publish a push notification to the configured ntfy server/topic (no-op when disabled) |
+| JS → Rust   | `updater_check`            | () → latest release info from TiWo2012/HiveField (`{ currentVersion, latestVersion, publishedAt, changelog, htmlUrl, assetName, assetUrl, assetSize, installDir, updateAvailable }`) |
+| JS → Rust   | `updater_install`          | () → download the latest release and install it to the shared install dir; emits `updater://progress` / `updater://done` — returns `{ version, path }` |
 
 Workspace persistence commands are keyed by the canonicalized launch directory
 (`cwd`), not by session.

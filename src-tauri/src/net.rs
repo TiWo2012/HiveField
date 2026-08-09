@@ -75,6 +75,24 @@ impl HttpClient {
         Ok(text)
     }
 
+    /// GET `url` and return the response body as a UTF-8 string on success;
+    /// `Err` on transport errors or any non-2xx status (including the
+    /// server's body in the message). Used for small JSON payloads (GitHub
+    /// release metadata, cloud transcription responses).
+    pub fn get_text(&self, url: &str) -> Result<String, String> {
+        let response = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|e| format!("GET {url} failed: {e}"))?;
+        let status = response.status().as_u16();
+        let text = response.into_body().read_to_string().unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(format!("GET {url} returned HTTP {status}: {text}"));
+        }
+        Ok(text)
+    }
+
     /// GET `url` and stream the body to `dest`, invoking `on_progress` with the
     /// download percentage (0..=100) whenever it advances. The caller decides
     /// where the file lands and how to finalize partial downloads. `Err` on

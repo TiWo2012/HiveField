@@ -1387,6 +1387,77 @@ body {
   padding: 4px 10px;
 }
 
+/* Updates tab: version rows, changelog, download progress, status line. */
+.settings-update-value {
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  color: var(--hf-text);
+  word-break: break-all;
+}
+
+.settings-update-notes {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  background: var(--hf-mantle);
+  border: 1px solid var(--hf-surface2);
+  border-radius: 6px;
+  color: var(--hf-subtext0);
+  font-family: var(--hivefield-font);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.settings-update-status {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--hf-text);
+  min-height: 16px;
+}
+
+.settings-update-status.error {
+  color: var(--hf-red);
+}
+
+.settings-update-progress {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-update-progress[hidden] {
+  display: none;
+}
+
+.settings-update-progress-bar {
+  height: 8px;
+  width: 100%;
+  max-width: 320px;
+  border-radius: 4px;
+  background: var(--hf-surface2);
+  overflow: hidden;
+  position: relative;
+}
+
+.settings-update-progress-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: calc(var(--p, 0) * 1%);
+  background: var(--hf-accent);
+  border-radius: 4px;
+  transition: width 120ms linear;
+}
+
+.settings-update-progress-label {
+  font-size: 11px;
+  color: var(--hf-overlay0);
+}
+
 /* Tab bar (General | Keybinds). */
 .settings-tabs {
   display: flex;

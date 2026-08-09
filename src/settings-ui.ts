@@ -42,6 +42,14 @@ import {
   parseKeybind,
   type KeybindAction,
 } from "./keybinds";
+import {
+  checkForUpdates,
+  installUpdate,
+  onUpdateDone,
+  onUpdateProgress,
+  type UpdateDone,
+  type UpdateInfo,
+} from "./updater";
 
 const PREVIEW_TEXT = "AaBb 日本語 中文 🎉 → ①②③ NFO nf ";
 
@@ -1003,6 +1011,153 @@ function buildKeybindsTab(): HTMLElement {
   return panel;
 }
 
+/* ---- Updates tab ---- */
+
+/**
+ * Self-update panel: checks github.com/TiWo2012/HiveField for the latest
+ * release, downloads it, and installs it to the same location the repo's
+ * `install.sh` (curl | sh) uses. Download progress arrives via
+ * `updater://progress` events from the backend.
+ */
+function buildUpdatesTab(): HTMLElement {
+  const panel = el("div", "settings-tab-panel");
+
+  const hint = el("div", "settings-hint");
+  hint.textContent =
+    "Checks github.com/TiWo2012/HiveField for the latest release, downloads it, and installs it to the same location as the repo's install.sh (curl | sh). Restart hiveField to run the new version.";
+  panel.appendChild(hint);
+
+  const currentEl = el("span", "settings-update-value");
+  currentEl.textContent = "…";
+  const latestEl = el("span", "settings-update-value");
+  latestEl.textContent = "—";
+  const dirEl = el("span", "settings-update-value");
+  dirEl.textContent = "…";
+  const notesEl = el("pre", "settings-update-notes");
+  notesEl.hidden = true;
+
+  const statusEl = el("div", "settings-update-status");
+  const progressBar = el("div", "settings-update-progress-bar");
+  const progressLabel = el("span", "settings-update-progress-label");
+  progressLabel.textContent = "0%";
+  const progressWrap = el("div", "settings-update-progress");
+  progressWrap.hidden = true;
+  progressWrap.append(progressBar, progressLabel);
+
+  const actions = el("div", "settings-actions");
+  const checkBtn = el("button", "settings-done");
+  checkBtn.type = "button";
+  checkBtn.textContent = "Check for updates";
+  const installBtn = el("button", "settings-done");
+  installBtn.type = "button";
+  installBtn.textContent = "Download & install";
+  installBtn.disabled = true;
+  actions.append(checkBtn, installBtn);
+
+  const updateSection = section("Updates");
+  updateSection.appendChild(controlRow("Current version", currentEl));
+  updateSection.appendChild(controlRow("Latest release", latestEl));
+  updateSection.appendChild(controlRow("Install location", dirEl));
+  updateSection.appendChild(notesEl);
+  updateSection.appendChild(progressWrap);
+  updateSection.appendChild(statusEl);
+  updateSection.appendChild(actions);
+  panel.appendChild(updateSection);
+
+  let checking = false;
+  let installing = false;
+  let lastInfo: UpdateInfo | null = null;
+
+  const setStatus = (text: string, isError = false) => {
+    statusEl.textContent = text;
+    statusEl.classList.toggle("error", isError);
+  };
+  const setProgress = (percent: number) => {
+    progressBar.style.setProperty("--p", String(Math.max(0, Math.min(100, percent))));
+    progressLabel.textContent = `${Math.round(percent)}%`;
+  };
+
+  const renderInfo = (info: UpdateInfo) => {
+    lastInfo = info;
+    currentEl.textContent = info.currentVersion;
+    latestEl.textContent = info.latestVersion || "—";
+    dirEl.textContent = info.installDir;
+    const changelog = info.changelog.trim();
+    notesEl.hidden = changelog === "";
+    notesEl.textContent = changelog;
+    installBtn.disabled = !info.updateAvailable || installing;
+    installBtn.title = info.updateAvailable
+      ? "Download the latest release and install it"
+      : "Already on the latest version";
+    if (info.updateAvailable) {
+      setStatus(`A newer version (${info.latestVersion}) is available.`);
+    } else {
+      setStatus("You're on the latest version.");
+    }
+  };
+
+  const check = async () => {
+    if (checking) return;
+    checking = true;
+    checkBtn.disabled = true;
+    setStatus("Checking for updates…");
+    try {
+      renderInfo(await checkForUpdates());
+    } catch (err) {
+      setStatus(`Check failed: ${String(err)}`, true);
+      installBtn.disabled = true;
+    } finally {
+      checking = false;
+      checkBtn.disabled = false;
+    }
+  };
+
+  const install = async () => {
+    if (installing) return;
+    installing = true;
+    checkBtn.disabled = true;
+    installBtn.disabled = true;
+    progressWrap.hidden = false;
+    setProgress(0);
+    setStatus("Downloading & installing…");
+    try {
+      const done: UpdateDone = await installUpdate();
+      setStatus(
+        `Installed ${done.version} → ${done.path}. Restart hiveField to use it.`
+      );
+      void invoke("notify_desktop", {
+        title: "hiveField updated",
+        body: `v${done.version} installed to ${done.path}. Restart to use it.`,
+      }).catch(() => {});
+      // Refresh the version row now that an update landed.
+      void check();
+    } catch (err) {
+      setStatus(`Install failed: ${String(err)}`, true);
+    } finally {
+      installing = false;
+      checkBtn.disabled = false;
+      progressWrap.hidden = true;
+      // Re-enable the install button for a retry (lastInfo is still set
+      // unless the very first check failed).
+      if (lastInfo) renderInfo(lastInfo);
+    }
+  };
+
+  checkBtn.addEventListener("click", () => void check());
+  installBtn.addEventListener("click", () => void install());
+
+  // Download progress streams in asynchronously from the backend.
+  void onUpdateProgress((progress) => {
+    progressWrap.hidden = false;
+    setProgress(progress.percent);
+  });
+  void onUpdateDone(() => {
+    progressWrap.hidden = true;
+  });
+
+  return panel;
+}
+
 /* ---- Build the modal ---- */
 
 function buildOverlay(): HTMLElement {
@@ -1050,6 +1205,7 @@ function buildOverlay(): HTMLElement {
   };
   modal.appendChild(tabbar);
   addTab("general", "General", buildGeneralTab());
+  addTab("updates", "Updates", buildUpdatesTab());
   addTab("snippets", "Snippets", buildSnippetsTab());
   addTab("keybinds", "Keybinds", buildKeybindsTab());
   activateTab("general");

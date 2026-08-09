@@ -5,6 +5,7 @@ mod net;
 mod notifications;
 mod pty;
 mod settings;
+mod updater;
 mod windows;
 mod workspace;
 
@@ -540,7 +541,9 @@ pub fn run() {
             dictation::dictation_stop,
             dictation::dictation_status,
             notifications::notify_desktop,
-            notifications::ntfy_send
+            notifications::ntfy_send,
+            updater::updater_check,
+            updater::updater_install
         ])
         // A minimal File menu exposing "New Window" (plus the standard app
         // menu on macOS). The menu item asks the *focused* window to open the

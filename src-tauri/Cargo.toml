@@ -25,6 +25,11 @@ fontdb = "0.24.0"
 # so HTTP status handling uses the per-request `http_status_as_error(false)`
 # config instead (see net.rs).
 ureq = "3"
+# Release tarball extraction for the built-in updater (updater.rs). install.sh
+# uses the system `tar`; the app reads the archive directly so it never has to
+# shell out. flate2 is already in the tree via other deps; tar is new.
+tar = "0.4"
+flate2 = "1"
 cpal = "0.18.1"
 rubato = "4.0.0"
 # whisper-rs is a binding to whisper.cpp and 0.16 is its newest crate release;

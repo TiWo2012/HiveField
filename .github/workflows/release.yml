@@ -49,12 +49,17 @@ jobs:
 
       - name: Collect artifacts
         run: |
-          mkdir -p release-artifacts
+          mkdir -p release-artifacts updater-asset
           cp src-tauri/target/release/hivefield release-artifacts/
           cp src-tauri/target/release/bundle/deb/*.deb release-artifacts/
           cp src-tauri/target/release/bundle/rpm/*.rpm release-artifacts/
           cp src-tauri/target/release/bundle/appimage/*.AppImage release-artifacts/
-          ls -lh release-artifacts/
+          # Updater assets: the built-in updater and install.sh pick the
+          # tarball by this exact name (see src-tauri/src/updater.rs asset_name
+          # and the repo-root install.sh); the bare binary is the fallback.
+          cp src-tauri/target/release/hivefield updater-asset/hivefield-linux-x86_64
+          tar -czf updater-asset/hivefield-linux-x86_64.tar.gz -C src-tauri/target/release hivefield
+          ls -lh release-artifacts/ updater-asset/
           APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
           echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
 
@@ -62,7 +67,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hivefield-linux
-          path: release-artifacts
+          path: |
+            release-artifacts
+            updater-asset
 
       # A new tag is minted per master push (version + build number) so every
       # release lands without manual tag management; bump the version in
@@ -75,8 +82,12 @@ jobs:
           body: |
             Automated Linux release built from `master` at `${{ github.sha }}`.
 
+            - Updater tarball (`hivefield-linux-x86_64.tar.gz`) — used by
+              the built-in updater and `install.sh`
             - Raw executable
             - `.deb` package
             - `.rpm` package
             - AppImage
-          files: release-artifacts/*
+          files: |
+            release-artifacts/*
+            updater-asset/*
