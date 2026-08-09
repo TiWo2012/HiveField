@@ -88,9 +88,14 @@ function sendTextToAgent(mode: string, text: string): void {
       if (sessionId === undefined) continue;
       const entry = sessions.get(sessionId);
       if (entry?.mode !== mode) continue;
-      invoke("pty_write", { sessionId, data: text }).catch((err) =>
-        console.error("failed to write to agent session", err)
-      );
+      // PTY is ready, but the agent's autorun command hasn't started
+      // yet (shell init, bashrc, etc.). Wait for the agent to boot
+      // before writing, or the text lands at the raw shell prompt.
+      setTimeout(() => {
+        invoke("pty_write", { sessionId, data: text }).catch((err) =>
+          console.error("failed to write to agent session", err)
+        );
+      }, 3000);
       return;
     }
     if (++attempts < 40) setTimeout(tryWrite, 50);

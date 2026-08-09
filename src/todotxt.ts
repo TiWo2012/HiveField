@@ -127,9 +127,14 @@ function buildSendTaskMenu(taskText: string): ContextMenuItem[] {
             if (sessionId === undefined) continue;
             const entry = sessions.get(sessionId);
             if (entry?.mode !== mode) continue;
-            invoke("pty_write", { sessionId, data: taskText + "\n" }).catch(
-              (err) => console.error("failed to write task to agent session", err)
-            );
+            // PTY is ready, but the agent hasn't started yet — wait
+            // for it to boot so the text doesn't land at the shell
+            // prompt before the autorun command runs.
+            setTimeout(() => {
+              invoke("pty_write", { sessionId, data: taskText + "\n" }).catch(
+                (err) => console.error("failed to write task to agent session", err)
+              );
+            }, 3000);
             return;
           }
           if (++attempts < 40) setTimeout(tryWrite, 50);
