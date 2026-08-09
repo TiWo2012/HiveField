@@ -111,19 +111,6 @@ function buildPaneContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
     },
     { separator: true },
     {
-      label: getApi().hasMaximizedGroup() ? "Restore pane size" : "Maximize pane",
-      icon: "⛶",
-      shortcut: getSettings().keybinds.maximizePane,
-      run: () => {
-        if (getApi().hasMaximizedGroup()) {
-          getApi().exitMaximizedGroup();
-        } else {
-          getApi().maximizeGroup(panel);
-        }
-      },
-    },
-    { separator: true },
-    {
       label: "Close panel",
       icon: "✕",
       shortcut: getSettings().keybinds.closePanel,
@@ -144,20 +131,6 @@ function buildTabContextMenu(panel: IDockviewPanel): ContextMenuItem[] {
       shortcut: getSettings().keybinds.renameTab,
       run: () => void renamePanel(panel),
     },
-    { separator: true },
-    {
-      label: getApi().hasMaximizedGroup() ? "Restore pane size" : "Maximize pane",
-      icon: "⛶",
-      shortcut: getSettings().keybinds.maximizePane,
-      run: () => {
-        if (getApi().hasMaximizedGroup()) {
-          getApi().exitMaximizedGroup();
-        } else {
-          getApi().maximizeGroup(panel);
-        }
-      },
-    },
-    { separator: true },
     {
       label: "Close tab",
       icon: "✕",

@@ -61,6 +61,7 @@ import {
   nextPanelId,
   type SessionEntry,
 } from "./state";
+import { broadcastToAll } from "./broadcast";
 
 /** Result of the `git_worktree_auto_create` IPC command. */
 interface AutoWorktree {
@@ -452,6 +453,7 @@ export function createTerminalComponent(): IContentRenderer {
             }
           });
           invoke("pty_write", { sessionId: sid, data }).catch(() => {});
+          broadcastToAll(sid, data);
         }
       });
 

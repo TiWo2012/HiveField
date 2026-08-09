@@ -19,6 +19,7 @@ import { openNewWindow } from "./windows";
 import { DEFAULT_MODE } from "./modes";
 import { getApi, panelToSession } from "./state";
 import { startDictation, stopDictation } from "./dictation";
+import { toggleBroadcast } from "./broadcast";
 
 /** Bump the global terminal font size by `delta` (persisted in settings). */
 export function zoomBy(delta: number): void {
@@ -60,17 +61,6 @@ export function setupKeyboard() {
       const panel = getApi().activePanel;
       if (panel) void renamePanel(panel);
     }
-    if (matchesKeybind(kb.maximizePane, e)) {
-      e.preventDefault();
-      const panel = getApi().activePanel;
-      if (panel) {
-        if (getApi().hasMaximizedGroup()) {
-          getApi().exitMaximizedGroup();
-        } else {
-          getApi().maximizeGroup(panel);
-        }
-      }
-    }
     if (matchesKeybind(kb.settings, e)) {
       e.preventDefault();
       toggleSettings();
@@ -78,6 +68,11 @@ export function setupKeyboard() {
     // Dictation push-to-talk: on keydown (not repeat), start capturing
     // audio. The target session is pinned now so the transcribed text lands
     // in the terminal that was active when the key went down.
+    if (matchesKeybind(kb.broadcastToggle, e)) {
+      e.preventDefault();
+      toggleBroadcast();
+      return;
+    }
     if (matchesKeybind(kb.dictate, e)) {
       if (e.repeat) return;
       e.preventDefault();
@@ -171,17 +166,12 @@ export function setupKeyboard() {
           return;
         }
       }
-      // Maximize/restore the active pane: stop the combo from reaching the
-      // terminal if there is an active panel (the bubble-phase handler does
-      // the actual maximize/restore). When nothing is open the key falls
-      // through (this never happens in practice, but defends against a
-      // zero-panel edge case).
-      if (matchesKeybind(kb.maximizePane, e)) {
-        if (getApi().activePanel) {
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
+      // Broadcast toggle: stop the combo from reaching the shell when
+      // rebound to a printable key.
+      if (matchesKeybind(kb.broadcastToggle, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
       }
       // Dictation push-to-talk: stop the combo from reaching the shell, but
       // let the bubble-phase handler actually start the capture (it has the

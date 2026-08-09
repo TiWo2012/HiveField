@@ -45,20 +45,20 @@ lets you (or another agent) pick it up later.
   but when a fix is still in progress, an explicit `wip:` commit that fails
   checks is still better than leaving the work uncommitted.
 
-## Merge as soon as a feature is done
+## Hard rule: merge as soon as a feature is done
 
 Do not let finished work sit on a side branch. The moment a unit of work — a
-feature, a fix, or a refactor — is complete and committed, merge it back to
-`dev` right away. A feature that is "done but not merged" is effectively
-still undone: nobody can use it, and it rots on the branch.
+feature, a fix, or a refactor — is complete and committed, force-merge it
+back to `dev` right away. A feature that is "done but not merged" is
+effectively still undone: nobody can use it, and it rots on the branch.
 
 - Merge as soon as the feature is done. Do not batch several finished features
   and merge them in one go — merge each one when it lands.
 - Before merging, run the relevant checks on the branch (`bun run build`,
   `tsc`, and `cargo test` in `src-tauri/`) so `dev` stays green.
-- Keep history linear: rebase the branch onto `dev` if it has drifted, then
-  `git merge --ff-only` it back. Avoid merge commits unless something truly
-  requires them.
+- Always merge into `dev` directly with `git merge` — do not let conflicts or
+  drift block the merge. Force the merge through; if a fast-forward isn't
+  possible, use a merge commit. Do not leave the branch unmerged.
 - After merging, remove the worktree and its branch so the session leaves no
   stray branches behind.
 - If a feature is genuinely broken or incomplete, do not merge it; leave it as

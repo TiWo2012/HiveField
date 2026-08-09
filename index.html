@@ -22,17 +22,42 @@
         flex: 0 0 auto;
         height: 100%;
       }
-      #terminal {
+      #terminal-area {
         flex: 1 1 auto;
         min-width: 0;
         height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      #terminal {
+        flex: 1 1 auto;
+        min-height: 0;
+        position: relative;
+      }
+      #status-bar {
+        display: none;
+        align-items: center;
+        gap: 10px;
+        padding: 3px 10px;
+        background: var(--hf-mantle, #181825);
+        border-top: 1px solid var(--hf-surface2, #45475a);
+        color: var(--hf-text, #cdd6f4);
+        font-family: var(--hivefield-font, monospace);
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      #status-bar.visible {
+        display: flex;
       }
     </style>
   </head>
   <body>
     <div id="app">
       <aside id="sidebar"></aside>
-      <div id="terminal"></div>
+      <div id="terminal-area">
+        <div id="terminal"></div>
+        <div id="status-bar"></div>
+      </div>
     </div>
     <script type="module" src="/main.js"></script>
   </body>

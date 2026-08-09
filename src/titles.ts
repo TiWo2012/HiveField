@@ -21,6 +21,7 @@ import {
   sessions,
   type SessionEntry,
 } from "./state";
+import { refreshStatusBar } from "./status-bar";
 
 /** Tab-title prefixes used to signal background activity / command completion. */
 export const INDICATOR_ACTIVITY = "● ";
@@ -56,6 +57,8 @@ export function renderTitle(panelId: string): void {
   if (st && panel) panel.api.setTitle(st.indicator + st.baseTitle);
   // The sidebar's Running list mirrors tab titles/indicators live.
   refreshSidebarRunning();
+  // The status bar shows the active session's title; keep it current.
+  if (isPanelActive(panelId)) refreshStatusBar();
 }
 
 /** Update the base (indicator-free) title, keeping the indicator prefix. */

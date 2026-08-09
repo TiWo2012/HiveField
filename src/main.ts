@@ -78,6 +78,7 @@ import {
   setSidebarHooks,
   setWindowFocused,
 } from "./state";
+import { initStatusBar, refreshStatusBar } from "./status-bar";
 
 async function init() {
   await loadSettings();
@@ -112,6 +113,8 @@ async function init() {
       `"${settings.fontFamily}", monospace`
     );
     applyUiTheme(settings);
+    // Keep the status bar's keybind hint current.
+    refreshStatusBar();
     // Re-apply search highlights so they pick up the new theme colors.
     if (isSearchOpen()) rerunSearch();
   });
@@ -257,6 +260,9 @@ async function init() {
   setupKeyboard();
   setupContextMenu();
 
+  // Status bar (below the terminal area): broadcast toggle + active session info.
+  initStatusBar();
+
   initDictation();
 
   // Floating search bar (Ctrl+Shift+F) over the terminal workspace.
@@ -290,6 +296,7 @@ async function init() {
     const panel = getApi().activePanel;
     if (panel) clearIndicator(panel.id);
     syncTerminalCursorFocus();
+    refreshStatusBar();
   });
 
   // Double-click a tab to rename it.

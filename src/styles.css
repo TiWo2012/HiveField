@@ -1672,6 +1672,110 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Status bar — broadcast toggle + active session info
+ * ------------------------------------------------------------------------- */
+
+#status-bar {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px;
+  background: var(--hf-mantle);
+  border-top: 1px solid var(--hf-surface2);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 12px;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+#status-bar.visible {
+  display: flex;
+}
+
+.status-bar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--hf-surface2);
+  border-radius: 5px;
+  background: var(--hf-surface0);
+  color: var(--hf-text);
+  font-family: var(--hivefield-font);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.status-bar-toggle:hover {
+  background: var(--hf-surface1);
+  border-color: var(--hf-overlay0);
+}
+
+.status-bar-toggle.active {
+  background: var(--hf-accent);
+  color: var(--hf-accent-fg);
+  border-color: var(--hf-accent);
+  font-weight: 700;
+}
+
+.status-bar-toggle.active:hover {
+  filter: brightness(1.08);
+}
+
+.status-bar-toggle-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.status-bar-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--hf-surface2);
+}
+
+.status-bar-session {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.status-bar-session-icon {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--hf-subtext0);
+}
+
+.status-bar-session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hf-subtext0);
+}
+
+.status-bar-hint {
+  margin-left: auto;
+  color: var(--hf-overlay0);
+  font-size: 10px;
+}
+
+.status-bar-hint kbd {
+  font-family: var(--hivefield-font);
+  font-size: 9px;
+  color: var(--hf-subtext0);
+  background: var(--hf-surface0);
+  border: 1px solid var(--hf-surface2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ---------------------------------------------------------------------------
  * Splash / welcome screen — shown on launch when no workspace restores.
  * Anchored inside #terminal, above the (empty) dockview grid.
  * ------------------------------------------------------------------------- */
