@@ -15,6 +15,7 @@ import { openPaletteWith, type PaletteItem } from "./palette";
 import {
   activeSessionEntry,
   addPanelWithMode,
+  cycleTab,
   movePaneFocus,
   shortLabel,
 } from "./sessions";
@@ -135,6 +136,16 @@ export function buildPaletteItems(): PaletteItem[] {
       label: "Focus pane down",
       detail: kb().focusDown,
       run: () => movePaneFocus("down"),
+    },
+    {
+      label: "Next tab",
+      detail: kb().nextTab,
+      run: () => cycleTab(1),
+    },
+    {
+      label: "Previous tab",
+      detail: kb().previousTab,
+      run: () => cycleTab(-1),
     },
     {
       label: "Rename active tab",

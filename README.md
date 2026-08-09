@@ -91,6 +91,9 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
 - `Ctrl+H` / `Ctrl+J` / `Ctrl+K` / `Ctrl+L` — move focus left/down/up/right
   (vim-style); if no pane exists in that direction the key passes through to
   the shell (so `Ctrl+L` still clears the screen)
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` — cycle to the next/previous tab (panel) in
+  the workspace, wrapping around; panels cycle in layout order (group by
+  group, then left to right within a group)
 - Every pane auto-resizes its PTY (`cols`/`rows` stay in sync)
 - `Ctrl+Shift+W` (or the tab ✕) closes the active panel and kills its shell
 - **Double-click a tab** (or `Ctrl+Shift+R`) to rename it; a custom name is

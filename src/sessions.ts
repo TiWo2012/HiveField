@@ -648,6 +648,27 @@ export function movePaneFocus(direction: GroupNavigationDirection): boolean {
 }
 
 /**
+ * Cycle focus to the next/previous tab (panel) in the workspace, wrapping
+ * around at both ends (Ctrl+Tab / Ctrl+Shift+Tab). Panels cycle in dockview's
+ * layout order — group by group, then left to right within a group — the same
+ * order the command palette lists them in. Returns true when a panel was
+ * active (so the caller always consumes the key); false when the layout has
+ * no active panel at all.
+ */
+export function cycleTab(direction: 1 | -1): boolean {
+  const api = getApi();
+  const active = api.activePanel;
+  if (!active) return false;
+  const panels = api.panels;
+  if (panels.length > 1) {
+    const index = panels.indexOf(active);
+    const next = panels[(index + direction + panels.length) % panels.length];
+    next.api.setActive();
+  }
+  return true;
+}
+
+/**
  * Open a session at the given client coordinates, mirroring dockview's own
  * drop-target zones: split the hovered group by edge quadrant, dock to the
  * outer layout edge, or (fallback) split the active panel to the right.
