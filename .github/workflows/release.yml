@@ -63,8 +63,12 @@ jobs:
           # Updater assets: the built-in updater and install.sh pick the
           # tarball by this exact name (see src-tauri/src/updater.rs asset_name
           # and the repo-root install.sh); the bare binary is the fallback.
+          # The tarball also carries the app icon (hivefield.png) so both
+          # installers can register a .desktop menu entry with a proper icon
+          # (see updater.rs extract_archive / install.sh install_desktop_entry).
           cp src-tauri/target/release/hivefield updater-asset/hivefield-linux-x86_64
-          tar -czf updater-asset/hivefield-linux-x86_64.tar.gz -C src-tauri/target/release hivefield
+          cp src-tauri/icons/128x128.png src-tauri/target/release/hivefield.png
+          tar -czf updater-asset/hivefield-linux-x86_64.tar.gz -C src-tauri/target/release hivefield hivefield.png
           ls -lh release-artifacts/ updater-asset/
           APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
           echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
