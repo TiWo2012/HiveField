@@ -74,7 +74,13 @@ jobs:
 
       - name: Run Rust tests
         working-directory: src-tauri
-        run: cargo test
+        # `--lib` + the `test-manifest` feature: tauri-build only embeds the
+        # Windows app manifest into the main binary (rustc-link-arg-bins), so
+        # the --lib test harness would start without the Common-Controls v6
+        # manifest and die with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139).
+        # build.rs links the resource into all artifacts when the feature is
+        # on; `--lib` keeps bins out so nothing gets it twice (CVT1100).
+        run: cargo test --lib --features test-manifest
 
   install-script:
     name: install.sh — ${{ matrix.os }}

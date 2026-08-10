@@ -47,6 +47,11 @@ whisper-rs = { version = "0.16", optional = true }
 default = []
 # Enable local Whisper transcription (requires cmake + C++ compiler to build whisper.cpp).
 whisper = ["dep:whisper-rs"]
+# Embed the Windows app manifest into test binaries (see build.rs). CI runs
+# `cargo test --lib --features test-manifest` so the --lib test harness gets
+# the Common-Controls v6 manifest and starts; enabling it only in tests keeps
+# normal builds (tauri dev / release) untouched.
+test-manifest = []
 
 [dev-dependencies]
 tempfile = "3"
