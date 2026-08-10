@@ -38,7 +38,13 @@ Set-Content -Path (Join-Path $apiDir 'latest.json') -Value $latestJson
 $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add('http://127.0.0.1:18765/')
 $listener.Start()
-$server = [System.Threading.Tasks.Task]::Run([Action]{
+# Serve the mock in a Start-ThreadJob (bundled with PowerShell 7): the job gives
+# the scriptblock a real runspace. [Task]::Run([Action]{...}) cannot run a
+# scriptblock on a thread-pool thread in pwsh — it dies with "There is no
+# Runspace available to run scripts in this thread" before serving a single
+# request, which made this test fail on every CI run.
+$serverJob = Start-ThreadJob -ArgumentList $listener, $apiDir, $assetDir -ScriptBlock {
+    param($listener, $apiDir, $assetDir)
     while ($listener.IsListening) {
         $ctx = $listener.GetContext()
         try {
@@ -64,11 +70,11 @@ $server = [System.Threading.Tasks.Task]::Run([Action]{
             $ctx.Response.Close()
         }
     }
-})
+}
 
 try {
     $env:HF_API_BASE = 'http://127.0.0.1:18765/mock'
-    $env:HF_DOWNLOAD_BASE = 'http://127.0.0.1:18765/dl'
+    $env:HF_DOWNLOAD_BASE = 'http://127.0.0.1:18765/releases/download'
     $env:HF_INSTALL_DIR = Join-Path $mock 'install'
     $env:HF_NO_PATH = '1'
     Remove-Item Env:HF_VERSION -ErrorAction SilentlyContinue
@@ -89,7 +95,8 @@ try {
     Write-Host 'install.ps1 end-to-end test PASSED'
 } finally {
     $listener.Stop()
-    $server.Wait(5000) | Out-Null
+    $serverJob | Wait-Job -Timeout 5 | Out-Null
+    Remove-Job -Force $serverJob
     Remove-Item Env:HF_API_BASE, Env:HF_DOWNLOAD_BASE, Env:HF_INSTALL_DIR, Env:HF_NO_PATH, Env:HF_VERSION -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $mock -ErrorAction SilentlyContinue
 }
