@@ -21,6 +21,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::dictation;
 use crate::git;
+use crate::logging::LOG_FILE_NAME;
 use crate::settings::{SettingsStore, SETTINGS_SCHEMA_VERSION};
 use crate::updater;
 use crate::workspace;
@@ -30,9 +31,6 @@ use crate::workspace;
 /// Mirrored here (rather than read from the compiled config) so the
 /// `--doctor` CLI can resolve paths before any Tauri context exists.
 const BUNDLE_IDENTIFIER: &str = "dev.hivefield.terminal";
-
-/// The log file name the logging setup writes (see `docs/INFRA_PLAN.md` #1).
-const LOG_FILE_NAME: &str = "hivefield.log";
 
 /// The effective worktree base dir when settings carry none (mirrors the
 /// frontend's `DEFAULT_SETTINGS.worktreeBaseDir`).
