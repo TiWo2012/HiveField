@@ -524,6 +524,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(PtyState::<tauri::Wry>::default())
         .manage(windows::WindowState::default())
         .manage(git::GitCache::default())
@@ -564,18 +565,27 @@ pub fn run() {
             updater::updater_install,
             diagnostics
         ])
-        // A minimal File menu exposing "New Window" (plus the standard app
-        // menu on macOS). The menu item asks the *focused* window to open the
-        // new one — it knows its own launch directory — by broadcasting a
-        // `menu://new-window` event that only the focused window acts on.
+        // A minimal File menu exposing "Open Directory…" and "New Window"
+        // (plus the standard app menu on macOS). The menu items ask the
+        // *focused* window to act — it knows its own launch directory — by
+        // broadcasting a `menu://…` event that only the focused window acts on.
         .menu(|app| {
-            use tauri::menu::{MenuBuilder, SubmenuBuilder};
+            use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
+            let open_directory =
+                tauri::menu::MenuItemBuilder::with_id("open_directory", "Open Directory…")
+                    .accelerator("CmdOrCtrl+Shift+O")
+                    .build(app)?;
             let new_window = tauri::menu::MenuItemBuilder::with_id("new_window", "New Window")
+                .accelerator("CmdOrCtrl+Shift+N")
                 .build(app)?;
-            let file = SubmenuBuilder::new(app, "File").item(&new_window).build()?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let file = SubmenuBuilder::new(app, "File")
+                .item(&open_directory)
+                .item(&separator)
+                .item(&new_window)
+                .build()?;
             #[cfg(target_os = "macos")]
             let menu = {
-                use tauri::menu::PredefinedMenuItem;
                 let quit = PredefinedMenuItem::quit(app, None)?;
                 let app_menu = SubmenuBuilder::new(app, "hiveField")
                     .item(&quit)
@@ -587,8 +597,11 @@ pub fn run() {
             Ok(menu)
         })
         .on_menu_event(|app, event| {
-            if event.id() == "new_window" {
-                // Only the focused window should act (it knows its cwd).
+            // Only the focused window should act: it knows its cwd, and only
+            // it should get the folder picker / new window.
+            if event.id() == "open_directory" {
+                let _ = app.emit("menu://open-directory", ());
+            } else if event.id() == "new_window" {
                 let _ = app.emit("menu://new-window", ());
             }
         })

@@ -10,6 +10,7 @@
 
 export type KeybindAction =
   | "newTab"
+  | "openDirectory"
   | "newWindow"
   | "closePanel"
   | "renameTab"
@@ -50,6 +51,7 @@ export interface KeybindDef {
 /** Every configurable action, in display order. */
 export const KEYBIND_ACTIONS: KeybindDef[] = [
   { id: "newTab", label: "New agent tab", group: "Sessions", default: "Ctrl+Shift+T" },
+  { id: "openDirectory", label: "Open directory…", group: "Sessions", default: "Ctrl+Shift+O" },
   { id: "newWindow", label: "New window", group: "Window", default: "Ctrl+Shift+N" },
   { id: "closePanel", label: "Close active panel", group: "Sessions", default: "Ctrl+Shift+W" },
   { id: "renameTab", label: "Rename active tab", group: "Sessions", default: "Ctrl+Shift+R" },
