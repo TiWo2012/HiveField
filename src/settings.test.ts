@@ -105,14 +105,12 @@ describe("settings normalization", () => {
       cursorBlink: "yes",
       theme: 42,
       fontFamily: "",
-      dictationEngine: "off",
     } as never);
     const s = getSettings();
     expect(s.fontSize).toBe(DEFAULT_SETTINGS.fontSize);
     expect(s.cursorBlink).toBe(DEFAULT_SETTINGS.cursorBlink);
     expect(s.theme).toBe(DEFAULT_SETTINGS.theme);
     expect(s.fontFamily).toBe(DEFAULT_SETTINGS.fontFamily);
-    expect(s.dictationEngine).toBe("whisper");
   });
 
   test("an unknown theme id falls back to the default theme", async () => {

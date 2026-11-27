@@ -2,7 +2,7 @@
 //!
 //! Collects everything a bug report needs — app version, OS/arch, install
 //! dir, launch dir, git context, settings schema version, worktree base dir,
-//! dictation engine, and the log file path — into one flat JSON object. The
+//! and the log file path — into one flat JSON object. The
 //! same data is exposed two ways:
 //!
 //!   - the `diagnostics()` IPC command, invoked by the palette action
@@ -19,7 +19,6 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
-use crate::dictation;
 use crate::git;
 use crate::settings::{SettingsStore, SETTINGS_SCHEMA_VERSION};
 use crate::updater;
@@ -50,8 +49,6 @@ struct Diagnostics {
     git_commit: Option<String>,
     /// Effective worktree base dir (settings value or the default).
     worktree_base_dir: String,
-    /// Resolved dictation engine id (`whisper` / `cloud`).
-    dictation_engine: String,
     /// The rotated log file the app writes to.
     log_file: String,
 }
@@ -73,7 +70,6 @@ impl Diagnostics {
             "gitCommit": self.git_commit,
             "settingsSchemaVersion": SETTINGS_SCHEMA_VERSION,
             "worktreeBaseDir": self.worktree_base_dir,
-            "dictationEngine": self.dictation_engine,
             "logFile": self.log_file,
         })
     }
@@ -115,7 +111,6 @@ fn collect(settings: &Value, log_dir: Result<PathBuf, String>) -> Value {
         git_repo: git_repo.map(|p| p.to_string_lossy().into_owned()),
         git_commit,
         worktree_base_dir: worktree_base_dir(settings),
-        dictation_engine: dictation_engine(settings),
         log_file: or_error(
             log_dir.map(|d| d.join(LOG_FILE_NAME).to_string_lossy().into_owned()),
         ),
@@ -133,18 +128,6 @@ fn worktree_base_dir(settings: &Value) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or(DEFAULT_WORKTREE_BASE_DIR)
         .to_string()
-}
-
-/// The resolved dictation engine id, normalized exactly like `dictation_start`
-/// normalizes its argument (unknown/absent values degrade to the build
-/// default: `whisper` when the feature is on, else `cloud`).
-fn dictation_engine(settings: &Value) -> String {
-    dictation::parse_engine(
-        settings
-            .get("dictationEngine")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    )
 }
 
 /// The log directory as Tauri would resolve it in-process, computed from the
@@ -181,7 +164,6 @@ mod tests {
             git_repo: Some("/home/u/projects/foo".to_string()),
             git_commit: Some("abc123".to_string()),
             worktree_base_dir: "/tmp".to_string(),
-            dictation_engine: "cloud".to_string(),
             log_file: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log"
                 .to_string(),
         }
@@ -202,7 +184,6 @@ mod tests {
             "gitCommit",
             "settingsSchemaVersion",
             "worktreeBaseDir",
-            "dictationEngine",
             "logFile",
         ] {
             assert!(obj.contains_key(key), "missing key {key}: {blob}");
@@ -227,7 +208,6 @@ mod tests {
         assert_eq!(blob["gitRepo"], "/home/u/projects/foo");
         assert_eq!(blob["gitCommit"], "abc123");
         assert_eq!(blob["worktreeBaseDir"], "/tmp");
-        assert_eq!(blob["dictationEngine"], "cloud");
         assert_eq!(
             blob["logFile"],
             "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log"
@@ -260,23 +240,6 @@ mod tests {
         assert_eq!(
             worktree_base_dir(&json!({ "worktreeBaseDir": "  /home/u/wt  " })),
             "/home/u/wt"
-        );
-    }
-
-    #[test]
-    fn dictation_engine_normalizes_like_dictation_start() {
-        assert_eq!(
-            dictation_engine(&json!({ "dictationEngine": "CLOUD" })),
-            dictation::parse_engine(Some("cloud".to_string()))
-        );
-        assert_eq!(
-            dictation_engine(&json!({ "dictationEngine": "whisper" })),
-            dictation::parse_engine(Some("whisper".to_string()))
-        );
-        // Absent/unknown settings degrade to the build default.
-        assert_eq!(
-            dictation_engine(&json!({})),
-            dictation::parse_engine(None)
         );
     }
 

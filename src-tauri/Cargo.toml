@@ -35,19 +35,9 @@ ureq = "3"
 # shell out. flate2 is already in the tree via other deps; tar is new.
 tar = "0.4"
 flate2 = "1"
-cpal = "0.18.1"
-rubato = "4.0.0"
-# whisper-rs is a binding to whisper.cpp and 0.16 is its newest crate release;
-# it pins a specific whisper.cpp revision, so bump deliberately — the bundled
-# binary format must stay compatible with the ggml-base.en.bin model.
-# Gated behind the `whisper` feature: when off, only cloud dictation is
-# available and the build does not need cmake or a C++ compiler.
-whisper-rs = { version = "0.16", optional = true }
 
 [features]
 default = []
-# Enable local Whisper transcription (requires cmake + C++ compiler to build whisper.cpp).
-whisper = ["dep:whisper-rs"]
 # Embed the Windows app manifest into test binaries (see build.rs). CI runs
 # `cargo test --lib --features test-manifest` so the --lib test harness gets
 # the Common-Controls v6 manifest and starts; enabling it only in tests keeps

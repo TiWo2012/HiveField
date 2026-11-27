@@ -1727,55 +1727,6 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
- * Dictation status badge
- * ------------------------------------------------------------------------- */
-
-.dictation-badge {
-  display: none;
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 2000;
-  background: var(--hf-surface0);
-  border: 1px solid var(--hf-surface2);
-  color: var(--hf-text);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-family: var(--hivefield-font);
-  box-shadow: var(--hf-shadow);
-  user-select: none;
-  pointer-events: none;
-}
-
-.dictation-badge.visible {
-  display: block;
-}
-
-.dictation-badge.listening {
-  color: var(--hf-green);
-  border-color: var(--hf-green);
-  animation: dictation-pulse 1.4s ease-in-out infinite;
-}
-
-.dictation-badge.error {
-  color: var(--hf-red);
-  border-color: var(--hf-red);
-}
-
-@keyframes dictation-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.72;
-    transform: scale(1.04);
-  }
-}
-
-/* ---------------------------------------------------------------------------
  * Status bar — broadcast toggle + active session info
  * ------------------------------------------------------------------------- */
 

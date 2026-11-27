@@ -1,4 +1,3 @@
-mod dictation;
 mod diagnostics;
 mod fonts;
 mod git;
@@ -497,7 +496,7 @@ fn open_url(url: String) -> Result<(), String> {
 
 /// IPC command: return a flat diagnostics blob — version, OS/arch, install
 /// dir, launch dir, git context, settings schema version, worktree base dir,
-/// dictation engine, and the log file path — for pasting into bug reports
+/// and the log file path — for pasting into bug reports
 /// (palette action "Copy diagnostics"). Same data as `hivefield --doctor`
 /// (see [`diagnostics_cli`]).
 #[tauri::command]
@@ -528,7 +527,6 @@ pub fn run() {
         .manage(PtyState::<tauri::Wry>::default())
         .manage(windows::WindowState::default())
         .manage(git::GitCache::default())
-        .manage(dictation::DictationState::default())
         .manage(launch_state)
         .manage(GitDiffReportState::default())
         .invoke_handler(tauri::generate_handler![
@@ -555,10 +553,6 @@ pub fn run() {
             file_write,
             open_url,
             fonts::list_system_fonts,
-            dictation::dictation_devices,
-            dictation::dictation_start,
-            dictation::dictation_stop,
-            dictation::dictation_status,
             notifications::notify_desktop,
             notifications::ntfy_send,
             updater::updater_check,
@@ -615,10 +609,6 @@ pub fn run() {
                 let state = app.state::<PtyState>();
                 pty::kill_window_sessions(&state, &label);
                 app.state::<windows::WindowState>().remove(&label);
-                // A dictation capture owned by the closing window would
-                // otherwise keep running (and recording) with no window left
-                // to stop it or receive the result.
-                dictation::stop_capture_for_window(&app, &label);
             }
         })
         .run(tauri::generate_context!())
