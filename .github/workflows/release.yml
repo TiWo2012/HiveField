@@ -252,7 +252,7 @@ jobs:
           ls -lh release-artifacts/ updater-asset/
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hivefield-linux
           path: |
@@ -311,7 +311,7 @@ jobs:
           ls -lh release-artifacts/ updater-asset/
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hivefield-macos-${{ matrix.arch }}
           path: |
@@ -355,7 +355,7 @@ jobs:
           Get-ChildItem release-artifacts, updater-asset | Select-Object FullName, Length
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hivefield-windows
           path: |
