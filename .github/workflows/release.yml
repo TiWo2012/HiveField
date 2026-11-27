@@ -375,13 +375,27 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
 
-      # All three build jobs upload one artifact each; merge-multiple flattens
-      # them into a single directory (the file names are unique per platform).
+      # All three build jobs upload one artifact each. `merge-multiple` merges
+      # them into a single directory tree, but each artifact preserves its
+      # `release-artifacts/` and `updater-asset/` folders, so the files are
+      # flattened into `release/` before checksumming and publishing.
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist-artifacts
           merge-multiple: true
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release
+          duplicates="$(find dist-artifacts -type f -printf '%f\n' | sort | uniq -d)"
+          if [ -n "$duplicates" ]; then
+            echo "duplicate release asset names:" >&2
+            echo "$duplicates" >&2
+            exit 1
+          fi
+          find dist-artifacts -type f -exec cp -t release {} +
+          ls -lh release
 
       # SHA-256 for every published asset, in `sha256sum` format
       # (`<hex>  <name>` per line). install.sh, install.ps1, and the built-in
@@ -391,7 +405,7 @@ jobs:
       # with those three verifiers.
       - name: Generate SHA-256 checksums
         run: |
-          ( cd dist-artifacts && sha256sum -- * > ../checksums.txt )
+          ( cd release && sha256sum -- * > ../checksums.txt )
           cat checksums.txt
 
       # `git-cliff --latest` renders the range for the most recent tag. On a
@@ -441,5 +455,5 @@ jobs:
           make_latest: ${{ needs.prepare.outputs.prerelease != 'true' }}
           target_commitish: ${{ needs.prepare.outputs.sha }}
           files: |
-            dist-artifacts/*
+            release/*
             checksums.txt
