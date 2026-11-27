@@ -1,0 +1,47 @@
+# git-cliff configuration for hiveField Terminal release notes.
+# https://git-cliff.org/docs/configuration
+#
+# Release notes are generated in .github/workflows/release.yml from the
+# commits since the previous release tag. Non-conventional commits are kept
+# (this repository has plenty) and land under "Other changes".
+
+[changelog]
+body = """
+{% if version %}\
+## {{ version | trim_start_matches(pat="v") }} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | split(pat="\n") | first | upper_first }}{% if commit.breaking %} (**breaking**){% endif %}
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+render_always = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = false
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^Merge ", skip = true },
+  { message = "^wip", group = "<!-- 0 -->Work in progress" },
+  { message = "^feat", group = "<!-- 1 -->Features" },
+  { message = "^fix", group = "<!-- 2 -->Bug fixes" },
+  { message = "^perf", group = "<!-- 3 -->Performance" },
+  { message = "^refactor", group = "<!-- 4 -->Refactoring" },
+  { message = "^docs", group = "<!-- 5 -->Documentation" },
+  { message = "^test", group = "<!-- 6 -->Tests" },
+  { message = "^style", group = "<!-- 7 -->Styling" },
+  { message = "^chore|^ci|^build", group = "<!-- 8 -->Build & CI" },
+  { message = ".*", group = "<!-- 9 -->Other changes" },
+]
+filter_commits = false
+fail_on_unmatched_commit = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"

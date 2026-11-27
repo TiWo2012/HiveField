@@ -10,6 +10,11 @@ and names the concrete files it touches.
 > This is a forward-looking backlog, not a changelog. Nothing here is
 > required to ship features; it is the work that makes the project
 > *maintainable and diagnosable* at scale.
+>
+> **Update (2026-11-27):** items **6** (version single-source + sync check)
+> and **7** (release `workflow_dispatch` + git-cliff changelog) are now
+> implemented — see `scripts/version.ts`, `cliff.toml`, `docs/RELEASING.md`,
+> and `.github/workflows/release.yml`. The remaining items are still open.
 
 Ordered roughly by impact-per-effort: **1 → 2 → 3** are cheap and fix real
 gaps today; **4 → 7** harden CI and the release pipeline; **8 → 10** are

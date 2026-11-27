@@ -419,6 +419,23 @@ bunx tsc --noEmit      # typecheck
 
 ## Build a Release
 
+Tagged releases are built and published by the `Release` GitHub workflow, not
+by hand. The version is single-sourced across `package.json`,
+`src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`:
+
+```sh
+bun run version:check       # fail if the version files disagree
+bun run version:bump patch  # rewrite all three files (+ Cargo.lock)
+```
+
+A push to `master` publishes a build release (`v0.1.2-build.12`). To cut a
+clean release, run **Actions → Release → Run workflow** with a `version` or
+`bump` input; `dry_run` builds every artifact without publishing. See
+[docs/RELEASING.md](docs/RELEASING.md) for the full process, tag rules, and
+changelog generation.
+
+For a local build:
+
 ```sh
 bun run tauri build
 ```
