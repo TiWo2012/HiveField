@@ -80,12 +80,36 @@ function sessionStatusGlyph(panelId: string): { glyph: string; cls: string } {
 }
 
 /**
+ * Coalesce sidebar refreshes to at most one per animation frame.
+ *
+ * Output bursts from several terminals can change titles/indicators many
+ * times in a single frame. Rebuilding the Running list for each change made
+ * the UI stutter with ten sessions all producing output, when one rebuild per
+ * frame shows exactly the same result. The hook stays fire-and-forget; callers
+ * never read the DOM back synchronously.
+ */
+let sidebarRefreshQueued = false;
+
+export function refreshSidebarRunning(): void {
+  if (sidebarRefreshQueued) return;
+  if (typeof requestAnimationFrame !== "function") {
+    renderSidebarRunning();
+    return;
+  }
+  sidebarRefreshQueued = true;
+  requestAnimationFrame(() => {
+    sidebarRefreshQueued = false;
+    renderSidebarRunning();
+  });
+}
+
+/**
  * Rebuild the "Running" sidebar list from the live dockview layout. The list
  * is small, so it's fine to re-render on every title/indicator/active-panel
  * change (renderTitle/setIndicator and the panel lifecycle hooks keep it in
  * sync). Newest session first.
  */
-export function refreshSidebarRunning(): void {
+function renderSidebarRunning(): void {
   if (!sidebarRunningEl) return;
   sidebarRunningEl.replaceChildren();
 

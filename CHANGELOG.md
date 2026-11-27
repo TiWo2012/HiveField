@@ -23,6 +23,11 @@ is part of the release tag rather than the app version.
 
 - Windows test binaries now embed and link the app manifest, fixing
   `STATUS_ENTRYPOINT_NOT_FOUND` at startup.
+- Output from busy terminals no longer floods the UI when many sessions stream
+  at once. PTY reads are coalesced into short batches before crossing into the
+  webview, the sidebar re-renders at most once per frame, unchanged tab titles
+  no longer trigger a full re-render, and per-tab quiet timers are no longer
+  re-armed for every output chunk.
 
 ## [0.1.2] - 2026-08-09
 
