@@ -27,13 +27,20 @@ const WORKTREES_TTL: Duration = Duration::from_secs(5);
 /// but the sidebar / report only needs coarse, infrequent updates.
 const DIFF_TTL: Duration = Duration::from_secs(10);
 
+/// Cache key for a diff summary: the repository/worktree path plus the base
+/// revision the diff is taken against.
+type DiffCacheKey = (String, String);
+
+/// A cached diff summary and the instant it was captured.
+type DiffCacheEntry = (Instant, Option<DiffSummary>);
+
 /// TTL cache for expensive git queries (each of which shells out to the `git`
 /// binary). Managed as Tauri state so the hot IPC paths — worktree listing and
 /// diff summaries — are served from memory most of the time. Mutating
 /// operations (worktree create/remove) invalidate the affected entries.
 pub struct GitCache {
     worktrees: Mutex<HashMap<String, (Instant, WorktreesInfo)>>,
-    diffs: Mutex<HashMap<(String, String), (Instant, Option<DiffSummary>)>>,
+    diffs: Mutex<HashMap<DiffCacheKey, DiffCacheEntry>>,
 }
 
 impl Default for GitCache {
@@ -218,7 +225,12 @@ fn parse_numstat(numstat: &str) -> DiffSummary {
 pub fn list(dir: &Path) -> WorktreesInfo {
     let root = match repo_root(dir) {
         Some(root) => root,
-        None => return WorktreesInfo { root: None, worktrees: Vec::new() },
+        None => {
+            return WorktreesInfo {
+                root: None,
+                worktrees: Vec::new(),
+            }
+        }
     };
 
     let porcelain = match git_stdout(&root, &["worktree", "list", "--porcelain"]) {
@@ -280,7 +292,9 @@ fn parse_porcelain(porcelain: &str) -> Vec<Worktree> {
 /// the app was launched from. Comparison falls back to the raw path when
 /// canonicalization fails (e.g. nonexistent paths in tests).
 fn mark_current(worktrees: &mut [Worktree], current: &Path) {
-    let canon_current = current.canonicalize().unwrap_or_else(|_| current.to_path_buf());
+    let canon_current = current
+        .canonicalize()
+        .unwrap_or_else(|_| current.to_path_buf());
     for wt in worktrees.iter_mut() {
         let p = Path::new(&wt.path);
         let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
@@ -308,10 +322,7 @@ pub fn create(dir: &Path, branch: &str, path: Option<&str>) -> Result<PathBuf, S
             let parent = root
                 .parent()
                 .ok_or_else(|| "unable to resolve repository parent directory".to_string())?;
-            let name = root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("repo");
+            let name = root.file_name().and_then(|n| n.to_str()).unwrap_or("repo");
             parent.join(format!("{name}-{branch}"))
         }
     };
@@ -411,7 +422,12 @@ pub fn auto_create(dir: &Path, name: &str, base_dir: &str) -> Result<AutoWorktre
         let path = base_dir.join(format!("{repo_name}-{base}-{suffix}"));
         let branch_taken = git_stdout(
             &root,
-            &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ],
         )
         .is_some();
         if !branch_taken && !path.exists() {

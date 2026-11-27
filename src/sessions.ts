@@ -6,9 +6,9 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { SearchAddon } from "@xterm/addon-search";
+import type { Terminal } from "@xterm/xterm";
 import type {
   AddPanelPositionOptions,
   GroupNavigationDirection,
@@ -18,16 +18,32 @@ import type {
 } from "dockview";
 import {
   agentUsesWorktreeAll,
+  EDITOR_CMD,
   isAgentModeAll,
   isKnownModeAll,
   modeCommandAll,
-  EDITOR_CMD,
 } from "./agents";
+import { broadcastToAll } from "./broadcast";
+import { copyText, readClipboardText } from "./clipboard";
+import { registerTerminalRoot } from "./file-drop";
+import { type InputLineState, inputLineToTitle, sanitizeTitle, trackInputLine } from "./input-line";
 import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
-import { copyText, readClipboardText } from "./clipboard";
-import { setupTodoTxtPanel } from "./todotxt";
-import { registerTerminalRoot } from "./file-drop";
+import {
+  discardSession,
+  getApi,
+  nextPanelId,
+  panelStatus,
+  panelToSession,
+  parkedKeyFor,
+  parkedSessions,
+  pendingOutputs,
+  refreshSidebarRunning,
+  type SessionEntry,
+  scheduleWorkspaceRefresh,
+  sessions,
+  terminalSessions,
+} from "./state";
 import {
   applyTerminalSettings,
   createTerminal,
@@ -47,23 +63,7 @@ import {
   renderTitle,
   setBaseTitle,
 } from "./titles";
-import { trackInputLine, sanitizeTitle, inputLineToTitle, type InputLineState } from "./input-line";
-import {
-  discardSession,
-  getApi,
-  panelStatus,
-  panelToSession,
-  parkedKeyFor,
-  parkedSessions,
-  pendingOutputs,
-  refreshSidebarRunning,
-  scheduleWorkspaceRefresh,
-  sessions,
-  terminalSessions,
-  nextPanelId,
-  type SessionEntry,
-} from "./state";
-import { broadcastToAll } from "./broadcast";
+import { setupTodoTxtPanel } from "./todotxt";
 
 /** Result of the `git_worktree_auto_create` IPC command. */
 interface AutoWorktree {
@@ -73,14 +73,52 @@ interface AutoWorktree {
 
 /** Random-ish codename used to label a fresh opencode session's worktree. */
 const ADJECTIVES = [
-  "swift", "bright", "calm", "crisp", "lucky", "mellow", "quick", "silent",
-  "summer", "autumn", "bold", "gentle", "golden", "quiet", "rustic", "velvet",
-  "amber", "azure", "cobalt", "ember",
+  "swift",
+  "bright",
+  "calm",
+  "crisp",
+  "lucky",
+  "mellow",
+  "quick",
+  "silent",
+  "summer",
+  "autumn",
+  "bold",
+  "gentle",
+  "golden",
+  "quiet",
+  "rustic",
+  "velvet",
+  "amber",
+  "azure",
+  "cobalt",
+  "ember",
 ] as const;
 const NOUNS = [
-  "otter", "falcon", "bison", "heron", "lynx", "newt", "oriole", "puma",
-  "quail", "rook", "seal", "tiger", "wren", "badger", "crane", "dove", "elk",
-  "fox", "gecko", "hawk", "ibis", "jaguar", "koala", "llama",
+  "otter",
+  "falcon",
+  "bison",
+  "heron",
+  "lynx",
+  "newt",
+  "oriole",
+  "puma",
+  "quail",
+  "rook",
+  "seal",
+  "tiger",
+  "wren",
+  "badger",
+  "crane",
+  "dove",
+  "elk",
+  "fox",
+  "gecko",
+  "hawk",
+  "ibis",
+  "jaguar",
+  "koala",
+  "llama",
 ] as const;
 
 /** A short kebab-case name for a new session's worktree (e.g. "swift-otter"). */
@@ -103,7 +141,7 @@ export function generateSessionName(): string {
 async function resolveWorktree(
   mode: Mode,
   cwd: string | undefined,
-  name: string | undefined
+  name: string | undefined,
 ): Promise<{ cwd?: string; name?: string; created: boolean }> {
   if (!isAgentModeAll(mode, customs())) return { cwd, created: false };
   // Agents that opt out of worktrees (the Editor) run in the launch dir:
@@ -121,7 +159,7 @@ async function resolveWorktree(
     // Fall through: the saved worktree is gone, mint a fresh one.
   }
   const baseDir = getSettings().worktreeBaseDir.trim() || "/tmp";
-  const sessionName = (name && name.trim()) || generateSessionName();
+  const sessionName = name?.trim() || generateSessionName();
   try {
     const created = await invoke<AutoWorktree>("git_worktree_auto_create", {
       name: sessionName,
@@ -158,9 +196,7 @@ function setupCopyOnSelect(terminal: Terminal): void {
         const current = terminal.getSelection();
         if (current && current !== lastCopied) {
           lastCopied = current;
-          copyText(current).catch((err) =>
-            console.error("clipboard write failed", err)
-          );
+          copyText(current).catch((err) => console.error("clipboard write failed", err));
         }
       } catch {
         // Terminal disposed while the debounce was pending.
@@ -180,7 +216,7 @@ function setupCopyOnSelect(terminal: Terminal): void {
 function setupMiddleClickPaste(
   terminal: Terminal,
   panelEl: HTMLElement,
-  activate: () => void
+  activate: () => void,
 ): void {
   panelEl.addEventListener(
     "mousedown",
@@ -202,7 +238,7 @@ function setupMiddleClickPaste(
         })
         .catch((err) => console.error("clipboard read failed", err));
     },
-    true
+    true,
   );
   // Prevent xterm's own middle-click paste from firing on release — the
   // mousedown handler above already covers the paste, so mouseup/auxclick
@@ -214,7 +250,7 @@ function setupMiddleClickPaste(
       e.preventDefault();
       e.stopPropagation();
     },
-    true
+    true,
   );
   panelEl.addEventListener(
     "auxclick",
@@ -223,7 +259,7 @@ function setupMiddleClickPaste(
       e.preventDefault();
       e.stopPropagation();
     },
-    true
+    true,
   );
 }
 
@@ -260,15 +296,12 @@ export function createTerminalComponent(): IContentRenderer {
     element,
     init({ api: panelApi, containerApi, params }: GroupPanelPartInitParameters) {
       const mode: Mode =
-        typeof params.mode === "string" &&
-        isKnownModeAll(params.mode, customs())
+        typeof params.mode === "string" && isKnownModeAll(params.mode, customs())
           ? params.mode
           : DEFAULT_MODE;
       const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
-      const requestedName =
-        typeof params.name === "string" ? params.name : undefined;
-      const userTitle =
-        typeof params.userTitle === "string" ? params.userTitle : undefined;
+      const requestedName = typeof params.name === "string" ? params.name : undefined;
+      const userTitle = typeof params.userTitle === "string" ? params.userTitle : undefined;
 
       // Track this panel's tab title (OSC / input-line / user override).
       const st = ensurePanelStatus(panelApi.id, panelApi.title ?? "", userTitle);
@@ -279,11 +312,9 @@ export function createTerminalComponent(): IContentRenderer {
       if (mode === "todotxt") {
         invoke<string>("workspace_cwd")
           .then((resolvedCwd) =>
-            setupTodoTxtPanel(element, resolvedCwd, () => panelApi.setActive())
+            setupTodoTxtPanel(element, resolvedCwd, () => panelApi.setActive()),
           )
-          .catch(() =>
-            setupTodoTxtPanel(element, "", () => panelApi.setActive())
-          );
+          .catch(() => setupTodoTxtPanel(element, "", () => panelApi.setActive()));
         return;
       }
 
@@ -294,9 +325,7 @@ export function createTerminalComponent(): IContentRenderer {
       // forwarding, OSC titles and the resize handlers were wired when the
       // terminal was first created, so nothing else needs redoing.
       const parked =
-        typeof params.sessionId === "number"
-          ? parkedSessions.get(params.sessionId)
-          : undefined;
+        typeof params.sessionId === "number" ? parkedSessions.get(params.sessionId) : undefined;
       if (parked) {
         const parkedEntry = sessions.get(params.sessionId as number);
         if (parkedEntry) {
@@ -394,7 +423,7 @@ export function createTerminalComponent(): IContentRenderer {
           }
           // deltaY === 0 (momentum-scroll end) is handled by onScroll below.
         },
-        { capture: true, passive: true }
+        { capture: true, passive: true },
       );
       element.addEventListener(
         "keydown",
@@ -406,7 +435,7 @@ export function createTerminalComponent(): IContentRenderer {
             requestAnimationFrame(followAtBottom);
           }
         },
-        { capture: true }
+        { capture: true },
       );
 
       // xterm's onScroll fires for every viewport change (wheel, keyboard,
@@ -514,7 +543,11 @@ export function createTerminalComponent(): IContentRenderer {
               if (el) {
                 const rect = el.getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0) {
-                  try { fitAddon!.fit(); } catch { /* ignore */ }
+                  try {
+                    fitAddon!.fit();
+                  } catch {
+                    /* ignore */
+                  }
                   if (terminal!.cols > 2 && terminal!.rows > 1) {
                     spawnCols = terminal!.cols;
                     spawnRows = terminal!.rows;
@@ -600,7 +633,7 @@ export function addPanelWithMode(
   mode: Mode,
   position?: AddPanelPositionOptions,
   cwd?: string,
-  titleOverride?: string
+  titleOverride?: string,
 ): IDockviewPanel {
   // A fresh agent session without a pinned cwd gets a codename (the tab
   // title and the auto-created worktree's branch are both derived from it).
@@ -608,7 +641,7 @@ export function addPanelWithMode(
   const worktree = agentUsesWorktreeAll(mode, customs());
   const name =
     isAgentModeAll(mode, customs()) && !cwd && worktree
-      ? titleOverride ?? generateSessionName()
+      ? (titleOverride ?? generateSessionName())
       : undefined;
   const base = isAgentModeAll(mode, customs()) ? (name ?? mode) : "shell";
   const title = cwd ? `${base}@${shortLabel(cwd)}` : base;
@@ -705,7 +738,7 @@ export function toggleFullscreen(): boolean {
 export function openSessionAtPoint(
   clientX: number,
   clientY: number,
-  drag: { mode: Mode; cwd?: string }
+  drag: { mode: Mode; cwd?: string },
 ): boolean {
   const terminalEl = document.getElementById("terminal")!;
   const rect = terminalEl.getBoundingClientRect();
@@ -720,15 +753,11 @@ export function openSessionAtPoint(
 
   const el = document.elementFromPoint(clientX, clientY);
   const groupEl = el?.closest(".dv-groupview");
-  const group = groupEl
-    ? getApi().groups.find((g) => g.element === groupEl)
-    : undefined;
+  const group = groupEl ? getApi().groups.find((g) => g.element === groupEl) : undefined;
 
   let position: AddPanelPositionOptions | undefined;
   if (group && groupEl) {
-    const contentEl = groupEl.querySelector<HTMLElement>(
-      ":scope > .dv-content-container"
-    );
+    const contentEl = groupEl.querySelector<HTMLElement>(":scope > .dv-content-container");
     if (contentEl) {
       const cr = contentEl.getBoundingClientRect();
       const xp = (clientX - cr.left) / cr.width;
@@ -762,7 +791,7 @@ export function openSessionAtPoint(
     addPanelWithMode(
       drag.mode,
       active ? { direction: "right", referencePanel: active } : undefined,
-      drag.cwd
+      drag.cwd,
     );
   }
   return true;

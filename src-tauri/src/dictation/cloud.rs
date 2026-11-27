@@ -33,8 +33,8 @@ pub fn transcribe(samples: &[f32], input_rate: u32, api_key: &str) -> Result<Str
         &body,
     )?;
 
-    let json: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("failed to parse cloud response: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("failed to parse cloud response: {e}"))?;
     json.get("text")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
@@ -72,7 +72,7 @@ mod tests {
         assert!(body.contains("whisper-1"));
         assert!(body.contains("filename=\"dictation.wav\""));
         assert!(body.contains("Content-Type: audio/wav"));
-        assert!(body.contains("Content-Type: multipart/form-data") == false);
+        assert!(!body.contains("Content-Type: multipart/form-data"));
         assert!(body.contains(&format!("--{MULTIPART_BOUNDARY}--\r\n")));
         assert!(body.contains(&String::from_utf8(vec![1u8, 2, 3, 4]).unwrap()));
     }

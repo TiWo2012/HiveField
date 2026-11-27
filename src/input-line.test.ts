@@ -6,10 +6,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   analyzeOutput,
+  type InputLineState,
   inputLineToTitle,
   sanitizeTitle,
   trackInputLine,
-  type InputLineState,
 } from "./input-line";
 
 describe("analyzeOutput (OSC 133 shell-integration markers)", () => {
@@ -21,9 +21,7 @@ describe("analyzeOutput (OSC 133 shell-integration markers)", () => {
   });
 
   test("extracts complete markers and strips them from the text", () => {
-    const { markers, text } = analyzeOutput(
-      "\x1b]133;A\x07ls\x1b]133;C\x07out\x1b]133;D;0\x07"
-    );
+    const { markers, text } = analyzeOutput("\x1b]133;A\x07ls\x1b]133;C\x07out\x1b]133;D;0\x07");
     expect(markers).toEqual(["A", "C", "D"]);
     expect(text).toBe("lsout");
   });
@@ -60,9 +58,9 @@ describe("analyzeOutput (OSC 133 shell-integration markers)", () => {
   test("finds multiple markers in successive chunks", () => {
     // Round-trip: many alternating chunks, each with a marker at position 0.
     for (let i = 0; i < 10; i++) {
-      expect(analyzeOutput("\x1b]133;C\x07chunk" + i)).toEqual({
+      expect(analyzeOutput(`\x1b]133;C\x07chunk${i}`)).toEqual({
         markers: ["C"],
-        text: "chunk" + i,
+        text: `chunk${i}`,
       });
     }
   });
@@ -89,7 +87,7 @@ describe("trackInputLine", () => {
   const fresh = (): InputLineState => ({ line: "", escape: 0 });
 
   test("accumulates typed characters and submits on Enter", () => {
-    let submitted: string[] = [];
+    const submitted: string[] = [];
     let st = trackInputLine(fresh(), "ls -la", (line) => submitted.push(line));
     expect(st.line).toBe("ls -la");
     st = trackInputLine(st, "\r", (line) => submitted.push(line));

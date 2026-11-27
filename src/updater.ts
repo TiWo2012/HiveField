@@ -62,18 +62,12 @@ export function installUpdate(): Promise<UpdateDone> {
 
 /** Subscribe to download progress; returns an unlisten function. */
 export function onUpdateProgress(
-  listener: (progress: UpdateProgress) => void
+  listener: (progress: UpdateProgress) => void,
 ): Promise<UnlistenFn> {
-  return listen<UpdateProgress>("updater://progress", (event) =>
-    listener(event.payload)
-  );
+  return listen<UpdateProgress>("updater://progress", (event) => listener(event.payload));
 }
 
 /** Subscribe to install completion; returns an unlisten function. */
-export function onUpdateDone(
-  listener: (done: UpdateDone) => void
-): Promise<UnlistenFn> {
-  return listen<UpdateDone>("updater://done", (event) =>
-    listener(event.payload)
-  );
+export function onUpdateDone(listener: (done: UpdateDone) => void): Promise<UnlistenFn> {
+  return listen<UpdateDone>("updater://done", (event) => listener(event.payload));
 }

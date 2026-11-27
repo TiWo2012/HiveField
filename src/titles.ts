@@ -7,9 +7,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { IDockviewPanel } from "dockview";
 import { isAgentModeAll, isKnownModeAll, modeLabelAll } from "./agents";
+import { openPromptModal } from "./modal";
 import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
-import { openPromptModal } from "./modal";
 import {
   getApi,
   idleTimers,
@@ -18,7 +18,6 @@ import {
   notifyTimers,
   panelStatus,
   refreshSidebarRunning,
-  sessions,
   type SessionEntry,
 } from "./state";
 import { refreshStatusBar } from "./status-bar";
@@ -91,7 +90,7 @@ export function armIdle(panelId: string): void {
     setTimeout(() => {
       idleTimers.delete(panelId);
       setIndicator(panelId, INDICATOR_DONE);
-    }, ACTIVITY_IDLE_MS)
+    }, ACTIVITY_IDLE_MS),
   );
 }
 
@@ -133,12 +132,12 @@ export function notifyAgentDone(panelId: string, entry: SessionEntry): void {
 
   if (settings.desktopNotifications) {
     invoke("notify_desktop", { title: `${label} done`, body }).catch((err) =>
-      console.error("notify_desktop failed", err)
+      console.error("notify_desktop failed", err),
     );
   }
   if (settings.ntfyEnabled) {
     invoke("ntfy_send", { title: `${label} done`, body }).catch((err) =>
-      console.error("ntfy_send failed", err)
+      console.error("ntfy_send failed", err),
     );
   }
 }
@@ -155,7 +154,7 @@ export function armNotify(panelId: string, entry: SessionEntry): void {
     setTimeout(() => {
       notifyTimers.delete(panelId);
       notifyAgentDone(panelId, entry);
-    }, NOTIFY_IDLE_MS)
+    }, NOTIFY_IDLE_MS),
   );
 }
 
@@ -163,8 +162,7 @@ export function armNotify(panelId: string, entry: SessionEntry): void {
 export function panelModeLabel(panel: IDockviewPanel): string {
   const params = panel.api.getParameters() as Record<string, unknown>;
   const mode: Mode =
-    typeof params.mode === "string" &&
-    isKnownModeAll(params.mode, customs())
+    typeof params.mode === "string" && isKnownModeAll(params.mode, customs())
       ? params.mode
       : DEFAULT_MODE;
   return modeLabelAll(mode, customs());
@@ -178,8 +176,8 @@ export function panelForTabElement(tabEl: HTMLElement): IDockviewPanel | undefin
   if (!group) return undefined;
   const tabs = Array.from(
     groupEl.querySelectorAll<HTMLElement>(
-      ":scope > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab"
-    )
+      ":scope > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab",
+    ),
   );
   const idx = tabs.indexOf(tabEl);
   if (idx < 0 || idx >= group.panels.length) return undefined;

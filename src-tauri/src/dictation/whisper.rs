@@ -22,7 +22,11 @@ pub fn load_context(path: &Path) -> Result<Arc<WhisperContext>, String> {
 
 /// Resample (if needed) to 16 kHz mono f32 and run Whisper, returning the
 /// joined transcription.
-pub fn transcribe(ctx: &WhisperContext, samples: &[f32], input_rate: u32) -> Result<String, String> {
+pub fn transcribe(
+    ctx: &WhisperContext,
+    samples: &[f32],
+    input_rate: u32,
+) -> Result<String, String> {
     let audio = resample_to_16k(samples, input_rate)?;
 
     let mut st = ctx
@@ -68,8 +72,7 @@ mod tests {
         let mut paths = Vec::new();
         if let Ok(home) = std::env::var("HOME") {
             paths.push(
-                PathBuf::from(home)
-                    .join(".config/dev.hivefield.terminal/models/ggml-base.en.bin"),
+                PathBuf::from(home).join(".config/dev.hivefield.terminal/models/ggml-base.en.bin"),
             );
         }
         if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
@@ -118,7 +121,8 @@ mod tests {
         params.set_print_special(false);
 
         let silence = vec![0.0f32; super::super::TARGET_SAMPLE_RATE as usize];
-        st.full(params, &silence).expect("full on silence should not fail");
+        st.full(params, &silence)
+            .expect("full on silence should not fail");
         assert!(st.full_n_segments() >= 0);
     }
 }

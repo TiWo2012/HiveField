@@ -7,18 +7,14 @@
 
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { invoke } from "@tauri-apps/api/core";
-import { getTheme } from "./themes";
-import { getSettings, type AppSettings } from "./settings";
-import {
-  panelToSession,
-  sessions,
-  getApi,
-} from "./state";
 import { handleBell } from "./bell";
+import { type AppSettings, getSettings } from "./settings";
+import { getApi, panelToSession, sessions } from "./state";
+import { getTheme } from "./themes";
 
 /** Number of scrollback lines each terminal keeps (xterm option). */
 const SCROLLBACK_LINES = 10_000;
@@ -71,8 +67,7 @@ export async function ensureTerminalFont(): Promise<void> {
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
     if (fonts?.load) {
       const timeout = new Promise<void>((r) => setTimeout(r, 1500));
-      const load = fonts.load(`${s.fontSize}px "${s.fontFamily}"`)
-        .then(() => fonts.ready);
+      const load = fonts.load(`${s.fontSize}px "${s.fontFamily}"`).then(() => fonts.ready);
       const winner = await Promise.race([
         load.then(() => "loaded" as const),
         timeout.then(() => "timeout" as const),
@@ -141,7 +136,10 @@ export function applyUiTheme(settings: AppSettings): void {
   root.style.setProperty("--hf-teal", ui.teal);
   root.style.setProperty("--hf-backdrop", hexToRgba(ui.crust, 0.72));
   const alpha = settings.backgroundOpacity;
-  const termBg = alpha >= 1 ? (theme.terminal.background ?? ui.base) : hexToRgba(theme.terminal.background ?? ui.base, alpha);
+  const termBg =
+    alpha >= 1
+      ? (theme.terminal.background ?? ui.base)
+      : hexToRgba(theme.terminal.background ?? ui.base, alpha);
   root.style.setProperty("--hf-terminal-bg", termBg);
 
   root.dataset.theme = theme.id;
@@ -174,9 +172,7 @@ function setupLinks(terminal: Terminal): void {
     activate: (event, text) => {
       if (!(event.ctrlKey || event.metaKey)) return;
       event.preventDefault();
-      invoke("open_url", { url: text }).catch((err) =>
-        console.error("open_url failed", err)
-      );
+      invoke("open_url", { url: text }).catch((err) => console.error("open_url failed", err));
     },
     hover: (_event, text) => {
       if (!terminal.element) return;
@@ -195,7 +191,11 @@ function setupLinks(terminal: Terminal): void {
   };
 }
 
-export function createTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon: SearchAddon } {
+export function createTerminal(): {
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  searchAddon: SearchAddon;
+} {
   const terminal = new Terminal(TERM_OPTIONS);
   terminal.loadAddon(new Unicode11Addon());
   const fitAddon = new FitAddon();
@@ -267,11 +267,7 @@ export function writeToTerminal(terminal: Terminal, data: string): void {
   });
 }
 
-export function syncSize(
-  sessionId: number,
-  fitAddon: FitAddon,
-  terminal: Terminal
-): boolean {
+export function syncSize(sessionId: number, fitAddon: FitAddon, terminal: Terminal): boolean {
   try {
     // Never fit a detached or zero-size xterm. FitAddon otherwise clamps the
     // terminal to its minimum 2x1 grid, and xterm can reflow already-buffered

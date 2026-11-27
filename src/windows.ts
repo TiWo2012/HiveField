@@ -5,8 +5,8 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { getWorkspaceCwd } from "./workspace";
 import type { Mode } from "./modes";
+import { getWorkspaceCwd } from "./workspace";
 
 /**
  * Ask the backend to open a new window scoped to this window's launch
@@ -19,7 +19,5 @@ export function openNewWindow(mode?: Mode): void {
   void invoke("window_new", {
     cwd: getWorkspaceCwd(),
     ...(mode ? { startMode: mode } : {}),
-  }).catch((err) =>
-    console.error("failed to open new window", err)
-  );
+  }).catch((err) => console.error("failed to open new window", err));
 }

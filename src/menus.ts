@@ -4,21 +4,16 @@
  * Rendered by the generic context-menu.ts; this module builds the items.
  */
 
-import type { IDockviewPanel } from "dockview";
 import { invoke } from "@tauri-apps/api/core";
-import { isAgentModeAll } from "./agents";
-import { sessionModes } from "./modes";
-import { getSettings } from "./settings";
-import { showContextMenu, type ContextMenuItem } from "./context-menu";
+import type { IDockviewPanel } from "dockview";
 import { copyText, readClipboardText } from "./clipboard";
+import { type ContextMenuItem, showContextMenu } from "./context-menu";
+import { sessionModes } from "./modes";
 import { openSearch } from "./search";
 import { addPanelWithMode, isFullscreen, toggleFullscreen } from "./sessions";
+import { getSettings } from "./settings";
+import { getApi, panelToSession, sessions } from "./state";
 import { panelForTabElement, renamePanel } from "./titles";
-import {
-  getApi,
-  panelToSession,
-  sessions,
-} from "./state";
 
 /** Split directions offered by the "New split" submenu. */
 const SPLIT_DIRECTIONS: Array<{
@@ -97,8 +92,8 @@ function sendTextToAgent(mode: string, text: string): void {
       // \r (carriage return), not \n: TUI agents run stdin in raw
       // mode where Enter is \r; a bare \n maps to shift+enter under
       // the kitty keyboard protocol (just inserts a newline).
-      invoke("pty_write", { sessionId, data: text + "\r" }).catch((err) =>
-        console.error("failed to write to agent session", err)
+      invoke("pty_write", { sessionId, data: `${text}\r` }).catch((err) =>
+        console.error("failed to write to agent session", err),
       );
     }, 3000);
   };
@@ -261,6 +256,6 @@ export function setupContextMenu(): void {
         }
       }
     },
-    true
+    true,
   );
 }

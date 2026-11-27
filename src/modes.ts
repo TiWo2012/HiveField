@@ -8,13 +8,7 @@
  * stays a pure registry — importing settings from it would create a cycle).
  */
 
-import {
-  AGENTS,
-  RAW_MODE,
-  allAgents,
-  isKnownModeAll,
-  type CustomAgentDef,
-} from "./agents";
+import { AGENTS, allAgents, type CustomAgentDef, isKnownModeAll, RAW_MODE } from "./agents";
 import { getSettings, subscribe } from "./settings";
 
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */

@@ -127,6 +127,7 @@ impl Default for DictationState {
 }
 
 /// Inner, lock-protected state.
+#[derive(Default)]
 pub struct DictationInner {
     status: String,
     detail: Option<String>,
@@ -144,22 +145,6 @@ pub struct DictationInner {
     /// Session id captured at keydown. The result is written into this session
     /// regardless of which pane is active when the transcription finishes.
     session_id: Option<u64>,
-}
-
-impl Default for DictationInner {
-    fn default() -> Self {
-        Self {
-            status: String::new(),
-            detail: None,
-            engine: String::new(),
-            model_busy: false,
-            #[cfg(feature = "whisper")]
-            ctx: None,
-            capture: None,
-            window_label: None,
-            session_id: None,
-        }
-    }
 }
 
 /// Normalize the engine argument to a known engine id: `"whisper"` or
@@ -259,9 +244,7 @@ pub fn dictation_start(
                     set_status_to(
                         &app,
                         &window_label,
-                        &DictationStatus::error(
-                            "OPENAI_API_KEY environment variable is not set",
-                        ),
+                        &DictationStatus::error("OPENAI_API_KEY environment variable is not set"),
                     );
                     return Err("OPENAI_API_KEY environment variable is not set".to_string());
                 }
@@ -308,9 +291,7 @@ pub fn dictation_start(
                     set_status_to(
                         &app,
                         &window_label,
-                        &DictationStatus::error(
-                            "OPENAI_API_KEY environment variable is not set",
-                        ),
+                        &DictationStatus::error("OPENAI_API_KEY environment variable is not set"),
                     );
                     return Err("OPENAI_API_KEY environment variable is not set".to_string());
                 }
@@ -336,9 +317,7 @@ pub fn dictation_start(
                 // winner's capture.
                 if inner.capture.is_some() {
                     drop(capture);
-                    return Err(
-                        "dictation is already in progress in another window".to_string()
-                    );
+                    return Err("dictation is already in progress in another window".to_string());
                 }
                 inner.capture = Some(capture);
                 inner.engine = engine;
@@ -448,9 +427,9 @@ pub fn dictation_stop(
             },
             #[cfg(feature = "whisper")]
             "whisper" => {
-                let ctx = app.try_state::<DictationState>().and_then(|state| {
-                    state.inner.lock().ok().and_then(|inner| inner.ctx.clone())
-                });
+                let ctx = app
+                    .try_state::<DictationState>()
+                    .and_then(|state| state.inner.lock().ok().and_then(|inner| inner.ctx.clone()));
                 match ctx {
                     Some(ctx) => whisper::transcribe(&ctx, &samples, capture.sample_rate),
                     None => Err("whisper model is not loaded".to_string()),

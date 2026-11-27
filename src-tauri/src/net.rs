@@ -41,7 +41,12 @@ impl HttpClient {
     /// POST `body` as the raw request body to `url` with the given headers.
     /// Returns the response body on success; `Err` on transport errors or any
     /// non-2xx status (including the server's body in the message).
-    pub fn post_text(&self, url: &str, headers: &[(&str, &str)], body: &str) -> Result<String, String> {
+    pub fn post_text(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Result<String, String> {
         let mut request = self.agent.post(url);
         for &(name, value) in headers {
             request = request.header(name, value);
@@ -59,7 +64,12 @@ impl HttpClient {
 
     /// POST raw bytes (e.g. a multipart body) with the given headers. Returns
     /// the response body on success; `Err` on transport errors or non-2xx.
-    pub fn post_bytes(&self, url: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<String, String> {
+    pub fn post_bytes(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<String, String> {
         let mut request = self.agent.post(url);
         for &(name, value) in headers {
             request = request.header(name, value);
@@ -119,8 +129,8 @@ impl HttpClient {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let mut file =
-            std::fs::File::create(dest).map_err(|e| format!("failed to create {}: {e}", dest.display()))?;
+        let mut file = std::fs::File::create(dest)
+            .map_err(|e| format!("failed to create {}: {e}", dest.display()))?;
         let mut reader = response.into_body().into_reader();
         let mut buf = [0u8; 256 * 1024];
         let mut downloaded: u64 = 0;
@@ -135,8 +145,8 @@ impl HttpClient {
             file.write_all(&buf[..n])
                 .map_err(|e| format!("download write failed: {e}"))?;
             downloaded += n as u64;
-            if total > 0 {
-                let percent = (downloaded * 100 / total) as u8;
+            if let Some(percent) = (downloaded * 100).checked_div(total) {
+                let percent = percent as u8;
                 if percent != last_percent {
                     last_percent = percent;
                     on_progress(percent);

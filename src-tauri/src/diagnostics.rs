@@ -116,9 +116,7 @@ fn collect(settings: &Value, log_dir: Result<PathBuf, String>) -> Value {
         git_commit,
         worktree_base_dir: worktree_base_dir(settings),
         dictation_engine: dictation_engine(settings),
-        log_file: or_error(
-            log_dir.map(|d| d.join(LOG_FILE_NAME).to_string_lossy().into_owned()),
-        ),
+        log_file: or_error(log_dir.map(|d| d.join(LOG_FILE_NAME).to_string_lossy().into_owned())),
     }
     .to_json()
 }
@@ -182,8 +180,7 @@ mod tests {
             git_commit: Some("abc123".to_string()),
             worktree_base_dir: "/tmp".to_string(),
             dictation_engine: "cloud".to_string(),
-            log_file: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log"
-                .to_string(),
+            log_file: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log".to_string(),
         }
     }
 
@@ -216,7 +213,10 @@ mod tests {
         assert_eq!(blob["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(blob["os"], std::env::consts::OS);
         assert_eq!(blob["arch"], std::env::consts::ARCH);
-        assert_eq!(blob["settingsSchemaVersion"], json!(SETTINGS_SCHEMA_VERSION));
+        assert_eq!(
+            blob["settingsSchemaVersion"],
+            json!(SETTINGS_SCHEMA_VERSION)
+        );
     }
 
     #[test]
@@ -274,10 +274,7 @@ mod tests {
             dictation::parse_engine(Some("whisper".to_string()))
         );
         // Absent/unknown settings degrade to the build default.
-        assert_eq!(
-            dictation_engine(&json!({})),
-            dictation::parse_engine(None)
-        );
+        assert_eq!(dictation_engine(&json!({})), dictation::parse_engine(None));
     }
 
     #[test]

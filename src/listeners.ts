@@ -5,22 +5,10 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { isAgentModeAll } from "./agents";
-import { customs } from "./modes";
 import { analyzeOutput } from "./input-line";
-import { writeToTerminal } from "./terminal";
-import {
-  armIdle,
-  armNotify,
-  clearIdle,
-  clearNotify,
-  notifyAgentDone,
-  setIndicator,
-  INDICATOR_ACTIVITY,
-  INDICATOR_DONE,
-} from "./titles";
+import { customs } from "./modes";
 import {
   discardSession,
-  isDiscardedSession,
   isPanelActive,
   panelStatus,
   parkedKeyFor,
@@ -30,6 +18,17 @@ import {
   scheduleWorkspaceRefresh,
   sessions,
 } from "./state";
+import { writeToTerminal } from "./terminal";
+import {
+  armIdle,
+  armNotify,
+  clearIdle,
+  clearNotify,
+  INDICATOR_ACTIVITY,
+  INDICATOR_DONE,
+  notifyAgentDone,
+  setIndicator,
+} from "./titles";
 
 export async function registerGlobalListeners() {
   await listen<{ sessionId: number; data: string }>("pty://output", (event) => {

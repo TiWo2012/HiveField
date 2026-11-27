@@ -213,7 +213,7 @@ where
 {
     let samples = Arc::clone(samples);
     let stop = Arc::clone(stop);
-    let config = config.clone();
+    let config = *config;
     device
         .build_input_stream::<T, _, _>(
             config,
@@ -230,11 +230,7 @@ where
                 }
                 let remaining = max_samples - buf.len();
                 if channels == 1 {
-                    buf.extend(
-                        data.iter()
-                            .take(remaining)
-                            .map(|s| s.to_sample::<f32>()),
-                    );
+                    buf.extend(data.iter().take(remaining).map(|s| s.to_sample::<f32>()));
                 } else {
                     for frame in data.chunks(channels as usize).take(remaining) {
                         let sum: f32 = frame.iter().map(|s| s.to_sample::<f32>()).sum();
@@ -271,8 +267,12 @@ fn build_stream_for_format(
         cpal::SampleFormat::U16 => {
             build_stream::<u16>(device, config, channels, max_samples, samples, stop)
         }
-        cpal::SampleFormat::I8 => build_stream::<i8>(device, config, channels, max_samples, samples, stop),
-        cpal::SampleFormat::U8 => build_stream::<u8>(device, config, channels, max_samples, samples, stop),
+        cpal::SampleFormat::I8 => {
+            build_stream::<i8>(device, config, channels, max_samples, samples, stop)
+        }
+        cpal::SampleFormat::U8 => {
+            build_stream::<u8>(device, config, channels, max_samples, samples, stop)
+        }
         other => Err(format!("unsupported capture sample format {other}")),
     }
 }
@@ -329,8 +329,8 @@ fn linear_resample(samples: &[f32], input_rate: u32, output_rate: u32) -> Vec<f3
         return samples.to_vec();
     }
     let ratio = input_rate as f64 / output_rate as f64;
-    let out_len = ((samples.len() as f64 - 1.0) * output_rate as f64 / input_rate as f64) as usize
-        + 1;
+    let out_len =
+        ((samples.len() as f64 - 1.0) * output_rate as f64 / input_rate as f64) as usize + 1;
     let last = samples.len() - 1;
     let mut out = Vec::with_capacity(out_len);
     for i in 0..out_len {

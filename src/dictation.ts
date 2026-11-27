@@ -120,7 +120,6 @@ function onStatus(status: DictationStatus, detail: string | null): void {
       show(`Dictation error: ${detail ?? ""}`, "error");
       errorTimer = setTimeout(hide, ERROR_BADGE_MS);
       break;
-    case "idle":
     default:
       if (active && !started) {
         // A download or model load just finished while the key is still held:
@@ -154,7 +153,7 @@ export function initDictation(): void {
     // Trailing space so text typed right after dictation doesn't run into the
     // transcription ("world" + typed text -> "worldls").
     invoke("pty_write", { sessionId, data: `${text} ` }).catch((err) =>
-      console.error("failed to write dictation result", err)
+      console.error("failed to write dictation result", err),
     );
   }).catch((err) => console.error("failed to listen for dictation results", err));
 }

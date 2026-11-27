@@ -38,9 +38,12 @@ fn main() {
         // embed-resource names it resource.lib on MSVC and libresource.a on
         // GNU (prefix = "resource" from tauri-winres' resource.rc).
         let out_dir_path = std::path::Path::new(&out_dir);
-        let resource = [out_dir_path.join("resource.lib"), out_dir_path.join("libresource.a")]
-            .into_iter()
-            .find(|p| p.exists());
+        let resource = [
+            out_dir_path.join("resource.lib"),
+            out_dir_path.join("libresource.a"),
+        ]
+        .into_iter()
+        .find(|p| p.exists());
         if let Some(resource) = resource {
             println!("cargo:rustc-link-arg={}", resource.display());
         }

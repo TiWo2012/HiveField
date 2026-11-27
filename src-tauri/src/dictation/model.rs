@@ -123,6 +123,9 @@ mod tests {
     #[test]
     fn default_model_url_is_https() {
         // Guard against accidentally regressing to a plaintext download.
-        assert!(DEFAULT_MODEL_URL.starts_with("https://"), "{DEFAULT_MODEL_URL}");
+        assert!(
+            DEFAULT_MODEL_URL.starts_with("https://"),
+            "{DEFAULT_MODEL_URL}"
+        );
     }
 }

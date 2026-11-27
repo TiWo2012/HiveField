@@ -11,8 +11,8 @@
 import { isKnownModeAll } from "./agents";
 import { customs, type Mode } from "./modes";
 import { openSessionAtPoint } from "./sessions";
-import { openNewWindow } from "./windows";
 import { getApi } from "./state";
+import { openNewWindow } from "./windows";
 
 /** A session start request carried across a drag or passed to a panel. */
 export interface SessionDrag {
@@ -62,14 +62,12 @@ export function readDragPayload(dt: DataTransfer | null | undefined): SessionDra
   } catch {
     // Not JSON — fall through to the bare-mode legacy payload.
   }
-  return isKnownModeAll(raw, customs())
-    ? { mode: raw as Mode }
-    : undefined;
+  return isKnownModeAll(raw, customs()) ? { mode: raw as Mode } : undefined;
 }
 
 /** Safely read the MIME types a drag exposes (WebKitGTK can hide/null them). */
 function dataTransferTypes(dt: DataTransfer | null | undefined): string[] {
-  if (!dt || !dt.types) return [];
+  if (!dt?.types) return [];
   try {
     return Array.from(dt.types);
   } catch {
@@ -257,9 +255,7 @@ export function setNewWindowIndicator(visible: boolean): void {
  * highlight stuck on the workspace after the mouse is released.
  */
 export function clearStuckDropOverlay(): void {
-  for (const dropzone of document.querySelectorAll<HTMLElement>(
-    ".dv-drop-target-dropzone"
-  )) {
+  for (const dropzone of document.querySelectorAll<HTMLElement>(".dv-drop-target-dropzone")) {
     dropzone.parentElement?.classList.remove("dv-drop-target");
     dropzone.remove();
   }
@@ -306,10 +302,7 @@ export function setupSidebarDndFallback() {
   const terminalEl = document.getElementById("terminal")!;
   const inTerminal = (clientX: number, clientY: number) => {
     const r = terminalEl.getBoundingClientRect();
-    return (
-      clientX >= r.left && clientX <= r.right &&
-      clientY >= r.top && clientY <= r.bottom
-    );
+    return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   };
 
   // Track where a sidebar drag hovers so a swallowed `drop` can still open
@@ -339,7 +332,7 @@ export function setupSidebarDndFallback() {
         lastSidebarDragOver = undefined;
       }
     },
-    true
+    true,
   );
 
   // A `dragleave` with no related target means the pointer left the document
@@ -351,7 +344,7 @@ export function setupSidebarDndFallback() {
       if (!sidebarDragActive) return;
       if (e.relatedTarget === null) sidebarDragOutside = true;
     },
-    true
+    true,
   );
 
   // Worst-case recovery: if a sidebar drag produced neither a `drop` nor a
@@ -389,7 +382,7 @@ export function setupSidebarDndFallback() {
       }
       resetSidebarDndState();
     },
-    true
+    true,
   );
 
   // Capture phase: this runs before dockview's own handlers and only acts if
@@ -425,7 +418,7 @@ export function setupSidebarDndFallback() {
         resetSidebarDndState();
       }, 0);
     },
-    true
+    true,
   );
 
   // The Alt modifier drives the new-window drop indicator. During an HTML5

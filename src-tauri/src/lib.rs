@@ -1,5 +1,5 @@
-mod dictation;
 mod diagnostics;
+mod dictation;
 mod fonts;
 mod git;
 mod net;
@@ -184,6 +184,9 @@ fn window_cwd(window: &tauri::WebviewWindow) -> Result<String, String> {
 /// launch directory (see [`window_cwd`]), which is the directory the app was
 /// launched from for the main window.
 #[tauri::command]
+// The arguments map directly onto the frontend's `pty_spawn` payload; keeping
+// them flat avoids a wrapper struct that would only repeat the same fields.
+#[allow(clippy::too_many_arguments)]
 fn pty_spawn(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -202,8 +205,17 @@ fn pty_spawn(
         .map(std::path::PathBuf::from)
         .or_else(|| windows::window_cwd(&window));
     let window_label = window.label().to_string();
-    pty::spawn(&app, session_id, &mode, cwd, autorun, cols, rows, Some(window_label))
-        .map_err(|e| e.to_string())?;
+    pty::spawn(
+        &app,
+        session_id,
+        &mode,
+        cwd,
+        autorun,
+        cols,
+        rows,
+        Some(window_label),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 
@@ -356,14 +368,22 @@ async fn window_new(
 async fn git_worktrees(app: tauri::AppHandle, window: tauri::WebviewWindow) -> git::WorktreesInfo {
     let dir = match window_cwd(&window).map(std::path::PathBuf::from) {
         Ok(dir) => dir,
-        Err(_) => return git::WorktreesInfo { root: None, worktrees: Vec::new() },
+        Err(_) => {
+            return git::WorktreesInfo {
+                root: None,
+                worktrees: Vec::new(),
+            }
+        }
     };
     tauri::async_runtime::spawn_blocking(move || {
         let cache = app.state::<git::GitCache>();
         cache.cached_worktrees(&dir)
     })
     .await
-    .unwrap_or_else(|_| git::WorktreesInfo { root: None, worktrees: Vec::new() })
+    .unwrap_or_else(|_| git::WorktreesInfo {
+        root: None,
+        worktrees: Vec::new(),
+    })
 }
 
 /// IPC command: create a worktree on a new branch in the repo containing the
@@ -457,9 +477,7 @@ fn file_write(path: String, content: String) -> Result<(), String> {
 /// Only schemes the terminal should ever hand to the OS opener.
 fn allowed_url_scheme(url: &str) -> bool {
     let lower = url.to_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
 }
 
 /// IPC command: open a URL in the system's default browser / handler.
@@ -468,7 +486,9 @@ fn allowed_url_scheme(url: &str) -> bool {
 fn open_url(url: String) -> Result<(), String> {
     let trimmed = url.trim();
     if !allowed_url_scheme(trimmed) {
-        return Err(format!("refusing to open URL with disallowed scheme: {trimmed}"));
+        return Err(format!(
+            "refusing to open URL with disallowed scheme: {trimmed}"
+        ));
     }
     use std::process::Command;
     if cfg!(target_os = "macos") {
@@ -587,9 +607,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let menu = {
                 let quit = PredefinedMenuItem::quit(app, None)?;
-                let app_menu = SubmenuBuilder::new(app, "hiveField")
-                    .item(&quit)
-                    .build()?;
+                let app_menu = SubmenuBuilder::new(app, "hiveField").item(&quit).build()?;
                 MenuBuilder::new(app).items(&[&app_menu, &file]).build()?
             };
             #[cfg(not(target_os = "macos"))]
@@ -618,7 +636,7 @@ pub fn run() {
                 // A dictation capture owned by the closing window would
                 // otherwise keep running (and recording) with no window left
                 // to stop it or receive the result.
-                dictation::stop_capture_for_window(&app, &label);
+                dictation::stop_capture_for_window(app, &label);
             }
         })
         .run(tauri::generate_context!())
@@ -688,7 +706,10 @@ mod tests {
             "HTTPS-not-a-url",
             "",
         ] {
-            assert!(!allowed_url_scheme(url.trim()), "{url:?} should be rejected");
+            assert!(
+                !allowed_url_scheme(url.trim()),
+                "{url:?} should be rejected"
+            );
         }
     }
 
