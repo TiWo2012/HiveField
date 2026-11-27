@@ -135,7 +135,10 @@ mod tests {
         let (store, dir) = temp_store();
         store.write(&json!({ "a": 1 })).expect("write");
         let text = std::fs::read_to_string(dir.path().join("settings.json")).expect("read file");
-        assert!(text.contains("\"schemaVersion\": 1"), "missing stamp: {text}");
+        assert!(
+            text.contains("\"schemaVersion\": 1"),
+            "missing stamp: {text}"
+        );
     }
 
     #[test]
@@ -173,7 +176,10 @@ mod tests {
         // Legacy = schema v1: readable, and the next write stamps the version.
         assert_eq!(store.read()["fontSize"], json!(15));
         store.write(&json!({ "fontSize": 15 })).expect("write");
-        assert_eq!(store.read()["schemaVersion"], json!(SETTINGS_SCHEMA_VERSION));
+        assert_eq!(
+            store.read()["schemaVersion"],
+            json!(SETTINGS_SCHEMA_VERSION)
+        );
     }
 
     #[test]
@@ -213,7 +219,12 @@ mod tests {
     fn write_fails_when_parent_dir_missing() {
         let (_, dir) = temp_store();
         let store = SettingsStore::from_path(dir.path().join("missing").join("settings.json"));
-        let err = store.write(&json!({"a": 1})).expect_err("write should fail");
-        assert!(err.contains("failed to write settings"), "unexpected error: {err}");
+        let err = store
+            .write(&json!({"a": 1}))
+            .expect_err("write should fail");
+        assert!(
+            err.contains("failed to write settings"),
+            "unexpected error: {err}"
+        );
     }
 }

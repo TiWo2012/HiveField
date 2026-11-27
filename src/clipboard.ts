@@ -88,11 +88,9 @@ function legacyPaste(): Promise<string> {
       ta.remove();
       resolve(text);
     };
-    ta.addEventListener(
-      "paste",
-      (e) => done(e.clipboardData?.getData("text") ?? ""),
-      { once: true }
-    );
+    ta.addEventListener("paste", (e) => done(e.clipboardData?.getData("text") ?? ""), {
+      once: true,
+    });
     setTimeout(() => done(""), 250);
     try {
       document.execCommand("paste");

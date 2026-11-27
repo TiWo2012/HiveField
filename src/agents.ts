@@ -80,33 +80,25 @@ export const AGENT_MODES: readonly string[] = AGENTS.map((a) => a.id);
  * ------------------------------------------------------------------------- */
 
 /** The full registry: built-ins first, then user-defined custom agents. */
-export function allAgents(
-  customAgents: readonly CustomAgentDef[]
-): readonly AgentDef[] {
+export function allAgents(customAgents: readonly CustomAgentDef[]): readonly AgentDef[] {
   return [...AGENTS, ...customAgents];
 }
 
 /** Registry lookup for an agent by mode id, custom agents included. */
 export function agentForModeAll(
   mode: string,
-  customAgents: readonly CustomAgentDef[]
+  customAgents: readonly CustomAgentDef[],
 ): AgentDef | undefined {
   return allAgents(customAgents).find((a) => a.id === mode);
 }
 
 /** Whether `mode` auto-runs a coding agent (built-in or custom). */
-export function isAgentModeAll(
-  mode: string,
-  customAgents: readonly CustomAgentDef[]
-): boolean {
+export function isAgentModeAll(mode: string, customAgents: readonly CustomAgentDef[]): boolean {
   return allAgents(customAgents).some((a) => a.id === mode);
 }
 
 /** Whether `mode` is a mode this app can start (agent id or raw). */
-export function isKnownModeAll(
-  mode: string,
-  customAgents: readonly CustomAgentDef[]
-): boolean {
+export function isKnownModeAll(mode: string, customAgents: readonly CustomAgentDef[]): boolean {
   return mode === RAW_MODE || isAgentModeAll(mode, customAgents);
 }
 
@@ -117,26 +109,20 @@ export function isKnownModeAll(
  */
 export function modeCommandAll(
   mode: string,
-  customAgents: readonly CustomAgentDef[]
+  customAgents: readonly CustomAgentDef[],
 ): string | undefined {
   const agent = agentForModeAll(mode, customAgents);
   return agent ? (agent.command ?? agent.id) : undefined;
 }
 
 /** Display label for a mode (the agent label, or "raw term"). */
-export function modeLabelAll(
-  mode: string,
-  customAgents: readonly CustomAgentDef[]
-): string {
+export function modeLabelAll(mode: string, customAgents: readonly CustomAgentDef[]): string {
   if (mode === RAW_MODE) return "raw term";
   return agentForModeAll(mode, customAgents)?.label ?? mode;
 }
 
 /** Icon glyph for a mode. */
-export function modeIconAll(
-  mode: string,
-  customAgents: readonly CustomAgentDef[]
-): string {
+export function modeIconAll(mode: string, customAgents: readonly CustomAgentDef[]): string {
   if (mode === RAW_MODE) return "$";
   return agentForModeAll(mode, customAgents)?.icon ?? "✦";
 }
@@ -147,7 +133,7 @@ export function modeIconAll(
  */
 export function agentUsesWorktreeAll(
   mode: string,
-  customAgents: readonly CustomAgentDef[]
+  customAgents: readonly CustomAgentDef[],
 ): boolean {
   return agentForModeAll(mode, customAgents)?.worktree ?? true;
 }
@@ -160,10 +146,7 @@ export function agentUsesWorktreeAll(
  * Mint a stable mode id for a new custom agent from its label:
  * `custom-<slugified label>`, deduplicated against existing agents.
  */
-export function makeCustomAgentId(
-  label: string,
-  existing: readonly CustomAgentDef[]
-): string {
+export function makeCustomAgentId(label: string, existing: readonly CustomAgentDef[]): string {
   const slug =
     label
       .toLowerCase()

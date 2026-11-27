@@ -78,12 +78,17 @@ export const KEYBIND_ACTIONS: KeybindDef[] = [
   { id: "workspace8", label: "Switch to workspace 8", group: "Workspaces", default: "Ctrl+8" },
   { id: "workspace9", label: "Switch to workspace 9", group: "Workspaces", default: "Ctrl+9" },
   { id: "workspace10", label: "Switch to workspace 10", group: "Workspaces", default: "Ctrl+0" },
-  { id: "broadcastToggle", label: "Broadcast to all panes", group: "Sessions", default: "Ctrl+Shift+B" },
+  {
+    id: "broadcastToggle",
+    label: "Broadcast to all panes",
+    group: "Sessions",
+    default: "Ctrl+Shift+B",
+  },
 ];
 
 /** The defaults, keyed by action id. */
 export const DEFAULT_KEYBINDS: Record<KeybindAction, string> = Object.fromEntries(
-  KEYBIND_ACTIONS.map((a) => [a.id, a.default])
+  KEYBIND_ACTIONS.map((a) => [a.id, a.default]),
 ) as Record<KeybindAction, string>;
 
 export interface ParsedKeybind {
@@ -152,10 +157,7 @@ export function parseKeybind(str: string): ParsedKeybind | null {
 }
 
 /** Does a keydown/keyup event match the given stored binding ("" = unbound)? */
-export function matchesKeybind(
-  binding: string | undefined,
-  e: KeyboardEvent
-): boolean {
+export function matchesKeybind(binding: string | undefined, e: KeyboardEvent): boolean {
   if (!binding) return false;
   const parsed = parseKeybind(binding);
   if (!parsed) return false;
@@ -200,15 +202,9 @@ export function keyNeedsModifier(key: string): boolean {
  * so "new tab" finds "New agent tab" and "ctrl t" finds "Ctrl+Shift+T". An
  * empty query matches everything.
  */
-export function keybindSearchMatches(
-  def: KeybindDef,
-  binding: string,
-  query: string
-): boolean {
+export function keybindSearchMatches(def: KeybindDef, binding: string, query: string): boolean {
   const fields = [def.group, def.label, binding].map((s) => s.toLowerCase());
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
-  return tokens.every((token) =>
-    fields.some((field) => field.includes(token))
-  );
+  return tokens.every((token) => fields.some((field) => field.includes(token)));
 }

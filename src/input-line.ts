@@ -44,29 +44,29 @@ export interface InputLineState {
 export function trackInputLine(
   state: InputLineState,
   data: string,
-  onSubmit: (line: string) => void
+  onSubmit: (line: string) => void,
 ): InputLineState {
   const chars = Array.from(data);
-  let { line, escape } = state;
+  let { line, escape: escapeState } = state;
 
   for (let i = 0; i < chars.length; i++) {
     const ch = chars[i];
     const code = ch.codePointAt(0)!;
 
-    if (escape === 1) {
+    if (escapeState === 1) {
       // Just saw ESC: only CSI/OSC/SS3/DCS/APC/PM introducers continue.
-      escape = [0x5b, 0x5d, 0x50, 0x5e, 0x5f, 0x4f].includes(code) ? 2 : 0;
+      escapeState = [0x5b, 0x5d, 0x50, 0x5e, 0x5f, 0x4f].includes(code) ? 2 : 0;
       continue;
     }
-    if (escape === 2) {
+    if (escapeState === 2) {
       // Inside a sequence: a final byte (0x40-0x7e) or BEL ends it.
-      if (code === 0x07 || (code >= 0x40 && code <= 0x7e)) escape = 0;
-      else if (code === 0x1b) escape = 1; // possible ST (ESC \)
+      if (code === 0x07 || (code >= 0x40 && code <= 0x7e)) escapeState = 0;
+      else if (code === 0x1b) escapeState = 1; // possible ST (ESC \)
       continue;
     }
 
     if (ch === "\x1b") {
-      escape = 1;
+      escapeState = 1;
     } else if (ch === "\r" || ch === "\n") {
       onSubmit(line);
       line = "";
@@ -86,7 +86,7 @@ export function trackInputLine(
     }
   }
 
-  return { line, escape };
+  return { line, escape: escapeState };
 }
 
 /** OSC 133 shell-integration marker regex (ESC ] 133 ; A/B/C/D ; … BEL|ST). */
@@ -111,12 +111,13 @@ export function analyzeOutput(data: string): { markers: string[]; text: string }
   const markers: string[] = [];
   let text = "";
   let last = 0;
-  let m: RegExpExecArray | null;
   OSC133_RE.lastIndex = 0;
-  while ((m = OSC133_RE.exec(data)) !== null) {
-    text += data.slice(last, m.index);
-    markers.push(m[1]);
-    last = m.index + m[0].length;
+  for (;;) {
+    const match = OSC133_RE.exec(data);
+    if (!match) break;
+    text += data.slice(last, match.index);
+    markers.push(match[1]);
+    last = match.index + match[0].length;
   }
   text += data.slice(last);
   return { markers, text };

@@ -127,17 +127,16 @@ function placeMenu(el: HTMLElement, x: number, y: number): void {
   el.style.top = "0px";
   const w = el.offsetWidth;
   const h = el.offsetHeight;
-  const clamp = (v: number, max: number) =>
-    Math.max(EDGE_MARGIN, Math.min(v, max - EDGE_MARGIN));
+  const clamp = (v: number, max: number) => Math.max(EDGE_MARGIN, Math.min(v, max - EDGE_MARGIN));
   el.style.left = `${clamp(x, window.innerWidth - w)}px`;
   el.style.top = `${clamp(y, window.innerHeight - h)}px`;
 }
 
 function setActive(level: MenuLevel, index: number): void {
   level.activeIndex = index;
-  level.el
-    .querySelectorAll<HTMLElement>(".ctx-menu-item")
-    .forEach((row, i) => row.classList.toggle("active", i === index));
+  level.el.querySelectorAll<HTMLElement>(".ctx-menu-item").forEach((row, i) => {
+    row.classList.toggle("active", i === index);
+  });
 }
 
 /** Remove any submenu opened from `level` (and its descendants). */

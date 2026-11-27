@@ -12,9 +12,9 @@
  * flag live here too (assigned once at init, read everywhere).
  */
 
+import type { FitAddon } from "@xterm/addon-fit";
+import type { SearchAddon } from "@xterm/addon-search";
 import type { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { SearchAddon } from "@xterm/addon-search";
 import type { DockviewApi, IDockviewPanel } from "dockview";
 
 /** What a session auto-runs: a coding agent, or a plain shell (`"raw"`). */

@@ -7,19 +7,9 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import {
-  AGENTS,
-  AGENT_MODES,
-  RAW_MODE,
-  type CustomAgentDef,
-} from "./agents";
+import { AGENT_MODES, AGENTS, type CustomAgentDef, RAW_MODE } from "./agents";
+import { DEFAULT_KEYBINDS, KEYBIND_ACTIONS, type KeybindAction, parseKeybind } from "./keybinds";
 import { DEFAULT_THEME_ID, getTheme } from "./themes";
-import {
-  DEFAULT_KEYBINDS,
-  KEYBIND_ACTIONS,
-  parseKeybind,
-  type KeybindAction,
-} from "./keybinds";
 
 export type FontWeightValue = "normal" | "bold";
 export type UnicodeVersion = "6" | "11";
@@ -214,9 +204,7 @@ export function getPersistError(): string | undefined {
 }
 
 /** Subscribe to backend-persistence failures (Settings UI shows a status row). */
-export function subscribePersistError(
-  listener: (err: string | undefined) => void
-): () => void {
+export function subscribePersistError(listener: (err: string | undefined) => void): () => void {
   persistErrorListeners.add(listener);
   listener(lastPersistError);
   return () => persistErrorListeners.delete(listener);
@@ -242,13 +230,9 @@ function normalize(value: unknown): AppSettings {
   if (!value || typeof value !== "object") return { ...DEFAULT_SETTINGS };
   const v = value as Record<string, unknown>;
   const pickStr = (key: string, fallback: string): string =>
-    typeof v[key] === "string" && (v[key] as string).trim() !== ""
-      ? (v[key] as string)
-      : fallback;
+    typeof v[key] === "string" && (v[key] as string).trim() !== "" ? (v[key] as string) : fallback;
   const pickNum = (key: string, fallback: number): number =>
-    typeof v[key] === "number" && Number.isFinite(v[key] as number)
-      ? (v[key] as number)
-      : fallback;
+    typeof v[key] === "number" && Number.isFinite(v[key] as number) ? (v[key] as number) : fallback;
   const pickBool = (key: string, fallback: boolean): boolean =>
     typeof v[key] === "boolean" ? (v[key] as boolean) : fallback;
   /**
@@ -273,10 +257,7 @@ function normalize(value: unknown): AppSettings {
         id,
         label,
         command,
-        icon:
-          typeof o.icon === "string" && o.icon.trim() !== ""
-            ? o.icon.trim()
-            : "✦",
+        icon: typeof o.icon === "string" && o.icon.trim() !== "" ? o.icon.trim() : "✦",
       });
     }
     return out;
@@ -284,19 +265,14 @@ function normalize(value: unknown): AppSettings {
   const pickAgents = (
     key: string,
     fallback: string[],
-    customAgents: CustomAgentDef[]
+    customAgents: CustomAgentDef[],
   ): string[] => {
     // Missing key (older settings files) → fall back to "all agents". An
     // explicit array is kept as-is (even empty = hide every agent), only
     // dropping ids that are no longer in the registry.
     if (!Array.isArray(v[key])) return fallback;
-    const known = new Set<string>([
-      ...AGENT_MODES,
-      ...customAgents.map((a) => a.id),
-    ]);
-    return (v[key] as unknown[]).filter(
-      (x): x is string => typeof x === "string" && known.has(x)
-    );
+    const known = new Set<string>([...AGENT_MODES, ...customAgents.map((a) => a.id)]);
+    return (v[key] as unknown[]).filter((x): x is string => typeof x === "string" && known.has(x));
   };
   const pickKeybinds = (value: unknown): Record<KeybindAction, string> => {
     const out: Record<KeybindAction, string> = { ...DEFAULT_KEYBINDS };
@@ -333,21 +309,13 @@ function normalize(value: unknown): AppSettings {
   const customAgents = pickCustomAgents(v.customAgents);
   // The "all agents" fallback for older settings files must include custom
   // agents, otherwise they would be hidden until the user re-checks them.
-  const allDefaultVisible = [
-    ...DEFAULT_SETTINGS.visibleAgents,
-    ...customAgents.map((a) => a.id),
-  ];
+  const allDefaultVisible = [...DEFAULT_SETTINGS.visibleAgents, ...customAgents.map((a) => a.id)];
   // The default session mode must be a known mode id (built-in or custom
   // agent, or the raw shell) or the empty string ("nothing"). A stale id
   // whose agent was removed falls back to the first built-in agent.
-  const defaultKnown = new Set([
-    ...AGENT_MODES,
-    RAW_MODE,
-    ...customAgents.map((a) => a.id),
-  ]);
+  const defaultKnown = new Set([...AGENT_MODES, RAW_MODE, ...customAgents.map((a) => a.id)]);
   const defaultMode =
-    typeof v.defaultMode === "string" &&
-    (v.defaultMode === "" || defaultKnown.has(v.defaultMode))
+    typeof v.defaultMode === "string" && (v.defaultMode === "" || defaultKnown.has(v.defaultMode))
       ? v.defaultMode
       : DEFAULT_SETTINGS.defaultMode;
 
@@ -356,46 +324,48 @@ function normalize(value: unknown): AppSettings {
   // the file as its own older version, or the backend's downgrade guard
   // would not fire).
   const schemaVersion =
-    typeof v.schemaVersion === "number" &&
-    Number.isFinite(v.schemaVersion) &&
-    v.schemaVersion >= 1
+    typeof v.schemaVersion === "number" && Number.isFinite(v.schemaVersion) && v.schemaVersion >= 1
       ? Math.floor(v.schemaVersion)
       : SETTINGS_SCHEMA_VERSION;
 
   const known: AppSettings = {
     schemaVersion,
     fontFamily: pickStr("fontFamily", DEFAULT_SETTINGS.fontFamily),
-    fontSize: Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, pickNum("fontSize", DEFAULT_SETTINGS.fontSize))),
-    lineHeight: Math.max(LINE_HEIGHT_MIN, Math.min(LINE_HEIGHT_MAX, pickNum("lineHeight", DEFAULT_SETTINGS.lineHeight))),
-    letterSpacing: Math.max(LETTER_SPACING_MIN, Math.min(LETTER_SPACING_MAX, pickNum("letterSpacing", DEFAULT_SETTINGS.letterSpacing))),
+    fontSize: Math.max(
+      FONT_SIZE_MIN,
+      Math.min(FONT_SIZE_MAX, pickNum("fontSize", DEFAULT_SETTINGS.fontSize)),
+    ),
+    lineHeight: Math.max(
+      LINE_HEIGHT_MIN,
+      Math.min(LINE_HEIGHT_MAX, pickNum("lineHeight", DEFAULT_SETTINGS.lineHeight)),
+    ),
+    letterSpacing: Math.max(
+      LETTER_SPACING_MIN,
+      Math.min(LETTER_SPACING_MAX, pickNum("letterSpacing", DEFAULT_SETTINGS.letterSpacing)),
+    ),
     fontWeight: v.fontWeight === "bold" ? "bold" : "normal",
     fontWeightBold: v.fontWeightBold === "bold" ? "bold" : "normal",
     unicodeVersion: v.unicodeVersion === "6" ? "6" : "11",
-    minimumContrastRatio: Math.max(CONTRAST_RATIO_MIN, Math.min(CONTRAST_RATIO_MAX, pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio))),
+    minimumContrastRatio: Math.max(
+      CONTRAST_RATIO_MIN,
+      Math.min(
+        CONTRAST_RATIO_MAX,
+        pickNum("minimumContrastRatio", DEFAULT_SETTINGS.minimumContrastRatio),
+      ),
+    ),
     cursorBlink: pickBool("cursorBlink", DEFAULT_SETTINGS.cursorBlink),
     fontLigatures: pickBool("fontLigatures", DEFAULT_SETTINGS.fontLigatures),
-    theme: getTheme(
-      typeof v.theme === "string" ? (v.theme as string) : undefined
-    ).id,
-    backgroundOpacity: Math.max(OPACITY_MIN, Math.min(OPACITY_MAX, pickNum("backgroundOpacity", DEFAULT_SETTINGS.backgroundOpacity))),
+    theme: getTheme(typeof v.theme === "string" ? (v.theme as string) : undefined).id,
+    backgroundOpacity: Math.max(
+      OPACITY_MIN,
+      Math.min(OPACITY_MAX, pickNum("backgroundOpacity", DEFAULT_SETTINGS.backgroundOpacity)),
+    ),
     worktreeBaseDir: pickStr("worktreeBaseDir", DEFAULT_SETTINGS.worktreeBaseDir),
-    desktopNotifications: pickBool(
-      "desktopNotifications",
-      DEFAULT_SETTINGS.desktopNotifications
-    ),
-    terminalBellSound: pickBool(
-      "terminalBellSound",
-      DEFAULT_SETTINGS.terminalBellSound
-    ),
+    desktopNotifications: pickBool("desktopNotifications", DEFAULT_SETTINGS.desktopNotifications),
+    terminalBellSound: pickBool("terminalBellSound", DEFAULT_SETTINGS.terminalBellSound),
     copyOnSelect: pickBool("copyOnSelect", DEFAULT_SETTINGS.copyOnSelect),
-    pasteWithMiddleClick: pickBool(
-      "pasteWithMiddleClick",
-      DEFAULT_SETTINGS.pasteWithMiddleClick
-    ),
-    terminalBellNotify: pickBool(
-      "terminalBellNotify",
-      DEFAULT_SETTINGS.terminalBellNotify
-    ),
+    pasteWithMiddleClick: pickBool("pasteWithMiddleClick", DEFAULT_SETTINGS.pasteWithMiddleClick),
+    terminalBellNotify: pickBool("terminalBellNotify", DEFAULT_SETTINGS.terminalBellNotify),
     ntfyEnabled: pickBool("ntfyEnabled", DEFAULT_SETTINGS.ntfyEnabled),
     ntfyServer: pickStr("ntfyServer", DEFAULT_SETTINGS.ntfyServer),
     ntfyTopic: pickStr("ntfyTopic", DEFAULT_SETTINGS.ntfyTopic),

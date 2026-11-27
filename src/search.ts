@@ -1,4 +1,4 @@
-import { SearchAddon } from "@xterm/addon-search";
+import type { SearchAddon } from "@xterm/addon-search";
 import type { Terminal } from "@xterm/xterm";
 import { matchesKeybind } from "./keybinds";
 import { getSettings } from "./settings";
@@ -41,9 +41,6 @@ function matchDecorations() {
     activeMatchColorOverviewRuler: ui.yellow,
   };
 }
-
-/** Cap on simultaneously highlighted matches (the addon defaults to 1000). */
-const HIGHLIGHT_LIMIT = 2000;
 
 let context: SearchContext | null = null;
 let bar: HTMLElement;
@@ -152,7 +149,7 @@ function buildButton(
   label: string,
   title: string,
   className: string,
-  onClick: () => void
+  onClick: () => void,
 ): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -191,17 +188,17 @@ export function initSearch(ctx: SearchContext): void {
   bar.appendChild(count);
 
   bar.appendChild(
-    buildButton("↑", "Previous match (Shift+Enter)", "search-bar-btn", () => runSearch("prev"))
+    buildButton("↑", "Previous match (Shift+Enter)", "search-bar-btn", () => runSearch("prev")),
   );
   bar.appendChild(
-    buildButton("↓", "Next match (Enter)", "search-bar-btn", () => runSearch("next"))
+    buildButton("↓", "Next match (Enter)", "search-bar-btn", () => runSearch("next")),
   );
 
   caseBtn = buildButton("Aa", "Match case (Alt+C)", "search-bar-btn search-bar-case", toggleCase);
   bar.appendChild(caseBtn);
 
   bar.appendChild(
-    buildButton("✕", "Close search (Esc)", "search-bar-btn search-bar-close", closeSearch)
+    buildButton("✕", "Close search (Esc)", "search-bar-btn search-bar-close", closeSearch),
   );
 
   ctx.container.appendChild(bar);
@@ -246,6 +243,6 @@ export function initSearch(ctx: SearchContext): void {
         closeSearch();
       }
     },
-    true
+    true,
   );
 }

@@ -22,7 +22,7 @@ import { getWorkspaceCwd } from "./workspace";
 export function openDirectoryAt(path: string): void {
   addPanelWithMode(defaultMode() ?? RAW_MODE, undefined, path);
   void invoke("project_touch", { cwd: path }).catch((err) =>
-    console.error("failed to mark project recent", err)
+    console.error("failed to mark project recent", err),
   );
 }
 

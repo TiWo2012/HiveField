@@ -23,7 +23,7 @@ describe("README ↔ agent registry drift guard", () => {
     for (const agent of AGENTS) {
       expect(
         lower.includes(agent.id.toLowerCase()),
-        `README does not mention the "${agent.id}" agent from src/agents.json`
+        `README does not mention the "${agent.id}" agent from src/agents.json`,
       ).toBe(true);
     }
   });
@@ -37,13 +37,12 @@ describe("docs merge-target drift guard", () => {
     ] as const) {
       // Whitespace-insensitive (the prose wraps across lines).
       const flat = text.replace(/\s+/g, " ").toLowerCase();
-      expect(
-        flat.includes("back to `dev`"),
-        `${name} should state the merge target is dev`
-      ).toBe(true);
+      expect(flat.includes("back to `dev`"), `${name} should state the merge target is dev`).toBe(
+        true,
+      );
       expect(
         flat.includes("back to `master`"),
-        `${name} should not reference master as the merge target`
+        `${name} should not reference master as the merge target`,
       ).toBe(false);
     }
   });

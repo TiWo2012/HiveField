@@ -254,6 +254,9 @@ impl Utf8StreamDecoder {
 ///
 /// `window_label` records which window spawned this session (its label), so
 /// closing that window can tear the session down with it.
+// The positional parameters mirror the IPC payload one-for-one; grouping them
+// into a struct would just move the same fields behind another name.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn<R: Runtime>(
     app: &AppHandle<R>,
     session_id: u64,
@@ -529,7 +532,11 @@ pub fn editor_command() -> String {
 /// Returns `None` only when every candidate is missing or unreadable.
 fn resolve_start_dir(preferred: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = preferred {
-        if let Some(canonical) = dir.canonicalize().ok().filter(|d| std::fs::read_dir(d).is_ok()) {
+        if let Some(canonical) = dir
+            .canonicalize()
+            .ok()
+            .filter(|d| std::fs::read_dir(d).is_ok())
+        {
             return Some(canonical);
         }
     }
@@ -561,7 +568,12 @@ pub fn write<R: Runtime>(state: &PtyState<R>, session_id: u64, data: &str) -> io
 }
 
 /// Resize the session's PTY to match the frontend terminal viewport.
-pub fn resize<R: Runtime>(state: &PtyState<R>, session_id: u64, cols: u16, rows: u16) -> io::Result<()> {
+pub fn resize<R: Runtime>(
+    state: &PtyState<R>,
+    session_id: u64,
+    cols: u16,
+    rows: u16,
+) -> io::Result<()> {
     let mut guard = state.sessions.lock_unpoisoned();
     let session = guard.get_mut(&session_id).ok_or_else(|| {
         io::Error::new(
@@ -664,7 +676,10 @@ mod tests {
     fn kill_unknown_session_is_idempotent() {
         let state = empty_state();
         assert!(kill(&state, 42).is_ok(), "first kill should be a no-op");
-        assert!(kill(&state, 42).is_ok(), "second kill should also be a no-op");
+        assert!(
+            kill(&state, 42).is_ok(),
+            "second kill should also be a no-op"
+        );
     }
 
     #[test]
@@ -765,10 +780,9 @@ mod tests {
 
         let mut ids = std::collections::BTreeSet::new();
         for entry in agents {
-            let id = entry
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| panic!("every agent in src/agents.json needs an \"id\": {entry}"));
+            let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or_else(|| {
+                panic!("every agent in src/agents.json needs an \"id\": {entry}")
+            });
             assert_ne!(
                 id, "raw",
                 "the plain-shell mode \"raw\" must never be registered as an agent"
@@ -886,8 +900,19 @@ mod tests {
 
     #[test]
     fn decoder_bytewise_reconstructs_utf8() {
-        for case in ["hello", "café", "中文", "😀", "👨\u{200D}👩\u{200D}👧", "aé中😀"] {
-            assert_eq!(decode_bytewise(case.as_bytes()), case, "round-trip failed for {case:?}");
+        for case in [
+            "hello",
+            "café",
+            "中文",
+            "😀",
+            "👨\u{200D}👩\u{200D}👧",
+            "aé中😀",
+        ] {
+            assert_eq!(
+                decode_bytewise(case.as_bytes()),
+                case,
+                "round-trip failed for {case:?}"
+            );
         }
     }
 

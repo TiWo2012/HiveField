@@ -440,8 +440,14 @@ Run checks before committing:
 bun run build          # bundle frontend
 bunx tsc --noEmit      # typecheck
 bun test               # frontend tests + docs drift guards
+bun run check          # Biome lint + format check (no writes)
 (cd src-tauri && cargo test)  # Rust tests
+(cd src-tauri && cargo fmt --check)                          # Rust formatting
+(cd src-tauri && cargo clippy --all-targets -- -D warnings)  # Rust lints
 ```
+
+`bun run format` rewrites frontend files with Biome; `cargo fmt` does the
+same for the Rust sources.
 
 ---
 
@@ -586,8 +592,9 @@ Workspace persistence commands are keyed by the canonicalized launch directory
 
 1. Create a feature branch from `dev`
 2. Make your changes, commit early and often
-3. Run `bun run build`, `bunx tsc --noEmit`, `bun test`, and `cargo test` in
-   `src-tauri/` before opening a PR
+3. Run `bun run build`, `bunx tsc --noEmit`, `bun test`, `bun run check`, and
+   `cargo test` / `cargo fmt --check` / `cargo clippy` in `src-tauri/` before
+   opening a PR
 4. Open a pull request against `dev`
 
 See [AGENTS.md](AGENTS.md) for agent workflow conventions used in this repo.

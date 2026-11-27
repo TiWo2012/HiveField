@@ -6,21 +6,27 @@
  */
 
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { matchesKeybind, type KeybindAction } from "./keybinds";
-import { getSettings, updateSettings, FONT_SIZE_MAX, FONT_SIZE_MIN } from "./settings";
-import { toggleSettings } from "./settings-ui";
-import { activeSessionEntry, addPanelWithMode, cycleTab, movePaneFocus, toggleFullscreen } from "./sessions";
-import { renamePanel } from "./titles";
-import { openSearch, isSearchOpen } from "./search";
-import { isPaletteOpen } from "./palette";
-import { isContextMenuOpen } from "./context-menu";
-import { switchToWorkspace } from "./sidebar";
-import { openNewWindow } from "./windows";
-import { defaultMode } from "./modes";
 import { RAW_MODE } from "./agents";
-import { openDirectory } from "./open-directory";
-import { getApi } from "./state";
 import { toggleBroadcast } from "./broadcast";
+import { isContextMenuOpen } from "./context-menu";
+import { type KeybindAction, matchesKeybind } from "./keybinds";
+import { defaultMode } from "./modes";
+import { openDirectory } from "./open-directory";
+import { isPaletteOpen } from "./palette";
+import { isSearchOpen } from "./search";
+import {
+  activeSessionEntry,
+  addPanelWithMode,
+  cycleTab,
+  movePaneFocus,
+  toggleFullscreen,
+} from "./sessions";
+import { FONT_SIZE_MAX, FONT_SIZE_MIN, getSettings, updateSettings } from "./settings";
+import { toggleSettings } from "./settings-ui";
+import { switchToWorkspace } from "./sidebar";
+import { getApi } from "./state";
+import { renamePanel } from "./titles";
+import { openNewWindow } from "./windows";
 
 /** Bump the global terminal font size by `delta` (persisted in settings). */
 export function zoomBy(delta: number): void {
@@ -33,8 +39,7 @@ export function setupKeyboard() {
   const settingsOpen = () => document.querySelector(".settings-backdrop") !== null;
   // While the search bar or command palette is up, keystrokes belong to their
   // inputs, so the global shortcuts below must not fire.
-  const uiOpen = () =>
-    settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
+  const uiOpen = () => settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
 
   // All app shortcuts dispatch from the configured keybinds (Settings →
   // Keybinds). Bubble phase is fine for these combos: they are not printable
@@ -96,9 +101,7 @@ export function setupKeyboard() {
       const selection = activeSessionEntry()?.terminal.getSelection() ?? "";
       if (selection) {
         e.preventDefault();
-        void writeText(selection).catch((err) =>
-          console.error("clipboard write failed", err)
-        );
+        void writeText(selection).catch((err) => console.error("clipboard write failed", err));
       }
       // Without a selection the key is left alone and falls through to the
       // shell, matching other terminals.
@@ -186,6 +189,6 @@ export function setupKeyboard() {
         return;
       }
     },
-    true
+    true,
   );
 }

@@ -1,7 +1,7 @@
-import { fuzzyMatch, type FuzzyResult } from "./fuzzy";
-import { closeSearch, isSearchOpen } from "./search";
 import { closeContextMenu } from "./context-menu";
+import { type FuzzyResult, fuzzyMatch } from "./fuzzy";
 import { matchesKeybind } from "./keybinds";
+import { closeSearch, isSearchOpen } from "./search";
 
 /**
  * Command palette: a fuzzy finder over open panes and app actions.
@@ -95,7 +95,9 @@ function highlightLabel(label: string, indices: number[]): string {
 function setActive(index: number): void {
   const rows = list.querySelectorAll<HTMLElement>(".palette-item");
   activeIndex = Math.max(0, Math.min(index, rows.length - 1));
-  rows.forEach((row, i) => row.classList.toggle("active", i === activeIndex));
+  rows.forEach((row, i) => {
+    row.classList.toggle("active", i === activeIndex);
+  });
   list.querySelector<HTMLElement>(".palette-item.active")?.scrollIntoView({ block: "nearest" });
 }
 
@@ -279,7 +281,7 @@ export function initPalette(ctx: PaletteContext): void {
       if (open) closePalette();
       else openPalette();
     },
-    true
+    true,
   );
 }
 
@@ -309,10 +311,7 @@ export function openPalette(): void {
  * override applies to this opening only; the next plain `openPalette()` shows
  * the full app item list again.
  */
-export function openPaletteWith(
-  getItems: () => PaletteItem[],
-  placeholder?: string
-): void {
+export function openPaletteWith(getItems: () => PaletteItem[], placeholder?: string): void {
   transientItems = getItems;
   transientPlaceholder = placeholder ?? null;
   openPalette();

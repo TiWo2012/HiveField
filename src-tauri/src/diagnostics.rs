@@ -109,9 +109,7 @@ fn collect(settings: &Value, log_dir: Result<PathBuf, String>) -> Value {
         git_repo: git_repo.map(|p| p.to_string_lossy().into_owned()),
         git_commit,
         worktree_base_dir: worktree_base_dir(settings),
-        log_file: or_error(
-            log_dir.map(|d| d.join(LOG_FILE_NAME).to_string_lossy().into_owned()),
-        ),
+        log_file: or_error(log_dir.map(|d| d.join(LOG_FILE_NAME).to_string_lossy().into_owned())),
     }
     .to_json()
 }
@@ -162,8 +160,7 @@ mod tests {
             git_repo: Some("/home/u/projects/foo".to_string()),
             git_commit: Some("abc123".to_string()),
             worktree_base_dir: "/tmp".to_string(),
-            log_file: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log"
-                .to_string(),
+            log_file: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log".to_string(),
         }
     }
 
@@ -195,7 +192,10 @@ mod tests {
         assert_eq!(blob["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(blob["os"], std::env::consts::OS);
         assert_eq!(blob["arch"], std::env::consts::ARCH);
-        assert_eq!(blob["settingsSchemaVersion"], json!(SETTINGS_SCHEMA_VERSION));
+        assert_eq!(
+            blob["settingsSchemaVersion"],
+            json!(SETTINGS_SCHEMA_VERSION)
+        );
     }
 
     #[test]

@@ -6,12 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  DEFAULT_THEME_ID,
-  THEMES,
-  getTheme,
-  type ColorScheme,
-} from "./themes";
+import { type ColorScheme, DEFAULT_THEME_ID, getTheme, THEMES } from "./themes";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 /** xterm's selectionBackground defaults to `${foreground}33` (alpha suffix). */

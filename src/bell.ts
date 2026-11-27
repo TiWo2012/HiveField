@@ -5,6 +5,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Terminal } from "@xterm/xterm";
 import { getSettings } from "./settings";
 import {
   isPanelActive,
@@ -14,7 +15,6 @@ import {
   sessions,
   terminalSessions,
 } from "./state";
-import type { Terminal } from "@xterm/xterm";
 
 /** Last time a bell notification was shown (bursts of BELs must not spam). */
 let lastBellNotifyAt = 0;
@@ -31,7 +31,10 @@ let bellAudioCtx: AudioContext | null = null;
  */
 function playBellSound(): void {
   try {
-    const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+    const win = window as unknown as {
+      AudioContext?: typeof AudioContext;
+      webkitAudioContext?: typeof AudioContext;
+    };
     const Ctor = win.AudioContext ?? win.webkitAudioContext;
     if (!Ctor) return;
     bellAudioCtx ??= new Ctor();
@@ -44,7 +47,10 @@ function playBellSound(): void {
     out.gain.setValueAtTime(0.35, now);
     out.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
     out.connect(ctx.destination);
-    for (const [freq, amp] of [[880, 1], [1760, 0.35]] as const) {
+    for (const [freq, amp] of [
+      [880, 1],
+      [1760, 0.35],
+    ] as const) {
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.value = freq;
@@ -85,9 +91,7 @@ export function handleBell(terminal: Terminal): void {
   // title in the re-keyed panel status.
   const title =
     entry?.panel?.title ??
-    (sessionId !== undefined
-      ? panelStatus.get(parkedKeyFor(sessionId))?.baseTitle
-      : undefined);
+    (sessionId !== undefined ? panelStatus.get(parkedKeyFor(sessionId))?.baseTitle : undefined);
   invoke("notify_desktop", {
     title: "Terminal bell",
     body: `“${title ?? "Terminal"}” rang`,

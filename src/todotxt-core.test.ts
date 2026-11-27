@@ -8,9 +8,9 @@ import {
   addTask,
   parseLine,
   serializeTask,
+  type TodoTask,
   todayStr,
   toggleTask,
-  type TodoTask,
 } from "./todotxt-core";
 
 describe("parseLine", () => {

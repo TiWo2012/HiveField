@@ -661,7 +661,7 @@ pub struct UpdateDone {
 /// must not block the webview's IPC thread.
 #[tauri::command]
 pub async fn updater_check() -> Result<UpdateInfo, String> {
-    tauri::async_runtime::spawn_blocking(|| check_blocking())
+    tauri::async_runtime::spawn_blocking(check_blocking)
         .await
         .map_err(|e| format!("update check task failed: {e}"))?
 }
@@ -765,9 +765,8 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
             .get_to_file(&asset.url, &archive_path, move |percent| {
                 let _ = app.emit("updater://progress", UpdateProgress { percent, total });
             })
-            .map_err(|e| {
+            .inspect_err(|_| {
                 let _ = fs::remove_file(&archive_path);
-                e
             })?;
     }
 

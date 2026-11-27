@@ -127,7 +127,9 @@ pub fn new_window(
         builder = builder.menu(menu);
     }
 
-    let window = builder.build().map_err(|e| format!("failed to create window: {e}"))?;
+    let window = builder
+        .build()
+        .map_err(|e| format!("failed to create window: {e}"))?;
 
     if let Some(dir) = launch_dir {
         window.state::<WindowState>().register(&label, dir);
@@ -139,9 +141,7 @@ pub fn new_window(
 /// its registered cwd when it has one (an extra window opened on a project),
 /// otherwise the process working directory (the main window).
 pub fn window_cwd<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Option<PathBuf> {
-    window
-        .state::<WindowState>()
-        .cwd_for(window.label())
+    window.state::<WindowState>().cwd_for(window.label())
 }
 
 #[cfg(test)]
