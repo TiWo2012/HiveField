@@ -125,10 +125,10 @@ README's update story is Linux-only in practice despite the platform badge.
 
 **Design.**
 - `test.yml`: make the backend job a matrix over `ubuntu-24.04`,
-  `macos-14` (arm64 runner), and `windows-latest`. The frontend job can stay
+  `macos-15` (arm64 runner), and `windows-latest`. The frontend job can stay
   Linux-only (pure TS, no platform code) — but running it on the matrix costs
   little.
-- `release.yml`: add `macos-14` and `windows-latest` build jobs that publish
+- `release.yml`: add `macos-15` and `windows-latest` build jobs that publish
   `hivefield-macos-{arch}.tar.gz` / `hivefield-windows-{arch}.exe` updater
   assets alongside the Linux ones. Unsigned macOS builds are fine to start
   (users right-click-open); note the notarization/signing gap in the README.
