@@ -19,6 +19,13 @@ a dirty lockfile. `.github/workflows/test.yml` runs
 `bun scripts/version.ts check` on every push, so a hand-edit that leaves one
 file behind fails CI instead of producing a mis-versioned release.
 
+The same check also compares the resolved Tauri Rust crates against their NPM
+counterparts (`tauri-plugin-dialog` vs `@tauri-apps/plugin-dialog`, and so on).
+The Tauri CLI refuses to bundle when they differ in major/minor, and that check
+only runs during `tauri build` — so catching it here keeps a dependency bump
+from breaking the release build. The NPM packages are pinned with `~` to the
+crate's minor for that reason; bump both sides together.
+
 Never edit the version by hand. Use the script:
 
 ```sh
