@@ -446,7 +446,7 @@ bun run check          # Biome lint + format check (no writes)
 (cd src-tauri && cargo clippy --all-targets -- -D warnings)  # Rust lints
 ```
 
-`bun run format` rewrites frontend files with Biome; `cargo fmt` does the
+`bun run format` rewrites TypeScript/CSS/JSON with Biome; `cargo fmt` does the
 same for the Rust sources.
 
 ---

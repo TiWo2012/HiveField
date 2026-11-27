@@ -50,7 +50,11 @@ body {
 }
 
 /* Active-tab underline accent (was the Catppuccin-specific ::after rule). */
-.dockview-theme-hivefield .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {
+.dockview-theme-hivefield
+  .dv-groupview.dv-active-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
   position: absolute;
   left: 0px;
   bottom: 0px;
@@ -60,7 +64,11 @@ body {
   background-color: var(--hf-accent);
   z-index: 999;
 }
-.dockview-theme-hivefield .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {
+.dockview-theme-hivefield
+  .dv-groupview.dv-inactive-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
   position: absolute;
   left: 0px;
   bottom: 0px;
@@ -1761,7 +1769,9 @@ body {
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .status-bar-toggle:hover {
@@ -1923,7 +1933,9 @@ body {
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 120ms ease, filter 120ms ease;
+  transition:
+    background 120ms ease,
+    filter 120ms ease;
 }
 
 .splash-resume:hover {
@@ -2031,7 +2043,9 @@ body {
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 .splash-action:hover {
@@ -2063,7 +2077,9 @@ body {
   gap: 12px;
   padding: 10px 14px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 .splash-project:hover,
@@ -2118,7 +2134,9 @@ body {
   font-family: inherit;
   font-size: 12px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .project-forget:hover {

@@ -47,7 +47,7 @@ jobs:
       # Biome covers formatting, import ordering and lint rules in one pass.
       # Fail on warnings too so a new `!`/unused-var slip cannot accumulate.
       - name: Lint + format check (Biome)
-        run: bunx biome check --error-on-warnings src
+        run: bunx biome check --error-on-warnings .
 
       - name: Frontend unit tests + docs-drift guards
         run: bun test
