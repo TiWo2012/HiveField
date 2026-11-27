@@ -104,6 +104,10 @@ const OSC133_RE = /\x1b\]133;([ABCD])(?:[^\x07\x1b]*)(?:\x07|\x1b\\)/g;
  * offset, silently missing markers at the beginning of the chunk.
  */
 export function analyzeOutput(data: string): { markers: string[]; text: string } {
+  // Fast path: the overwhelmingly common case is ordinary text with no shell
+  // integration markers. Skip the regex scan (and the string slices) then.
+  if (!data.includes("\x1b]133;")) return { markers: [], text: data };
+
   const markers: string[] = [];
   let text = "";
   let last = 0;

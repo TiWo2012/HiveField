@@ -65,6 +65,10 @@ export function renderTitle(panelId: string): void {
 export function setBaseTitle(panelId: string, title: string): void {
   const st = panelStatus.get(panelId);
   if (!st) return;
+  // Programs often rewrite the same OSC title on every render (spinners,
+  // progress indicators). Skip the tab/sidebar/status-bar re-render when
+  // nothing actually changed.
+  if (st.baseTitle === title) return;
   st.baseTitle = title;
   renderTitle(panelId);
 }
@@ -83,33 +87,71 @@ export function clearIndicator(panelId: string): void {
   setIndicator(panelId, "");
 }
 
+/**
+ * Deadlines for the per-panel quiet timers. A key's timer is armed once and
+ * then re-checks its deadline when it fires, instead of clearTimeout +
+ * setTimeout on every output chunk. With several terminals streaming output,
+ * re-arming two timers per chunk dominated the event handler even though only
+ * the last chunk in a quiet window matters.
+ */
+const idleDeadlines = new Map<string, number>();
+const notifyDeadlines = new Map<string, number>();
+
+/** Schedule `onElapsed` for `key` unless it is already scheduled; move its deadline. */
+function armQuietTimer(
+  key: string,
+  delayMs: number,
+  deadlines: Map<string, number>,
+  timers: Map<string, ReturnType<typeof setTimeout>>,
+  onElapsed: () => void
+): void {
+  deadlines.set(key, Date.now() + delayMs);
+  if (timers.has(key)) return;
+  const check = () => {
+    const deadline = deadlines.get(key);
+    if (deadline === undefined) {
+      timers.delete(key);
+      return;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      timers.set(key, setTimeout(check, remaining));
+      return;
+    }
+    deadlines.delete(key);
+    timers.delete(key);
+    onElapsed();
+  };
+  timers.set(key, setTimeout(check, delayMs));
+}
+
+function clearQuietTimer(
+  key: string,
+  deadlines: Map<string, number>,
+  timers: Map<string, ReturnType<typeof setTimeout>>
+): void {
+  deadlines.delete(key);
+  const t = timers.get(key);
+  if (t !== undefined) {
+    clearTimeout(t);
+    timers.delete(key);
+  }
+}
+
 /** After activity, mark the tab "done" once it stays quiet for a while. */
 export function armIdle(panelId: string): void {
-  clearIdle(panelId);
-  idleTimers.set(
-    panelId,
-    setTimeout(() => {
-      idleTimers.delete(panelId);
-      setIndicator(panelId, INDICATOR_DONE);
-    }, ACTIVITY_IDLE_MS)
+  armQuietTimer(panelId, ACTIVITY_IDLE_MS, idleDeadlines, idleTimers, () =>
+    setIndicator(panelId, INDICATOR_DONE)
   );
 }
 
 export function clearIdle(panelId: string): void {
-  const t = idleTimers.get(panelId);
-  if (t !== undefined) {
-    clearTimeout(t);
-    idleTimers.delete(panelId);
-  }
+  clearQuietTimer(panelId, idleDeadlines, idleTimers);
 }
 
 /** Cancel any pending agent-done notification timer for a panel. */
 export function clearNotify(panelId: string): void {
-  const t = notifyTimers.get(panelId);
-  if (t !== undefined) {
-    clearTimeout(t);
-    notifyTimers.delete(panelId);
-  }
+  clearQuietTimer(panelId, notifyDeadlines, notifyTimers);
 }
 
 /**
@@ -149,13 +191,8 @@ export function notifyAgentDone(panelId: string, entry: SessionEntry): void {
  * thinking pauses don't spam), treat it as done and notify.
  */
 export function armNotify(panelId: string, entry: SessionEntry): void {
-  clearNotify(panelId);
-  notifyTimers.set(
-    panelId,
-    setTimeout(() => {
-      notifyTimers.delete(panelId);
-      notifyAgentDone(panelId, entry);
-    }, NOTIFY_IDLE_MS)
+  armQuietTimer(panelId, NOTIFY_IDLE_MS, notifyDeadlines, notifyTimers, () =>
+    notifyAgentDone(panelId, entry)
   );
 }
 
