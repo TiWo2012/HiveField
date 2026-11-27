@@ -32,6 +32,7 @@ worktrees — all inside a tabbed, split-pane interface.
   - [Dictation](#dictation)
   - [Keybindings](#keybindings)
   - [Configuration](#configuration)
+  - [Diagnostics](#diagnostics)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Development](#development)
@@ -115,6 +116,7 @@ PATH change to take effect.
 | `HF_VERSION` | latest release | Pin a release tag, e.g. `v0.2.0` |
 | `HF_INSTALL_DIR` | `%LOCALAPPDATA%\hivefield\bin` | Install elsewhere |
 | `HF_NO_PATH` | unset | Set to `1` to skip the PATH update |
+| `HF_NO_SHORTCUT` | unset | Set to `1` to skip the Start Menu shortcut |
 
 Prefer an installer? Grab the **NSIS setup** (`.exe`) or **MSI** package from
 the [releases page](https://github.com/TiWo2012/HiveField/releases); the
@@ -131,11 +133,16 @@ installer ensures WebView2 is present if missing.
 
 - **Real PTY sessions** — your default `$SHELL` runs in a PTY, one per tab/pane
 - **Coding-agent launcher** — drag an agent from the sidebar into the terminal
-  area to open it as a split; `Ctrl+Shift+T` opens an agent as a tab
+  area to open it as a split; `Ctrl+Shift+T` opens a new tab with the default
+  agent
 - **Built-in agents** — opencode, pi, Codex, GitHub Copilot, Claude Code,
   Gemini CLI, Aider, Cursor, Amp, Qwen Code, Goose, Crush, Cody, OpenHands,
   an Editor mode that runs `$EDITOR`, and a todotxt mode for task management
 - **Raw shell sessions** — plain terminal with no agent auto-run, always available
+- **Broadcast input** (`Ctrl+Shift+B`) — mirror every keystroke and paste from
+  the active pane into every other visible pane in the workspace. Background
+  workspaces are never included. A status bar below the terminal area shows
+  the toggle and the active session while it is on
 - **Custom agents** — define your own in **Settings → Agents** with a name and
   full command line (e.g. `opencode --model gpt-5`); they appear in the
   sidebar, palette, and context menu just like built-ins
@@ -153,7 +160,8 @@ installer ensures WebView2 is present if missing.
 ### Tabs, Splits & Navigation
 
 - **Tabbed & split-pane interface** via [dockview](https://dockview.dev)
-- `Ctrl+Shift+T` — new terminal tab
+- `Ctrl+Shift+T` — new tab with the default agent (a plain shell when no
+  default agent is configured)
 - **Drag a tab** out of the tab bar to split it into its own pane group
 - **Drag tabs between groups**, drag splitter handles to resize
 - `Ctrl+H` / `Ctrl+J` / `Ctrl+K` / `Ctrl+L` — move focus left/down/up/right
@@ -214,6 +222,10 @@ installer ensures WebView2 is present if missing.
   finished). Click to focus, hover to close
 - **Workspace info** — shows the launch directory, git branch, number of repo
   worktrees, and open session count
+- **Change summary toast** — when launched inside a git repository, hiveField
+  periodically compares the working tree with the commit it started from and
+  shows a dismissible toast with the files changed and added/deleted line counts
+  for each new change set
 - **Keyboard shortcut reminders** at the bottom of the sidebar
 - **Right-click context menu** — right-click a terminal pane for a styled,
   keyboard-navigable menu: New session (every agent + raw term), New split
@@ -250,6 +262,8 @@ installer ensures WebView2 is present if missing.
   clobbers `Ctrl+C`'s SIGINT
 - **Paste** (`Ctrl+Shift+V`) — pastes the clipboard into the active terminal
   (bracketed-paste aware)
+- **Copy on select** and **middle-click paste** — both enabled by default and
+  toggleable in **Settings → General → Mouse**
 - `Ctrl+V`/`Ctrl+C` keep their native webview behavior
 - **Hyperlinks** — URLs in output are underlined; `Ctrl+click` (Cmd+click on
   macOS) opens them in your system browser. Hover shows a hint tooltip
@@ -306,8 +320,16 @@ installer ensures WebView2 is present if missing.
 
 ### Dictation
 
-- Built-in dictation support with selectable engine (Whisper, Vosk, or cloud)
-- Configurable microphone selection in Settings
+- Hold `Ctrl+Alt+D` (rebindable) in the terminal to record; release to
+  transcribe and insert the text into the pane that was active when recording
+  started
+- **Cloud** engine works out of the box — sends audio to an OpenAI-compatible
+  `/audio/transcriptions` endpoint and reads `OPENAI_API_KEY` from the
+  environment
+- **Local Whisper** — requires a build with the `whisper` cargo feature; the
+  model downloads on first use (configurable model directory and URL, and
+  auto-download can be turned off)
+- Configurable microphone selection in Settings, including the system default
 
 ### Keybindings
 
@@ -328,13 +350,16 @@ with a `localStorage` fallback:
 
 | Category | Options |
 |----------|---------|
-| **Font** | Family, size (6–48), weight (normal/bold), line height, letter spacing, ligatures |
+| **Font** | Family, size (6–48), weights, line height, letter spacing, ligatures |
+| **Unicode** | Unicode 11 (full) or Unicode 6 (compat) width tables |
 | **Theme** | 11 built-in themes, background opacity |
+| **Rendering** | Cursor blink, minimum contrast ratio |
 | **Agents** | Show/hide built-in agents, define custom agents (name + command line), choose a default agent — or none, to open with an empty workspace |
 | **Worktrees** | Base directory for auto-created worktrees (default `/tmp`) |
+| **Mouse** | Copy on select, middle-click paste |
 | **Notifications** | Desktop notifications on/off, ntfy server/topic/token |
 | **Terminal Bell** | Sound on/off, notification on/off |
-| **Dictation** | Engine selection, microphone device |
+| **Dictation** | Cloud or local Whisper, microphone, model directory/URL, auto-download |
 | **Keybinds** | Remap any shortcut |
 | **Snippets** | Prompt snippet library |
 
@@ -388,14 +413,16 @@ The Rust backend (`src-tauri/src/`) owns:
 - **PTY lifecycle** — spawn, write, resize, kill (`pty.rs`)
 - **Window management** — multi-window support (`windows.rs`)
 - **Workspace persistence** — per-directory layout save/restore (`workspace.rs`)
-- **Git worktrees** — create/remove throwaway worktrees for agent isolation
-  (`git.rs`)
+- **Git integration** — throwaway worktrees for agent isolation plus
+  changes-since-launch summaries (`git.rs`)
 - **Settings** — read/write `settings.json` in the app config dir
   (`settings.rs`)
 - **Notifications** — desktop and ntfy push notifications (`notifications.rs`)
-- **Dictation** — Whisper, Vosk, and cloud speech-to-text engines
-  (`dictation.rs`)
+- **Dictation** — cloud speech-to-text plus optional local Whisper
+  (`dictation/`)
 - **Font discovery** — system font enumeration (`fonts.rs`)
+- **Diagnostics** — environment blob for bug reports and `--doctor`
+  (`diagnostics.rs`)
 
 ---
 
@@ -403,13 +430,15 @@ The Rust backend (`src-tauri/src/`) owns:
 
 - **Rust** (stable) with Tauri v2 system dependencies
   ([see Tauri docs](https://v2.tauri.app/start/prerequisites/))
-- **Node.js** 18+ with [Bun](https://bun.sh) (used as package manager and
-  bundler)
-- **Linux**: `libwebkit2gtk-4.1-dev`, `libxdo-dev`, `libssl-dev`,
-  `libayatana-appindicator3-dev`, `librsvg2-dev`, `libasound2-dev`, and
-  `libvosk.so` (for dictation; see CI workflow for download steps)
+- **Bun** — used as the package manager, bundler, and test runner
+- **Linux**: `build-essential`, `pkg-config`, `libwebkit2gtk-4.1-dev`,
+  `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,
+  and `libasound2-dev`
 - **macOS**: Xcode Command Line Tools
 - **Windows**: Microsoft Visual Studio C++ Build Tools, WebView2
+
+Local Whisper dictation is opt-in and adds `cmake` and a C++ compiler to the
+build. Without the `whisper` cargo feature, only cloud dictation is available.
 
 ---
 
@@ -422,6 +451,9 @@ bun install
 # Build the Rust backend
 (cd src-tauri && cargo build)
 
+# Optional: build with local Whisper dictation
+(cd src-tauri && cargo build --features whisper)
+
 # Launch in dev mode (hot-reload frontend, restart backend on changes)
 bun run tauri dev
 ```
@@ -431,6 +463,7 @@ Run checks before committing:
 ```sh
 bun run build          # bundle frontend
 bunx tsc --noEmit      # typecheck
+bun test               # frontend tests + docs drift guards
 (cd src-tauri && cargo test)  # Rust tests
 ```
 
@@ -443,6 +476,10 @@ bun run tauri build
 ```
 
 Outputs are in `src-tauri/target/release/bundle/`.
+
+Release builds ship without local Whisper by default; pass
+`--features whisper` to `tauri build` to include it (requires `cmake` and a
+C++ compiler).
 
 ---
 
@@ -507,39 +544,55 @@ format). The built-in updater, `install.sh`, and `install.ps1` download it and
 **refuse to install** when the asset has no entry or its digest does not
 match, so a corrupted or tampered download never replaces a working binary.
 
+---
+
 ## IPC Contract
 
-All commands/events are addressed by a `sessionId` (a number allocated by the
-backend for each spawned shell).
+PTY commands and events are addressed by a `sessionId` (a number allocated by
+the backend for each spawned shell). The other commands operate on a window's
+launch directory or on app-wide state.
 
-| Direction    | Name                       | Payload |
-|-------------|----------------------------|---------|
-| Rust → JS   | `pty://output`             | `{ sessionId, data }` (UTF-8 string) |
-| Rust → JS   | `pty://exit`               | `{ sessionId, code }` |
-| Rust → JS   | `updater://progress`       | `{ percent, total }` — update download progress |
-| Rust → JS   | `updater://done`           | `{ version, path }` — update installed |
-| JS → Rust   | `pty_spawn`                | `{ mode, cwd?, autorun? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"`; `cwd` optionally pins the start directory (e.g. a worktree); `autorun` overrides the command when the CLI binary differs from the mode id → returns `sessionId` |
-| JS → Rust   | `editor_command`           | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with per-platform fallback (`${EDITOR:-vi}` on unix, `%EDITOR%`/`notepad` on Windows) |
-| JS → Rust   | `pty_write`                | `{ sessionId, data }` |
-| JS → Rust   | `pty_resize`               | `{ sessionId, cols, rows }` |
-| JS → Rust   | `pty_kill`                 | `{ sessionId }` |
-| JS → Rust   | `workspace_cwd`            | () → canonicalized launch directory of the *invoking window* — keys the window's workspace persistence |
-| JS → Rust   | `window_new`               | `{ cwd? }` — open a new app window scoped to `cwd` (default: process cwd) → returns the new window's label |
-| JS → Rust   | `workspace_get`            | `{ cwd }` → saved dockview layout (JSON) or `null` |
-| JS → Rust   | `workspace_set`            | `{ cwd, layout }` — persist the dockview layout |
-| JS → Rust   | `projects_list`            | () → recent projects: every cwd with a saved workspace as `{ cwd, lastOpened, exists }`, newest first |
-| JS → Rust   | `project_touch`            | `{ cwd }` — bump a project's `lastOpened` stamp without touching its saved layout |
-| JS → Rust   | `git_worktree_auto_create` | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir`. Called for every new agent session |
-| JS → Rust   | `git_worktree_remove`      | `{ path, force? }` — remove a worktree; `force` runs `--force` |
-| JS → Rust   | `git_worktrees`            | legacy listing command (kept for compatibility) |
-| JS → Rust   | `git_worktree_create`      | legacy named-branch creation command (kept for compatibility) |
-| JS → Rust   | `dir_exists`               | `{ path }` → whether the path exists (validates restored worktree paths) |
-| JS → Rust   | `open_url`                 | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
-| JS → Rust   | `notify_desktop`           | `{ title, body }` — show a native desktop notification |
-| JS → Rust   | `ntfy_send`                | `{ title, body }` — publish a push notification to the configured ntfy server/topic (no-op when disabled) |
-| JS → Rust   | `updater_check`            | () → latest release info from TiWo2012/HiveField (`{ currentVersion, latestVersion, publishedAt, changelog, htmlUrl, assetName, assetUrl, assetSize, installDir, updateAvailable }`) |
-| JS → Rust   | `updater_install`          | () → download the latest release and install it to the shared install dir; emits `updater://progress` / `updater://done` — returns `{ version, path }` |
-| JS → Rust   | `diagnostics`              | () → flat diagnostics blob for bug reports: `{ app, version, os, arch, installDir, launchDir, gitRepo, gitCommit, settingsSchemaVersion, worktreeBaseDir, dictationEngine, logFile }` (same data as `hivefield --doctor`) |
+| Direction | Name | Payload |
+|-----------|------|---------|
+| Rust → JS   | `pty://output`                      | `{ sessionId, data }` (UTF-8 string) |
+| Rust → JS   | `pty://exit`                        | `{ sessionId, code }` |
+| Rust → JS   | `menu://open-directory`, `menu://new-window` | no payload — the native File menu asks the focused window to act |
+| Rust → JS   | `updater://progress`                | `{ percent, total }` — update download progress |
+| Rust → JS   | `updater://done`                    | `{ version, path }` — update installed |
+| Rust → JS   | `dictation://status`                | `{ status, detail? }` — `idle`, `listening`, `transcribing`, `error` |
+| Rust → JS   | `dictation://result`                | `{ text, sessionId }` — sent to the window that started the dictation |
+| JS → Rust   | `pty_spawn`                         | `{ mode, cwd?, autorun?, cols?, rows? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"`; `cwd` optionally pins the start directory (e.g. a worktree); `autorun` overrides the command when the CLI binary differs from the mode id → returns `sessionId` |
+| JS → Rust   | `editor_command`                    | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with per-platform fallback (`${EDITOR:-vi}` on unix, `%EDITOR%`/`notepad` on Windows) |
+| JS → Rust   | `pty_write`                         | `{ sessionId, data }` |
+| JS → Rust   | `pty_resize`                        | `{ sessionId, cols, rows }` |
+| JS → Rust   | `pty_kill`                          | `{ sessionId }` |
+| JS → Rust   | `settings_get`                      | () → the stored `settings.json` as JSON (an empty object when none exists yet) |
+| JS → Rust   | `settings_set`                      | `{ settings }` — persist the full settings object |
+| JS → Rust   | `workspace_cwd`                     | () → canonicalized launch directory of the *invoking window* — keys the window's workspace persistence |
+| JS → Rust   | `window_new`                        | `{ cwd? }` — open a new app window scoped to `cwd` (default: process cwd) → returns the new window's label |
+| JS → Rust   | `workspace_get`                     | `{ cwd }` → saved dockview layout (JSON) or `null` |
+| JS → Rust   | `workspace_set`                     | `{ cwd, layout }` — persist the dockview layout (`null` clears it) |
+| JS → Rust   | `projects_list`                     | () → recent projects: every cwd with a saved workspace as `{ cwd, lastOpened, exists }`, newest first |
+| JS → Rust   | `project_touch`                     | `{ cwd }` — bump a project's `lastOpened` stamp without touching its saved layout |
+| JS → Rust   | `git_worktree_auto_create`          | `{ name, baseDir }` → `{ path, branch }` — sanitize `name` into a branch, add a timestamp suffix, and check it out under `baseDir`. Called for every new agent session |
+| JS → Rust   | `git_worktree_remove`               | `{ path, force? }` — remove a worktree; `force` runs `--force` |
+| JS → Rust   | `git_worktrees`                     | legacy listing command (kept for compatibility) |
+| JS → Rust   | `git_worktree_create`               | legacy named-branch creation command (kept for compatibility) |
+| JS → Rust   | `git_diff_report`                   | () → `{ changed, insertions, deletions }` since launch, or `null` when not in a repo; each change set is reported once |
+| JS → Rust   | `dir_exists`                        | `{ path }` → whether the path exists (validates restored worktree paths) |
+| JS → Rust   | `file_read`                         | `{ path }` → UTF-8 file contents (used by the todo.txt panel) |
+| JS → Rust   | `file_write`                        | `{ path, content }` — overwrite or create a UTF-8 file |
+| JS → Rust   | `open_url`                          | `{ url }` — open `http`/`https`/`mailto` URLs in the system browser |
+| JS → Rust   | `list_system_fonts`                 | () → sorted, deduplicated system font family names |
+| JS → Rust   | `notify_desktop`                    | `{ title, body }` — show a native desktop notification |
+| JS → Rust   | `ntfy_send`                         | `{ title, body }` — publish a push notification to the configured ntfy server/topic (no-op when disabled) |
+| JS → Rust   | `dictation_devices`                 | () → available microphones as `{ id, name, isDefault }`, default first |
+| JS → Rust   | `dictation_start`                   | `{ engine?, device?, sessionId? }` — start capture; `engine` is `"whisper"` or `"cloud"`, `device` is an id from `dictation_devices`; returns quickly while a model downloads or loads |
+| JS → Rust   | `dictation_stop`                    | () — stop capture, transcribe, and emit `dictation://result` |
+| JS → Rust   | `dictation_status`                  | () → `{ status, detail? }` |
+| JS → Rust   | `updater_check`                     | () → latest release info from TiWo2012/HiveField (`{ currentVersion, latestVersion, publishedAt, changelog, htmlUrl, assetName, assetUrl, assetSize, installDir, updateAvailable }`) |
+| JS → Rust   | `updater_install`                   | () → download the latest release and install it to the shared install dir; emits `updater://progress` / `updater://done` — returns `{ version, path }` |
+| JS → Rust   | `diagnostics`                       | () → flat diagnostics blob for bug reports: `{ app, version, os, arch, installDir, launchDir, gitRepo, gitCommit, settingsSchemaVersion, worktreeBaseDir, dictationEngine, logFile }` (same data as `hivefield --doctor`) |
 
 Workspace persistence commands are keyed by the canonicalized launch directory
 (`cwd`), not by session.
@@ -548,11 +601,11 @@ Workspace persistence commands are keyed by the canonicalized launch directory
 
 ## Contributing
 
-1. Create a feature branch from `master`
+1. Create a feature branch from `dev`
 2. Make your changes, commit early and often
-3. Run `bun run build`, `bunx tsc --noEmit`, and `cargo test` in `src-tauri/`
-   before opening a PR
-4. Open a pull request against `master`
+3. Run `bun run build`, `bunx tsc --noEmit`, `bun test`, and `cargo test` in
+   `src-tauri/` before opening a PR
+4. Open a pull request against `dev`
 
 See [AGENTS.md](AGENTS.md) for agent workflow conventions used in this repo.
 
@@ -560,4 +613,4 @@ See [AGENTS.md](AGENTS.md) for agent workflow conventions used in this repo.
 
 ## License
 
-[MIT](LICENSE) (TODO: add license file)
+[GPL-2.0](LICENSE) — GNU General Public License, version 2.
