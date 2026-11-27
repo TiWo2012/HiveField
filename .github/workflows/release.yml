@@ -87,7 +87,7 @@ jobs:
       dry_run: ${{ steps.vars.outputs.dry_run }}
       prerelease: ${{ steps.vars.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -203,7 +203,7 @@ jobs:
     env:
       HF_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
@@ -274,7 +274,7 @@ jobs:
     env:
       HF_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
@@ -325,7 +325,7 @@ jobs:
     env:
       HF_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
@@ -370,7 +370,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
