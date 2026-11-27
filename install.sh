@@ -15,6 +15,13 @@
 #   HF_INSTALL_DIR  directory to install into
 #                   (default: $HOME/.local/bin, created if missing)
 #
+# On Linux the installer also registers a .desktop menu entry (and app
+# icon) under $XDG_DATA_HOME (default ~/.local/share) so hiveField shows up
+# in the application launcher — see install_desktop_entry(). On macOS it
+# registers a minimal .app bundle in ~/Applications (Launchpad/Spotlight) —
+# see install_app_bundle(). Both are best-effort and rewritten on every
+# install/update.
+#
 # Prints where the binary was installed. Exits non-zero on any failure.
 set -e
 
@@ -33,6 +40,144 @@ install_dir() {
     else
         die "HOME is not set; set HF_INSTALL_DIR to choose an install location"
     fi
+}
+
+# Linux only: install the app icon (when the release ships one) and write a
+# .desktop menu entry so hiveField shows up in the application launcher. The
+# entry lives in $XDG_DATA_HOME/applications (default
+# $HOME/.local/share/applications) and the icon in the hicolor theme under
+# the same data dir — the standard user-local locations, no root needed.
+# Best-effort: a failure here must not undo a successful binary install.
+# Must mirror updater.rs `register_desktop_entry()` — same paths, same entry.
+install_desktop_entry() {
+    bin_path="$1"
+    stagedir="$2"
+
+    if [ -z "${XDG_DATA_HOME:-}" ] && [ -z "${HOME:-}" ]; then
+        return 1
+    fi
+    if [ -n "${XDG_DATA_HOME:-}" ]; then
+        data_home="$XDG_DATA_HOME"
+    else
+        data_home="$HOME/.local/share"
+    fi
+
+    # New releases ship hivefield.png in the tarball next to the binary;
+    # older releases / bare-binary assets have none, so fall back to a stock
+    # terminal icon in the entry.
+    icon_src=""
+    for candidate in "$stagedir/hivefield.png" "$stagedir/128x128.png"; do
+        [ -f "$candidate" ] && icon_src="$candidate" && break
+    done
+    if [ -z "$icon_src" ]; then
+        icon_src="$(find "$stagedir" -type f \( -name 'hivefield.png' -o -name '128x128.png' \) 2>/dev/null | head -n1)"
+    fi
+    if [ -n "$icon_src" ]; then
+        icon_dir="$data_home/icons/hicolor/128x128/apps"
+        mkdir -p "$icon_dir" || return 1
+        cp "$icon_src" "$icon_dir/hivefield.png" || return 1
+        icon_name="hivefield"
+        # Refresh icon caches when the tooling exists (best-effort) so the
+        # launcher picks the icon up immediately.
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t "$data_home/icons/hicolor" >/dev/null 2>&1 || true
+        fi
+    else
+        icon_name="utilities-terminal"
+    fi
+
+    apps_dir="$data_home/applications"
+    mkdir -p "$apps_dir" || return 1
+    desktop_file="$apps_dir/hivefield.desktop"
+    {
+        printf '[Desktop Entry]\n'
+        printf 'Type=Application\n'
+        printf 'Version=1.0\n'
+        printf 'Name=hiveField Terminal\n'
+        printf 'GenericName=Terminal\n'
+        printf 'Comment=A desktop terminal for coding-agent workflows\n'
+        printf 'Exec="%s"\n' "$bin_path"
+        printf 'Icon=%s\n' "$icon_name"
+        printf 'Terminal=false\n'
+        printf 'Categories=TerminalEmulator;System;Utility;\n'
+        printf 'Keywords=terminal;shell;console;\n'
+        printf 'StartupNotify=true\n'
+    } > "$desktop_file" || return 1
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+    fi
+    say "Registered a desktop menu entry ($desktop_file)"
+}
+
+# macOS only: create/refresh a minimal .app bundle in $HOME/Applications so
+# hiveField shows up in Launchpad, Spotlight, and Finder's Applications. The
+# bundle wraps a copy of the installed binary plus an Info.plist (the
+# release tarball optionally ships the icon as hivefield.icns). It is
+# rewritten on every install/update so it always runs the current binary.
+# Best-effort: a failure here must not undo a successful binary install.
+# Must mirror updater.rs `register_app_bundle()` — same paths, same plist.
+install_app_bundle() {
+    bin_path="$1"
+    stagedir="$2"
+    version="${3#v}"
+
+    [ -n "${HOME:-}" ] || return 1
+    apps_dir="$HOME/Applications"
+    app_dir="$apps_dir/hiveField Terminal.app"
+    tmp_app="$apps_dir/hiveField Terminal.app.new.$$"
+
+    mkdir -p "$apps_dir" || return 1
+    rm -rf "$tmp_app"
+    mkdir -p "$tmp_app/Contents/MacOS" "$tmp_app/Contents/Resources" || { rm -rf "$tmp_app"; return 1; }
+
+    cp "$bin_path" "$tmp_app/Contents/MacOS/hivefield" || { rm -rf "$tmp_app"; return 1; }
+    chmod +x "$tmp_app/Contents/MacOS/hivefield" 2>/dev/null || true
+
+    # New releases ship hivefield.icns in the tarball; older releases have
+    # none, in which case Launchpad shows a generic icon.
+    icns=""
+    for candidate in "$stagedir/hivefield.icns" "$stagedir/icon.icns"; do
+        [ -f "$candidate" ] && icns="$candidate" && break
+    done
+    if [ -z "$icns" ]; then
+        icns="$(find "$stagedir" -type f -name '*.icns' 2>/dev/null | head -n1)"
+    fi
+    if [ -n "$icns" ]; then
+        cp "$icns" "$tmp_app/Contents/Resources/icon.icns" || true
+    fi
+
+    # Finder/About show the short version (drop the "-build.N" suffix);
+    # CFBundleVersion carries the full tag so Launchpad can tell builds apart.
+    short_version="${version%%-build.*}"
+    cat > "$tmp_app/Contents/Info.plist" <<EOF || { rm -rf "$tmp_app"; return 1; }
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>hiveField</string>
+  <key>CFBundleDisplayName</key>
+  <string>hiveField Terminal</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.hivefield.terminal</string>
+  <key>CFBundleExecutable</key>
+  <string>hivefield</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>$version</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$short_version</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+</dict>
+</plist>
+EOF
+
+    # Swap the new bundle in (rename over a non-empty dir fails on unix, so
+    # drop the old one first; Launchpad re-indexes ~/Applications).
+    rm -rf "$app_dir" && mv "$tmp_app" "$app_dir" || { rm -rf "$tmp_app"; return 1; }
+    say "Registered the app in Launchpad ($app_dir)"
 }
 
 # Map `uname` output to the OS/arch keys used in release asset names.
@@ -70,6 +215,62 @@ resolve_version() {
     say "Latest release: $version"
 }
 
+# Print the SHA-256 digest of a file, using whichever standard tool the host
+# provides. Runs on Linux (sha256sum) and macOS (shasum); openssl is a last
+# resort. Fails when no hasher is available so verification can never be
+# silently skipped.
+sha256_file() {
+    file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | cut -d' ' -f1
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$file" | sed -E 's/^.*= //'
+    else
+        return 1
+    fi
+}
+
+# Verify a downloaded asset against the release's `checksums.txt`. The file is
+# generated by .github/workflows/release.yml in `sha256sum` format
+# (`<hex>  <name>`), one line per published asset. A missing checksums file,
+# a missing entry for the asset, or a digest mismatch is fatal: installers
+# must never run an unverified binary (see docs/INFRA_PLAN.md §5). Both the
+# built-in updater (updater.rs `verify_checksum`) and install.ps1 implement
+# the same contract.
+verify_checksum() {
+    asset_file="$1"
+    asset_name="$2"
+    checksums="$tmpdir/checksums.txt"
+
+    say "Verifying SHA-256 checksum for $asset_name…"
+    if ! curl -fsSL --max-time 60 \
+        "https://github.com/$REPO/releases/download/$version/checksums.txt" \
+        -o "$checksums" 2>/dev/null; then
+        die "release $version does not publish checksums.txt; refusing to install an unverified binary"
+    fi
+
+    expected="$(awk -v name="$asset_name" '
+        NF >= 2 {
+            file = $2
+            sub(/^\*/, "", file)
+            if (file == name) {
+                print tolower($1)
+                exit
+            }
+        }
+    ' "$checksums")"
+    [ -n "$expected" ] || die "checksums.txt for release $version has no entry for $asset_name; refusing to install"
+
+    actual="$(sha256_file "$asset_file" | tr 'A-Z' 'a-z')" \
+        || die "no SHA-256 tool available (need sha256sum, shasum, or openssl); refusing to install"
+    if [ "$actual" != "$expected" ]; then
+        die "SHA-256 mismatch for $asset_name (expected $expected, got $actual); refusing to install"
+    fi
+    say "Checksum verified."
+}
+
 # Asset candidates for this platform, in order of preference. Must mirror
 # updater.rs `select_asset()`: canonical tarball, bare platform binary, then
 # the plain `hivefield` binary older releases publish.
@@ -102,6 +303,10 @@ download_and_install() {
     done
     [ -n "$asset" ] || die "no downloadable asset for $os_key-$arch in release $version"
 
+    # Verify the download against the release's published SHA-256 before it is
+    # extracted or installed.
+    verify_checksum "$tmpdir/$asset" "$asset"
+
     # Extract tarballs (the canonical linux/macos asset); a raw binary is
     # used as-is.
     case "$asset" in
@@ -125,6 +330,20 @@ download_and_install() {
     [ "$os_key" = "windows" ] && dest="$INSTALL_DIR/$BIN_NAME.exe"
     cp "$bin" "$dest" || die "failed to install to $dest"
     chmod +x "$dest" 2>/dev/null || true
+
+    # Linux: register a .desktop menu entry so the app shows up in the
+    # application launcher (best-effort, see install_desktop_entry).
+    if [ "$os_key" = "linux" ]; then
+        install_desktop_entry "$dest" "$tmpdir" || \
+            say "warning: could not register a desktop menu entry — hivefield is still installed and runnable"
+    fi
+
+    # macOS: register a Launchpad .app bundle (best-effort, see
+    # install_app_bundle).
+    if [ "$os_key" = "macos" ]; then
+        install_app_bundle "$dest" "$tmpdir" "$version" || \
+            say "warning: could not register the app in Launchpad — hivefield is still installed and runnable"
+    fi
 
     say ""
     say "Installed hiveField $version to $dest"

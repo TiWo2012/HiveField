@@ -109,8 +109,15 @@ pub fn new_window(
         .inner_size(960.0, 600.0)
         .min_inner_size(400.0, 300.0)
         .resizable(true)
-        .transparent(true)
         .focused(true);
+    // `WebviewWindowBuilder::transparent` is cfg-gated off on macOS (it only
+    // exists behind the `macos-private-api` feature there), so only request
+    // transparency on Windows/Linux. The main window's config asks for it too
+    // and macOS simply ignores it, so this keeps extra windows consistent.
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.transparent(true);
+    }
 
     // On Windows/Linux the menu is per-window, so a programmatically created
     // window does not inherit the app menu automatically — attach it so File →
@@ -120,7 +127,9 @@ pub fn new_window(
         builder = builder.menu(menu);
     }
 
-    let window = builder.build().map_err(|e| format!("failed to create window: {e}"))?;
+    let window = builder
+        .build()
+        .map_err(|e| format!("failed to create window: {e}"))?;
 
     if let Some(dir) = launch_dir {
         window.state::<WindowState>().register(&label, dir);
@@ -132,9 +141,7 @@ pub fn new_window(
 /// its registered cwd when it has one (an extra window opened on a project),
 /// otherwise the process working directory (the main window).
 pub fn window_cwd<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Option<PathBuf> {
-    window
-        .state::<WindowState>()
-        .cwd_for(window.label())
+    window.state::<WindowState>().cwd_for(window.label())
 }
 
 #[cfg(test)]

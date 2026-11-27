@@ -18,16 +18,16 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { type ContextMenuItem, showContextMenu } from "./context-menu";
+import { sessionModes } from "./modes";
 import { addPanelWithMode } from "./sessions";
 import { panelToSession } from "./state";
-import { showContextMenu, type ContextMenuItem } from "./context-menu";
-import { sessionModes } from "./modes";
 import {
   addTask as addTaskPure,
   parseTasks,
+  type TodoTask,
   tasksKey,
   toggleTask as toggleTaskPure,
-  type TodoTask,
 } from "./todotxt-core";
 
 /** Build the "Send task to agent" right-click submenu for a given task. */
@@ -59,8 +59,8 @@ function buildSendTaskMenu(taskText: string): ContextMenuItem[] {
             // …) run stdin in raw mode where Enter is \r; a bare \n
             // maps to shift+enter under the kitty keyboard protocol and
             // just inserts a newline instead of submitting.
-            invoke("pty_write", { sessionId, data: taskText + "\r" }).catch(
-              (err) => console.error("failed to write task to agent session", err)
+            invoke("pty_write", { sessionId, data: `${taskText}\r` }).catch((err) =>
+              console.error("failed to write task to agent session", err),
             );
           }, 3000);
         };
@@ -73,11 +73,7 @@ function buildSendTaskMenu(taskText: string): ContextMenuItem[] {
  * Toggle a task's completion: add/remove the `x ` prefix, set/clear the
  * completion date, and persist the file.
  */
-async function toggleTask(
-  tasks: TodoTask[],
-  index: number,
-  filePath: string
-): Promise<TodoTask[]> {
+async function toggleTask(tasks: TodoTask[], index: number, filePath: string): Promise<TodoTask[]> {
   toggleTaskPure(tasks, index);
   await writeTasks(tasks, filePath);
   return tasks;
@@ -86,11 +82,7 @@ async function toggleTask(
 /**
  * Add a new task at the end of the list and persist.
  */
-async function addTask(
-  tasks: TodoTask[],
-  text: string,
-  filePath: string
-): Promise<TodoTask[]> {
+async function addTask(tasks: TodoTask[], text: string, filePath: string): Promise<TodoTask[]> {
   addTaskPure(tasks, text);
   await writeTasks(tasks, filePath);
   return tasks;
@@ -98,9 +90,9 @@ async function addTask(
 
 /** Persist the current task list to the todo.txt file (best-effort). */
 async function writeTasks(tasks: TodoTask[], filePath: string): Promise<void> {
-  const content = tasks.map((t2) => t2.raw).join("\n") + "\n";
+  const content = `${tasks.map((t2) => t2.raw).join("\n")}\n`;
   await invoke("file_write", { path: filePath, content }).catch((err) =>
-    console.error("failed to write todo.txt", err)
+    console.error("failed to write todo.txt", err),
   );
 }
 
@@ -111,7 +103,7 @@ async function writeTasks(tasks: TodoTask[], filePath: string): Promise<void> {
 export async function setupTodoTxtPanel(
   element: HTMLElement,
   cwd: string,
-  onFocus: () => void
+  onFocus: () => void,
 ): Promise<void> {
   element.classList.add("todotxt-panel");
 
@@ -170,10 +162,7 @@ export async function setupTodoTxtPanel(
     desc.textContent = task.text || task.raw;
 
     // Highlight @contexts and +projects
-    const html = task.text.replace(
-      /(\+\w+|@\w+)/g,
-      '<span class="todotxt-tag">$1</span>'
-    );
+    const html = task.text.replace(/(\+\w+|@\w+)/g, '<span class="todotxt-tag">$1</span>');
     if (html !== task.text) desc.innerHTML = html;
 
     // Dates

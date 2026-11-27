@@ -13,6 +13,8 @@ import {
   DEFAULT_SETTINGS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  getPersistError,
+  getSettings,
   LETTER_SPACING_MAX,
   LETTER_SPACING_MIN,
   LINE_HEIGHT_MAX,
@@ -20,8 +22,6 @@ import {
   OPACITY_MAX,
   OPACITY_MIN,
   SETTINGS_SCHEMA_VERSION,
-  getPersistError,
-  getSettings,
   subscribePersistError,
   updateSettings,
 } from "./settings";
@@ -50,9 +50,7 @@ describe("settings schema versioning", () => {
     } as unknown as Partial<typeof DEFAULT_SETTINGS>);
     expect(getSettings().schemaVersion).toBe(3);
     // Unknown keys written by a newer app survive the round-trip.
-    expect(
-      (getSettings() as unknown as Record<string, unknown>).futureField
-    ).toBe("keep me");
+    expect((getSettings() as unknown as Record<string, unknown>).futureField).toBe("keep me");
   });
 
   test("a bogus version falls back to the current one", async () => {
@@ -105,14 +103,12 @@ describe("settings normalization", () => {
       cursorBlink: "yes",
       theme: 42,
       fontFamily: "",
-      dictationEngine: "off",
     } as never);
     const s = getSettings();
     expect(s.fontSize).toBe(DEFAULT_SETTINGS.fontSize);
     expect(s.cursorBlink).toBe(DEFAULT_SETTINGS.cursorBlink);
     expect(s.theme).toBe(DEFAULT_SETTINGS.theme);
     expect(s.fontFamily).toBe(DEFAULT_SETTINGS.fontFamily);
-    expect(s.dictationEngine).toBe("whisper");
   });
 
   test("an unknown theme id falls back to the default theme", async () => {

@@ -7,11 +7,9 @@ pub fn list_system_fonts() -> Vec<String> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
 
-    let families = db.faces().flat_map(|face| {
-        face.families
-            .iter()
-            .map(|(name, _)| name.clone())
-    });
+    let families = db
+        .faces()
+        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()));
 
     normalize(families)
 }

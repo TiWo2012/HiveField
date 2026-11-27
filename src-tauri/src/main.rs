@@ -15,5 +15,8 @@ fn main() {
         );
         return;
     }
+    // Install the panic hook before booting Tauri: a panic during startup gets
+    // the same payload + backtrace trail as one after the logger is ready.
+    hivefield_lib::install_panic_hook();
     hivefield_lib::run();
 }

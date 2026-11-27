@@ -15,9 +15,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["test"] }
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
+# Logger backend: writes a rotated file under the app log dir and (in debug
+# builds) to stderr. Initialized in lib.rs; the panic hook in logging.rs logs
+# through it.
+tauri-plugin-log = "2"
 portable-pty = "0.9"
 fontdb = "0.24.0"
 # Resolve the platform's config/data dirs without a running Tauri app, so
@@ -34,19 +39,17 @@ ureq = "3"
 # shell out. flate2 is already in the tree via other deps; tar is new.
 tar = "0.4"
 flate2 = "1"
-cpal = "0.18.1"
-rubato = "4.0.0"
-# whisper-rs is a binding to whisper.cpp and 0.16 is its newest crate release;
-# it pins a specific whisper.cpp revision, so bump deliberately — the bundled
-# binary format must stay compatible with the ggml-base.en.bin model.
-# Gated behind the `whisper` feature: when off, only cloud dictation is
-# available and the build does not need cmake or a C++ compiler.
-whisper-rs = { version = "0.16", optional = true }
+# SHA-256 verification of downloaded release assets against the release's
+# checksums.txt (see updater.rs verify_checksum).
+sha2 = "0.10"
 
 [features]
 default = []
-# Enable local Whisper transcription (requires cmake + C++ compiler to build whisper.cpp).
-whisper = ["dep:whisper-rs"]
+# Embed the Windows app manifest into test binaries (see build.rs). CI runs
+# `cargo test --lib --features test-manifest` so the --lib test harness gets
+# the Common-Controls v6 manifest and starts; enabling it only in tests keeps
+# normal builds (tauri dev / release) untouched.
+test-manifest = []
 
 [dev-dependencies]
 tempfile = "3"

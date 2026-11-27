@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatDiagnostics, type Diagnostics } from "./diagnostics";
+import { type Diagnostics, formatDiagnostics } from "./diagnostics";
 
 const sample: Diagnostics = {
   app: "hivefield",
@@ -12,7 +12,6 @@ const sample: Diagnostics = {
   gitCommit: "abc123",
   settingsSchemaVersion: 1,
   worktreeBaseDir: "/tmp",
-  dictationEngine: "whisper",
   logFile: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log",
 };
 
@@ -24,7 +23,7 @@ describe("formatDiagnostics", () => {
     expect(text).toContain("os: linux");
     expect(text).toContain("gitRepo: /home/u/projects/foo");
     expect(text).toContain(
-      "logFile: /home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log"
+      "logFile: /home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log",
     );
   });
 

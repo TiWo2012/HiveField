@@ -179,8 +179,12 @@ mod tests {
     #[test]
     fn two_cwds_are_stored_independently() {
         let (store, _dir) = temp_store();
-        store.set("/project/a", &json!({"tab": "a"})).expect("set A");
-        store.set("/project/b", &json!({"tab": "b"})).expect("set B");
+        store
+            .set("/project/a", &json!({"tab": "a"}))
+            .expect("set A");
+        store
+            .set("/project/b", &json!({"tab": "b"}))
+            .expect("set B");
         assert_eq!(store.get("/project/a"), json!({"tab": "a"}));
         assert_eq!(store.get("/project/b"), json!({"tab": "b"}));
     }
@@ -206,8 +210,12 @@ mod tests {
     #[test]
     fn list_returns_every_stored_cwd() {
         let (store, _dir) = temp_store();
-        store.set("/project/a", &json!({ "layout": 1 })).expect("set A");
-        store.set("/project/b", &json!({ "layout": 2 })).expect("set B");
+        store
+            .set("/project/a", &json!({ "layout": 1 }))
+            .expect("set A");
+        store
+            .set("/project/b", &json!({ "layout": 2 }))
+            .expect("set B");
         let mut cwds: Vec<String> = store.list().into_iter().map(|(c, _)| c).collect();
         cwds.sort();
         assert_eq!(cwds, vec!["/project/a", "/project/b"]);
@@ -224,7 +232,11 @@ mod tests {
             last_opened(&doc) > 0,
             "touch must stamp a lastOpened timestamp"
         );
-        assert_eq!(doc.get("current"), Some(&json!(2)), "layout must survive touch");
+        assert_eq!(
+            doc.get("current"),
+            Some(&json!(2)),
+            "layout must survive touch"
+        );
         // Touching an unknown cwd creates a bare entry.
         store.touch("/project/new").expect("touch new");
         assert!(last_opened(&store.get("/project/new")) > 0);
@@ -233,7 +245,9 @@ mod tests {
     #[test]
     fn last_opened_is_zero_for_bare_layouts() {
         let (store, _dir) = temp_store();
-        store.set("/project/a", &json!({ "grid": {}, "panels": {} })).expect("set");
+        store
+            .set("/project/a", &json!({ "grid": {}, "panels": {} }))
+            .expect("set");
         assert_eq!(last_opened(&store.get("/project/a")), 0);
     }
 }

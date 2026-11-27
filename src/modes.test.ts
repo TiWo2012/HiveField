@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { AGENTS, RAW_MODE } from "./agents";
-import { customs, defaultMode, DEFAULT_MODE, sessionModes } from "./modes";
+import { customs, DEFAULT_MODE, defaultMode, sessionModes } from "./modes";
 import { updateSettings } from "./settings";
 import {
   bumpPanelCounter,
@@ -22,10 +22,7 @@ describe("modes.ts (session-mode catalog)", () => {
 
   test("with default settings, every built-in agent plus raw is offered", () => {
     const modes = sessionModes();
-    expect(modes.map((m) => m.mode)).toEqual([
-      ...AGENTS.map((a) => a.id),
-      RAW_MODE,
-    ]);
+    expect(modes.map((m) => m.mode)).toEqual([...AGENTS.map((a) => a.id), RAW_MODE]);
     expect(modes[modes.length - 1]).toEqual({
       mode: RAW_MODE,
       label: "raw term",

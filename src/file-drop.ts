@@ -28,7 +28,7 @@ const rootToSessionId = new WeakMap<HTMLElement, () => number | undefined>();
  */
 export function registerTerminalRoot(
   root: HTMLElement,
-  getSessionId: () => number | undefined
+  getSessionId: () => number | undefined,
 ): void {
   rootToSessionId.set(root, getSessionId);
 }
@@ -53,7 +53,10 @@ export function shellQuote(path: string): string {
 
 /** Convert a list of dropped paths into a single shell-typed string. */
 function quotedPaths(paths: string[]): string {
-  return paths.filter((p) => p.length > 0).map(shellQuote).join(" ");
+  return paths
+    .filter((p) => p.length > 0)
+    .map(shellQuote)
+    .join(" ");
 }
 
 /** Convert a physical (device-pixel) position to CSS pixels. */
@@ -91,9 +94,9 @@ function showHint(root: HTMLElement | undefined): void {
 /** Move the highlight (and hint) onto the root under the pointer, or clear. */
 function highlightTarget(clientX: number, clientY: number): void {
   const root = terminalRootAt(clientX, clientY);
-  document
-    .querySelectorAll(`.${TARGET_CLASS}`)
-    .forEach((el) => el.classList.remove(TARGET_CLASS));
+  document.querySelectorAll(`.${TARGET_CLASS}`).forEach((el) => {
+    el.classList.remove(TARGET_CLASS);
+  });
   root?.classList.add(TARGET_CLASS);
   showHint(root);
 }
@@ -103,9 +106,7 @@ function highlightTarget(clientX: number, clientY: number): void {
  * write to when the drop lands outside any terminal pane (e.g. on the
  * sidebar) — normally the active session. Returns an unlisten function.
  */
-export async function initFileDrop(
-  fallback: () => number | undefined
-): Promise<() => void> {
+export async function initFileDrop(fallback: () => number | undefined): Promise<() => void> {
   return getCurrentWebview().onDragDropEvent((event) => {
     const { type } = event.payload;
     // Our own sidebar session drags are pure DOM drags and never reach here.
@@ -137,7 +138,7 @@ export async function initFileDrop(
     // at the cursor. Paths are already quoted, so no shell metacharacters
     // survive unescaped.
     invoke("pty_write", { sessionId, data }).catch((err) =>
-      console.error("failed to write dropped file paths", err)
+      console.error("failed to write dropped file paths", err),
     );
   });
 }

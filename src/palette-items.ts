@@ -6,13 +6,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { isKnownModeAll, modeIconAll } from "./agents";
-import { customs, defaultMode, DEFAULT_MODE, sessionModes } from "./modes";
-import { getSettings } from "./settings";
-import { openSettings, toggleSettings } from "./settings-ui";
-import { snippetPickerItems } from "./snippets";
-import { openSearch } from "./search";
 import { copyDiagnostics } from "./diagnostics";
+import type { KeybindAction } from "./keybinds";
+import { customs, DEFAULT_MODE, defaultMode, sessionModes } from "./modes";
+import { openDirectory } from "./open-directory";
 import { openPaletteWith, type PaletteItem } from "./palette";
+import { openSearch } from "./search";
 import {
   activeSessionEntry,
   addPanelWithMode,
@@ -22,17 +21,14 @@ import {
   shortLabel,
   toggleFullscreen,
 } from "./sessions";
+import { getSettings } from "./settings";
+import { openSettings, toggleSettings } from "./settings-ui";
+import { renameWorkspacePrompt, switchToWorkspace } from "./sidebar";
+import { snippetPickerItems } from "./snippets";
+import { getApi, isPanelActive, panelToSession, sessions } from "./state";
 import { renamePanel } from "./titles";
-import { switchToWorkspace, renameWorkspacePrompt } from "./sidebar";
 import { openNewWindow } from "./windows";
 import { getCurrentSlot, getWorkspaceSlots } from "./workspace";
-import type { KeybindAction } from "./keybinds";
-import {
-  getApi,
-  isPanelActive,
-  panelToSession,
-  sessions,
-} from "./state";
 
 export function buildPaletteItems(): PaletteItem[] {
   const kb = () => getSettings().keybinds;
@@ -41,18 +37,13 @@ export function buildPaletteItems(): PaletteItem[] {
   for (const panel of getApi().panels) {
     const params = panel.api.getParameters() as Record<string, unknown>;
     const mode =
-      typeof params.mode === "string" &&
-      isKnownModeAll(params.mode, customs())
+      typeof params.mode === "string" && isKnownModeAll(params.mode, customs())
         ? params.mode
         : DEFAULT_MODE;
     const sessionId = panelToSession.get(panel.id);
     const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
-    const cwd =
-      entry?.cwd ?? (typeof params.cwd === "string" ? params.cwd : undefined);
-    const detail = [
-      isPanelActive(panel.id) ? "active" : null,
-      cwd ? shortLabel(cwd) : null,
-    ]
+    const cwd = entry?.cwd ?? (typeof params.cwd === "string" ? params.cwd : undefined);
+    const detail = [isPanelActive(panel.id) ? "active" : null, cwd ? shortLabel(cwd) : null]
       .filter((part): part is string => part !== null)
       .join(" · ");
     items.push({
@@ -105,7 +96,7 @@ export function buildPaletteItems(): PaletteItem[] {
               const entry = activeSessionEntry();
               if (entry) entry.terminal.paste(snippet.content);
             }),
-          "Pick a prompt to insert…"
+          "Pick a prompt to insert…",
         ),
     },
     {
@@ -113,6 +104,12 @@ export function buildPaletteItems(): PaletteItem[] {
       detail: kb().find,
       icon: "⌕",
       run: () => openSearch(),
+    },
+    {
+      label: "Open directory…",
+      detail: kb().openDirectory,
+      icon: "📂",
+      run: () => void openDirectory(),
     },
     {
       label: "New window",
@@ -224,9 +221,7 @@ export function buildPaletteItems(): PaletteItem[] {
     const isCurrent = ws.slot === getCurrentSlot();
     items.push({
       id: `workspace-${ws.slot}`,
-      label: ws.name
-        ? `Workspace ${ws.slot} · ${ws.name}`
-        : `Workspace ${ws.slot}`,
+      label: ws.name ? `Workspace ${ws.slot} · ${ws.name}` : `Workspace ${ws.slot}`,
       detail: isCurrent
         ? "current"
         : ws.hasLayout

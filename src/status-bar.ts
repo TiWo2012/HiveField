@@ -8,8 +8,8 @@
  */
 
 import { isKnownModeAll, modeIconAll, modeLabelAll } from "./agents";
-import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { isBroadcasting, onBroadcastChange, toggleBroadcast } from "./broadcast";
+import { customs, DEFAULT_MODE, type Mode } from "./modes";
 import { getSettings } from "./settings";
 import { getApi, panelStatus } from "./state";
 
@@ -26,9 +26,9 @@ function updateToggle(): void {
   toggleBtn.textContent = "";
   const icon = document.createElement("span");
   icon.className = "status-bar-toggle-icon";
-  icon.textContent = on ? "⤳" : "⤳";
+  icon.textContent = "⤳";
   toggleBtn.appendChild(icon);
-  toggleBtn.appendChild(document.createTextNode(on ? "All panes" : "All panes"));
+  toggleBtn.appendChild(document.createTextNode("All panes"));
 }
 
 function updateSession(): void {
@@ -41,8 +41,7 @@ function updateSession(): void {
   }
   const params = panel.api.getParameters() as Record<string, unknown>;
   const mode: Mode =
-    typeof params.mode === "string" &&
-    isKnownModeAll(params.mode, customs())
+    typeof params.mode === "string" && isKnownModeAll(params.mode, customs())
       ? params.mode
       : DEFAULT_MODE;
   sessionIcon.textContent = modeIconAll(mode, customs());

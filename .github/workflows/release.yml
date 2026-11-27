@@ -1,30 +1,211 @@
 name: Release
 
-# Builds Linux executables and publishes a GitHub release, but only on
-# pushes / merges to `master`. Tests run first via the shared test workflow.
+# Builds Linux, macOS, and Windows executables and publishes a GitHub release.
+#
+# Triggers:
+#   - push to `master`   -> a build release tagged `v<version>-build.<run>`
+#   - push of a `v*` tag -> a release for that exact tag
+#   - workflow_dispatch  -> a manual release; optionally bump the version first
+#                           (`bump` input), cut a clean `v<version>` tag
+#                           (`version` input), or validate the whole pipeline
+#                           without publishing (`dry_run` input)
+#
+# The version lives in package.json / src-tauri/Cargo.toml /
+# src-tauri/tauri.conf.json and is checked by `bun scripts/version.ts check`
+# (also run by test.yml). Release tags must match it — prepare validates with
+# `bun scripts/version.ts verify-tag`.
+#
+# Every build job publishes two kinds of artifacts:
+#   - `release-artifacts/` — the platform's GUI installers (.deb/.rpm/
+#     AppImage, .dmg/.app, NSIS/.msi)
+#   - `updater-asset/`     — the exact files the built-in updater,
+#     install.sh, and install.ps1 download by name (see
+#     src-tauri/src/updater.rs `asset_name()` / install.sh
+#     `asset_candidates()`): hivefield-<os>-<arch>.tar.gz on unix and
+#     hivefield-windows-<arch>.exe on Windows.
+# A single `publish` job then creates one release with every platform's
+# artifacts, so the tag always carries the full cross-platform set.
 on:
   push:
     branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Exact version to release (e.g. 0.2.0). Must match the checked-in
+          version; leave empty to release the current version with a build tag.
+        required: false
+        type: string
+      bump:
+        description: >-
+          Bump the version, commit it to the current branch, and release it.
+          Pushing that commit is skipped for `[skip release]` commits.
+        required: false
+        default: none
+        type: choice
+        options: [none, patch, minor, major]
+      tag:
+        description: >-
+          Explicit tag (default: v<version> when `version` is set, otherwise
+          v<version>-build.<run_number>).
+        required: false
+        type: string
+      dry_run:
+        description: Build every artifact but do not publish a release.
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: Mark the published release as a prerelease.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # Resolve the version, tag, build number, and commit that every other job
+  # uses. This is also where a manual `bump` happens, so the build jobs check
+  # out the commit that carries the new version.
+  prepare:
+    name: Prepare release
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message || '', '[skip release]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.vars.outputs.sha }}
+      version: ${{ steps.vars.outputs.version }}
+      tag: ${{ steps.vars.outputs.tag }}
+      build_number: ${{ steps.vars.outputs.build_number }}
+      dry_run: ${{ steps.vars.outputs.dry_run }}
+      prerelease: ${{ steps.vars.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Check version files agree
+        run: bun scripts/version.ts check
+
+      # `version` and `bump` are mutually exclusive: an exact version is a
+      # promise about the tree, while `bump` changes it.
+      - name: Bump version
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bump != 'none' }}
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION_INPUT: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [[ -n "$VERSION_INPUT" ]]; then
+            echo "::error::Set either the 'version' input or a 'bump' kind, not both."
+            exit 1
+          fi
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "::error::A dry run cannot bump the version (build jobs check out the pushed commit)."
+            exit 1
+          fi
+
+          bun scripts/version.ts bump "$BUMP"
+          NEW_VERSION="$(bun scripts/version.ts show)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          git commit -m "chore(release): v${NEW_VERSION} [skip release]"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Resolve version and tag
+        id: vars
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          VERSION="$(bun scripts/version.ts show)"
+
+          if [[ -n "$INPUT_VERSION" ]]; then
+            INPUT_VERSION="${INPUT_VERSION#v}"
+            if [[ "$INPUT_VERSION" != "$VERSION" ]]; then
+              echo "::error::version input ($INPUT_VERSION) does not match the checked-in version ($VERSION). Use the 'bump' input to change it."
+              exit 1
+            fi
+          fi
+
+          if [[ -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
+          elif [[ "$EVENT_NAME" == "push" && "$REF_TYPE" == "tag" ]]; then
+            TAG="$REF_NAME"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            TAG="v${VERSION}"
+          else
+            TAG="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
+          fi
+
+          bun scripts/version.ts verify-tag "$TAG"
+
+          # Build-style tags embed the CI run number in the binary, so the
+          # updater sees the exact release it came from. Clean semver tags
+          # (v0.2.0) leave it empty: a binary reporting 0.2.0-build.42 would
+          # always sort below its own v0.2.0 release.
+          if [[ "$TAG" =~ -build\.([0-9]+)$ ]]; then
+            BUILD_NUMBER="${BASH_REMATCH[1]}"
+          else
+            BUILD_NUMBER=""
+          fi
+
+          # Tags are minted by CI on master pushes; for manual runs make sure
+          # the requested tag is free before building anything.
+          if [[ "$REF_TYPE" != "tag" ]]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::tag ${TAG} already exists. Pass an explicit 'tag' input or bump the version."
+              exit 1
+            fi
+          fi
+
+          SHA="$(git rev-parse HEAD)"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "build_number=$BUILD_NUMBER"
+            echo "sha=$SHA"
+            echo "dry_run=${DRY_RUN:-false}"
+            echo "prerelease=${PRERELEASE:-false}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Release: $TAG (version $VERSION, build ${BUILD_NUMBER:-none}) at $SHA"
+
   tests:
     name: Run tests
+    needs: prepare
     uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
 
   build-linux:
     name: Build Linux executables
-    needs: tests
+    needs: [prepare, tests]
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     env:
-      # Embedded into the binary by src-tauri/build.rs so the built-in updater
-      # knows this build's number: release tags are v<version>-build.<run_number>,
-      # and a binary that only knows "0.1.1" would compare as older than every
-      # tagged release and perpetually report an update available.
-      HF_BUILD_NUMBER: ${{ github.run_number }}
+      HF_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -39,7 +220,6 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libasound2-dev \
             libfuse2t64
 
       - name: Cache cargo build
@@ -63,11 +243,13 @@ jobs:
           # Updater assets: the built-in updater and install.sh pick the
           # tarball by this exact name (see src-tauri/src/updater.rs asset_name
           # and the repo-root install.sh); the bare binary is the fallback.
+          # The tarball also carries the app icon (hivefield.png) so both
+          # installers can register a .desktop menu entry with a proper icon
+          # (see updater.rs extract_archive / install.sh install_desktop_entry).
           cp src-tauri/target/release/hivefield updater-asset/hivefield-linux-x86_64
-          tar -czf updater-asset/hivefield-linux-x86_64.tar.gz -C src-tauri/target/release hivefield
+          cp src-tauri/icons/128x128.png src-tauri/target/release/hivefield.png
+          tar -czf updater-asset/hivefield-linux-x86_64.tar.gz -C src-tauri/target/release hivefield hivefield.png
           ls -lh release-artifacts/ updater-asset/
-          APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -77,23 +259,187 @@ jobs:
             release-artifacts
             updater-asset
 
-      # A new tag is minted per master push (version + build number) so every
-      # release lands without manual tag management; bump the version in
-      # tauri.conf.json / Cargo.toml to start a new version series.
+  build-macos:
+    name: Build macOS executables (${{ matrix.arch }})
+    needs: [prepare, tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel   # Intel
+            arch: x86_64
+          - runner: macos-15   # Apple Silicon
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      HF_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build macOS bundles (app, dmg)
+        run: bun run tauri build --bundles app,dmg
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p release-artifacts updater-asset
+          # Updater assets: tarball + bare binary named exactly as install.sh
+          # and updater.rs expect (hivefield-macos-<arch>.tar.gz). The tarball
+          # also carries the app icon (hivefield.icns, converted from the
+          # 1024px PNG with sips) so install.sh and updater.rs can give the
+          # ~/Applications bundle a real icon (see install.sh
+          # install_app_bundle / updater.rs register_app_bundle).
+          cp src-tauri/target/release/hivefield updater-asset/hivefield-macos-${{ matrix.arch }}
+          sips -s format icns src-tauri/icons/icon.png --out src-tauri/target/release/hivefield.icns
+          tar -czf updater-asset/hivefield-macos-${{ matrix.arch }}.tar.gz -C src-tauri/target/release hivefield hivefield.icns
+          # GUI installers: the .dmg plus the .app bundle zipped for direct
+          # drag-into-Applications installs.
+          cp src-tauri/target/release/bundle/dmg/*.dmg release-artifacts/
+          (cd src-tauri/target/release/bundle/macos && zip -qr "$GITHUB_WORKSPACE/release-artifacts/hiveField Terminal_${{ matrix.arch }}.app.zip" "hiveField Terminal.app")
+          ls -lh release-artifacts/ updater-asset/
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hivefield-macos-${{ matrix.arch }}
+          path: |
+            release-artifacts
+            updater-asset
+
+  build-windows:
+    name: Build Windows executables
+    needs: [prepare, tests]
+    runs-on: windows-latest
+    env:
+      HF_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Windows bundles (nsis, msi)
+        run: bun run tauri build --bundles nsis,msi
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-artifacts, updater-asset | Out-Null
+          # Updater asset: the exact name updater.rs / install.ps1 expect
+          # (hivefield-windows-x86_64.exe).
+          Copy-Item src-tauri/target/release/hivefield.exe updater-asset/hivefield-windows-x86_64.exe
+          Copy-Item src-tauri/target/release/bundle/nsis/*.exe release-artifacts/
+          Copy-Item src-tauri/target/release/bundle/msi/*.msi release-artifacts/
+          Get-ChildItem release-artifacts, updater-asset | Select-Object FullName, Length
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hivefield-windows
+          path: |
+            release-artifacts
+            updater-asset
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build-linux, build-macos, build-windows]
+    if: ${{ needs.prepare.outputs.dry_run != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
+      # All three build jobs upload one artifact each; merge-multiple flattens
+      # them into a single directory (the file names are unique per platform).
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      # SHA-256 for every published asset, in `sha256sum` format
+      # (`<hex>  <name>` per line). install.sh, install.ps1, and the built-in
+      # updater (src-tauri/src/updater.rs) download this file and refuse to
+      # install an asset whose digest does not match (docs/INFRA_PLAN.md §5).
+      # The checksum contract — one line per asset name — must stay in sync
+      # with those three verifiers.
+      - name: Generate SHA-256 checksums
+        run: |
+          ( cd dist-artifacts && sha256sum -- * > ../checksums.txt )
+          cat checksums.txt
+
+      # `git-cliff --latest` renders the range for the most recent tag. On a
+      # master push the release tag does not exist yet, so create it locally:
+      # the actual remote tag is still created by the publish step below, and
+      # a failed build can never leave a stray remote tag behind.
+      - name: Create local release tag
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          if ! git rev-parse --verify --quiet "refs/tags/$TAG"; then
+            git tag "$TAG" "$SHA"
+          fi
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          OUTPUT: CHANGELOG_RELEASE.md
+
+      - name: Compose release notes
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          {
+            echo "Automated cross-platform release from \`$REPOSITORY\` at \`$SHA\`."
+            echo
+            cat CHANGELOG_RELEASE.md
+            echo
+            cat .github/release-footer.md
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
-          name: hiveField Terminal v${{ env.APP_VERSION }} (build ${{ github.run_number }})
-          body: |
-            Automated Linux release built from `master` at `${{ github.sha }}`.
-
-            - Updater tarball (`hivefield-linux-x86_64.tar.gz`) — used by
-              the built-in updater and `install.sh`
-            - Raw executable
-            - `.deb` package
-            - `.rpm` package
-            - AppImage
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: hiveField Terminal ${{ needs.prepare.outputs.tag }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.prepare.outputs.prerelease != 'true' }}
+          target_commitish: ${{ needs.prepare.outputs.sha }}
           files: |
-            release-artifacts/*
-            updater-asset/*
+            dist-artifacts/*
+            checksums.txt

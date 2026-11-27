@@ -1,7 +1,7 @@
-mod dictation;
 mod diagnostics;
 mod fonts;
 mod git;
+mod logging;
 mod net;
 mod notifications;
 mod pty;
@@ -184,6 +184,9 @@ fn window_cwd(window: &tauri::WebviewWindow) -> Result<String, String> {
 /// launch directory (see [`window_cwd`]), which is the directory the app was
 /// launched from for the main window.
 #[tauri::command]
+// The arguments map directly onto the frontend's `pty_spawn` payload; keeping
+// them flat avoids a wrapper struct that would only repeat the same fields.
+#[allow(clippy::too_many_arguments)]
 fn pty_spawn(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -202,8 +205,17 @@ fn pty_spawn(
         .map(std::path::PathBuf::from)
         .or_else(|| windows::window_cwd(&window));
     let window_label = window.label().to_string();
-    pty::spawn(&app, session_id, &mode, cwd, autorun, cols, rows, Some(window_label))
-        .map_err(|e| e.to_string())?;
+    pty::spawn(
+        &app,
+        session_id,
+        &mode,
+        cwd,
+        autorun,
+        cols,
+        rows,
+        Some(window_label),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 
@@ -356,14 +368,22 @@ async fn window_new(
 async fn git_worktrees(app: tauri::AppHandle, window: tauri::WebviewWindow) -> git::WorktreesInfo {
     let dir = match window_cwd(&window).map(std::path::PathBuf::from) {
         Ok(dir) => dir,
-        Err(_) => return git::WorktreesInfo { root: None, worktrees: Vec::new() },
+        Err(_) => {
+            return git::WorktreesInfo {
+                root: None,
+                worktrees: Vec::new(),
+            }
+        }
     };
     tauri::async_runtime::spawn_blocking(move || {
         let cache = app.state::<git::GitCache>();
         cache.cached_worktrees(&dir)
     })
     .await
-    .unwrap_or_else(|_| git::WorktreesInfo { root: None, worktrees: Vec::new() })
+    .unwrap_or_else(|_| git::WorktreesInfo {
+        root: None,
+        worktrees: Vec::new(),
+    })
 }
 
 /// IPC command: create a worktree on a new branch in the repo containing the
@@ -457,9 +477,7 @@ fn file_write(path: String, content: String) -> Result<(), String> {
 /// Only schemes the terminal should ever hand to the OS opener.
 fn allowed_url_scheme(url: &str) -> bool {
     let lower = url.to_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
 }
 
 /// IPC command: open a URL in the system's default browser / handler.
@@ -468,7 +486,9 @@ fn allowed_url_scheme(url: &str) -> bool {
 fn open_url(url: String) -> Result<(), String> {
     let trimmed = url.trim();
     if !allowed_url_scheme(trimmed) {
-        return Err(format!("refusing to open URL with disallowed scheme: {trimmed}"));
+        return Err(format!(
+            "refusing to open URL with disallowed scheme: {trimmed}"
+        ));
     }
     use std::process::Command;
     if cfg!(target_os = "macos") {
@@ -497,7 +517,7 @@ fn open_url(url: String) -> Result<(), String> {
 
 /// IPC command: return a flat diagnostics blob — version, OS/arch, install
 /// dir, launch dir, git context, settings schema version, worktree base dir,
-/// dictation engine, and the log file path — for pasting into bug reports
+/// and the log file path — for pasting into bug reports
 /// (palette action "Copy diagnostics"). Same data as `hivefield --doctor`
 /// (see [`diagnostics_cli`]).
 #[tauri::command]
@@ -512,6 +532,13 @@ pub fn diagnostics_cli() -> serde_json::Value {
     diagnostics::collect_cli()
 }
 
+/// Install the process-wide panic hook (see `logging::install_panic_hook`).
+/// Called by `main()` before the Tauri app boots so panics during startup are
+/// recorded too, not just panics after the logger plugin is initialized.
+pub fn install_panic_hook() {
+    logging::install_panic_hook();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Capture the repo + HEAD commit the app launched against, so the UI can
@@ -522,12 +549,33 @@ pub fn run() {
             .unwrap_or_else(|_| PathBuf::from(".")),
     );
     tauri::Builder::default()
+        // Install the logger first so every later plugin / setup log line is
+        // captured. The panic hook itself is installed from `main()`.
+        .plugin(logging::plugin())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let log_file = app
+                .path()
+                .app_log_dir()
+                .map(|dir| dir.join(logging::LOG_FILE_NAME));
+            log::info!(
+                "hiveField {} starting on {} {} (pid {})",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                std::process::id()
+            );
+            match log_file {
+                Ok(path) => log::info!("logging to {}", path.display()),
+                Err(e) => log::warn!("failed to resolve the app log directory: {e}"),
+            }
+            Ok(())
+        })
         .manage(PtyState::<tauri::Wry>::default())
         .manage(windows::WindowState::default())
         .manage(git::GitCache::default())
-        .manage(dictation::DictationState::default())
         .manage(launch_state)
         .manage(GitDiffReportState::default())
         .invoke_handler(tauri::generate_handler![
@@ -554,32 +602,35 @@ pub fn run() {
             file_write,
             open_url,
             fonts::list_system_fonts,
-            dictation::dictation_devices,
-            dictation::dictation_start,
-            dictation::dictation_stop,
-            dictation::dictation_status,
             notifications::notify_desktop,
             notifications::ntfy_send,
             updater::updater_check,
             updater::updater_install,
             diagnostics
         ])
-        // A minimal File menu exposing "New Window" (plus the standard app
-        // menu on macOS). The menu item asks the *focused* window to open the
-        // new one — it knows its own launch directory — by broadcasting a
-        // `menu://new-window` event that only the focused window acts on.
+        // A minimal File menu exposing "Open Directory…" and "New Window"
+        // (plus the standard app menu on macOS). The menu items ask the
+        // *focused* window to act — it knows its own launch directory — by
+        // broadcasting a `menu://…` event that only the focused window acts on.
         .menu(|app| {
-            use tauri::menu::{MenuBuilder, SubmenuBuilder};
+            use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
+            let open_directory =
+                tauri::menu::MenuItemBuilder::with_id("open_directory", "Open Directory…")
+                    .accelerator("CmdOrCtrl+Shift+O")
+                    .build(app)?;
             let new_window = tauri::menu::MenuItemBuilder::with_id("new_window", "New Window")
+                .accelerator("CmdOrCtrl+Shift+N")
                 .build(app)?;
-            let file = SubmenuBuilder::new(app, "File").item(&new_window).build()?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let file = SubmenuBuilder::new(app, "File")
+                .item(&open_directory)
+                .item(&separator)
+                .item(&new_window)
+                .build()?;
             #[cfg(target_os = "macos")]
             let menu = {
-                use tauri::menu::PredefinedMenuItem;
                 let quit = PredefinedMenuItem::quit(app, None)?;
-                let app_menu = SubmenuBuilder::new(app, "hiveField")
-                    .item(&quit)
-                    .build()?;
+                let app_menu = SubmenuBuilder::new(app, "hiveField").item(&quit).build()?;
                 MenuBuilder::new(app).items(&[&app_menu, &file]).build()?
             };
             #[cfg(not(target_os = "macos"))]
@@ -587,8 +638,11 @@ pub fn run() {
             Ok(menu)
         })
         .on_menu_event(|app, event| {
-            if event.id() == "new_window" {
-                // Only the focused window should act (it knows its cwd).
+            // Only the focused window should act: it knows its cwd, and only
+            // it should get the folder picker / new window.
+            if event.id() == "open_directory" {
+                let _ = app.emit("menu://open-directory", ());
+            } else if event.id() == "new_window" {
                 let _ = app.emit("menu://new-window", ());
             }
         })
@@ -602,10 +656,6 @@ pub fn run() {
                 let state = app.state::<PtyState>();
                 pty::kill_window_sessions(&state, &label);
                 app.state::<windows::WindowState>().remove(&label);
-                // A dictation capture owned by the closing window would
-                // otherwise keep running (and recording) with no window left
-                // to stop it or receive the result.
-                dictation::stop_capture_for_window(&app, &label);
             }
         })
         .run(tauri::generate_context!())
@@ -675,7 +725,10 @@ mod tests {
             "HTTPS-not-a-url",
             "",
         ] {
-            assert!(!allowed_url_scheme(url.trim()), "{url:?} should be rejected");
+            assert!(
+                !allowed_url_scheme(url.trim()),
+                "{url:?} should be rejected"
+            );
         }
     }
 

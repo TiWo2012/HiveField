@@ -6,21 +6,27 @@
  */
 
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { matchesKeybind, type KeybindAction } from "./keybinds";
-import { getSettings, updateSettings, FONT_SIZE_MAX, FONT_SIZE_MIN } from "./settings";
-import { toggleSettings } from "./settings-ui";
-import { activeSessionEntry, addPanelWithMode, cycleTab, movePaneFocus, toggleFullscreen } from "./sessions";
-import { renamePanel } from "./titles";
-import { openSearch, isSearchOpen } from "./search";
-import { isPaletteOpen } from "./palette";
-import { isContextMenuOpen } from "./context-menu";
-import { switchToWorkspace } from "./sidebar";
-import { openNewWindow } from "./windows";
-import { defaultMode } from "./modes";
 import { RAW_MODE } from "./agents";
-import { getApi, panelToSession } from "./state";
-import { startDictation, stopDictation } from "./dictation";
 import { toggleBroadcast } from "./broadcast";
+import { isContextMenuOpen } from "./context-menu";
+import { type KeybindAction, matchesKeybind } from "./keybinds";
+import { defaultMode } from "./modes";
+import { openDirectory } from "./open-directory";
+import { isPaletteOpen } from "./palette";
+import { isSearchOpen } from "./search";
+import {
+  activeSessionEntry,
+  addPanelWithMode,
+  cycleTab,
+  movePaneFocus,
+  toggleFullscreen,
+} from "./sessions";
+import { FONT_SIZE_MAX, FONT_SIZE_MIN, getSettings, updateSettings } from "./settings";
+import { toggleSettings } from "./settings-ui";
+import { switchToWorkspace } from "./sidebar";
+import { getApi } from "./state";
+import { renamePanel } from "./titles";
+import { openNewWindow } from "./windows";
 
 /** Bump the global terminal font size by `delta` (persisted in settings). */
 export function zoomBy(delta: number): void {
@@ -33,8 +39,7 @@ export function setupKeyboard() {
   const settingsOpen = () => document.querySelector(".settings-backdrop") !== null;
   // While the search bar or command palette is up, keystrokes belong to their
   // inputs, so the global shortcuts below must not fire.
-  const uiOpen = () =>
-    settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
+  const uiOpen = () => settingsOpen() || isSearchOpen() || isPaletteOpen() || isContextMenuOpen();
 
   // All app shortcuts dispatch from the configured keybinds (Settings →
   // Keybinds). Bubble phase is fine for these combos: they are not printable
@@ -48,6 +53,11 @@ export function setupKeyboard() {
       // "New agent tab": the configured default agent, or a plain shell
       // when the setting is "don't auto-open anything".
       addPanelWithMode(defaultMode() ?? RAW_MODE);
+    }
+    // Pick a folder and start a session in it (File → Open Directory…).
+    if (matchesKeybind(kb.openDirectory, e)) {
+      e.preventDefault();
+      void openDirectory();
     }
     // Open a new app window (see openNewWindow).
     if (matchesKeybind(kb.newWindow, e)) {
@@ -68,20 +78,10 @@ export function setupKeyboard() {
       e.preventDefault();
       toggleSettings();
     }
-    // Dictation push-to-talk: on keydown (not repeat), start capturing
-    // audio. The target session is pinned now so the transcribed text lands
-    // in the terminal that was active when the key went down.
+    // Broadcast toggle: send the shortcut to every pane.
     if (matchesKeybind(kb.broadcastToggle, e)) {
       e.preventDefault();
       toggleBroadcast();
-      return;
-    }
-    if (matchesKeybind(kb.dictate, e)) {
-      if (e.repeat) return;
-      e.preventDefault();
-      const panel = getApi().activePanel;
-      const sessionId = panel ? panelToSession.get(panel.id) : undefined;
-      startDictation(sessionId);
       return;
     }
     // Paste the system clipboard into the active terminal / copy its
@@ -101,33 +101,19 @@ export function setupKeyboard() {
       const selection = activeSessionEntry()?.terminal.getSelection() ?? "";
       if (selection) {
         e.preventDefault();
-        void writeText(selection).catch((err) =>
-          console.error("clipboard write failed", err)
-        );
+        void writeText(selection).catch((err) => console.error("clipboard write failed", err));
       }
       // Without a selection the key is left alone and falls through to the
       // shell, matching other terminals.
     }
   });
 
-  // Dictation is push-to-talk: releasing the keybind stops the capture.
-  // Also stop on window blur so a stuck key doesn't keep the mic open.
-  window.addEventListener("keyup", (e) => {
-    if (uiOpen()) return;
-    if (matchesKeybind(getSettings().keybinds.dictate, e)) {
-      e.preventDefault();
-      stopDictation();
-    }
-  });
-  window.addEventListener("blur", () => stopDictation());
-
   // Vim-style pane movement (focus left/down/up/right), workspace switching
-  // (1…10), dictation (push-to-talk) and font-size zoom. Registered in the
+  // (1…10) and font-size zoom. Registered in the
   // CAPTURE phase so the keys are intercepted before xterm sees them
   // (otherwise a rebound Ctrl+H is backspace, Ctrl+J newline, Ctrl+K
   // kill-line, Ctrl+L clear-screen). If there is no adjacent pane in that
-  // direction the key falls through to the terminal. Dictation's keydown is
-  // also stopped here to prevent the key combo from reaching the shell.
+  // direction the key falls through to the terminal.
   window.addEventListener(
     "keydown",
     (e) => {
@@ -202,16 +188,7 @@ export function setupKeyboard() {
         e.stopPropagation();
         return;
       }
-      // Dictation push-to-talk: stop the combo from reaching the shell, but
-      // let the bubble-phase handler actually start the capture (it has the
-      // active-panel check and the repeat-key guard). We match here too so
-      // that a rebound printable-key combo doesn't leak into xterm.
-      if (matchesKeybind(kb.dictate, e)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
     },
-    true
+    true,
   );
 }

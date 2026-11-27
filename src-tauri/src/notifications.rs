@@ -7,13 +7,12 @@
 //! endpoint, topic and optional access-token auth are read from the settings
 //! store (see `settings.rs`); the keys are written by the settings page:
 //!
-//!   - `ntfyEnabled`: master switch (disabled → `ntfy_send` is a no-op)
-//!   - `ntfyServer`:  base URL, e.g. `https://ntfy.sh` or `https://ntfy.example.com`
-//!   - `ntfyTopic`:   topic to publish to (a phone subscribed to this topic
-//!                    receives the push)
-//!   - `ntfyToken`:   optional ntfy access token, sent as `Authorization: Bearer`.
-//!                    Stored in plaintext in `settings.json`, exactly as the
-//!                    user configured it.
+//! - `ntfyEnabled`: master switch (disabled → `ntfy_send` is a no-op)
+//! - `ntfyServer`: base URL, e.g. `https://ntfy.sh` or `https://ntfy.example.com`
+//! - `ntfyTopic`: topic to publish to (a phone subscribed to this topic
+//!   receives the push)
+//! - `ntfyToken`: optional ntfy access token, sent as `Authorization: Bearer`.
+//!   Stored in plaintext in `settings.json`, exactly as the user configured it.
 //!
 //! The HTTP request itself is delegated to the shared [`crate::net::HttpClient`]
 //! abstraction (timeouts, user agent, normalized errors) — this module only
@@ -79,7 +78,10 @@ pub fn ntfy_send(app: tauri::AppHandle, title: String, body: String) -> Result<(
         ("X-Tags".to_string(), "computer".to_string()),
         // ureq v3 does not set a content type for raw body sends; keep the
         // wire format stable (v2 set text/plain implicitly).
-        ("Content-Type".to_string(), "text/plain; charset=utf-8".to_string()),
+        (
+            "Content-Type".to_string(),
+            "text/plain; charset=utf-8".to_string(),
+        ),
     ];
     if !token.is_empty() {
         headers.push(("Authorization".to_string(), format!("Bearer {token}")));

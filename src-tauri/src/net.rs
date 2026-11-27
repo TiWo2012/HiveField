@@ -1,5 +1,5 @@
 //! Small HTTP client abstraction shared by every place the backend talks to a
-//! server directly (ntfy pushes, model downloads, cloud transcription).
+//! server directly (ntfy pushes, updater downloads).
 //!
 //! Wraps `ureq` (v3) behind a typed, configured client: connect/read timeouts,
 //! a user agent, and normalized errors, so call sites describe *what* they
@@ -41,25 +41,12 @@ impl HttpClient {
     /// POST `body` as the raw request body to `url` with the given headers.
     /// Returns the response body on success; `Err` on transport errors or any
     /// non-2xx status (including the server's body in the message).
-    pub fn post_text(&self, url: &str, headers: &[(&str, &str)], body: &str) -> Result<String, String> {
-        let mut request = self.agent.post(url);
-        for &(name, value) in headers {
-            request = request.header(name, value);
-        }
-        let response = request
-            .send(body)
-            .map_err(|e| format!("POST {url} failed: {e}"))?;
-        let status = response.status().as_u16();
-        let text = response.into_body().read_to_string().unwrap_or_default();
-        if !(200..300).contains(&status) {
-            return Err(format!("POST {url} returned HTTP {status}: {text}"));
-        }
-        Ok(text)
-    }
-
-    /// POST raw bytes (e.g. a multipart body) with the given headers. Returns
-    /// the response body on success; `Err` on transport errors or non-2xx.
-    pub fn post_bytes(&self, url: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<String, String> {
+    pub fn post_text(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Result<String, String> {
         let mut request = self.agent.post(url);
         for &(name, value) in headers {
             request = request.header(name, value);
@@ -78,7 +65,7 @@ impl HttpClient {
     /// GET `url` and return the response body as a UTF-8 string on success;
     /// `Err` on transport errors or any non-2xx status (including the
     /// server's body in the message). Used for small JSON payloads (GitHub
-    /// release metadata, cloud transcription responses).
+    /// release metadata).
     pub fn get_text(&self, url: &str) -> Result<String, String> {
         let response = self
             .agent
@@ -119,8 +106,8 @@ impl HttpClient {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let mut file =
-            std::fs::File::create(dest).map_err(|e| format!("failed to create {}: {e}", dest.display()))?;
+        let mut file = std::fs::File::create(dest)
+            .map_err(|e| format!("failed to create {}: {e}", dest.display()))?;
         let mut reader = response.into_body().into_reader();
         let mut buf = [0u8; 256 * 1024];
         let mut downloaded: u64 = 0;
@@ -135,8 +122,8 @@ impl HttpClient {
             file.write_all(&buf[..n])
                 .map_err(|e| format!("download write failed: {e}"))?;
             downloaded += n as u64;
-            if total > 0 {
-                let percent = (downloaded * 100 / total) as u8;
+            if let Some(percent) = (downloaded * 100).checked_div(total) {
+                let percent = percent as u8;
                 if percent != last_percent {
                     last_percent = percent;
                     on_progress(percent);

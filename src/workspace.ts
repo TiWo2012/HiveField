@@ -65,11 +65,7 @@ function isPlausibleLayout(saved: unknown): saved is SerializedDockview {
 function hasPanels(layout: unknown): boolean {
   if (!layout || typeof layout !== "object") return false;
   const panels = (layout as Record<string, unknown>).panels;
-  return (
-    panels !== null &&
-    typeof panels === "object" &&
-    Object.keys(panels as object).length > 0
-  );
+  return panels !== null && typeof panels === "object" && Object.keys(panels as object).length > 0;
 }
 
 /**
@@ -81,7 +77,10 @@ function hasPanels(layout: unknown): boolean {
  * those are treated as a legacy slot 1. Anything else yields an empty,
  * slot-1-default workspace.
  */
-function parseDoc(raw: unknown): { current: number; slots: Map<number, SlotData> } {
+export function parseWorkspaceDoc(raw: unknown): {
+  current: number;
+  slots: Map<number, SlotData>;
+} {
   const parsed = new Map<number, SlotData>();
   if (isPlausibleLayout(raw)) {
     parsed.set(1, { layout: raw });
@@ -90,7 +89,7 @@ function parseDoc(raw: unknown): { current: number; slots: Map<number, SlotData>
   if (raw && typeof raw === "object") {
     const v = raw as Record<string, unknown>;
     if (
-      typeof v.current === "number" &&
+      (typeof v.current === "number" || v.current === undefined) &&
       v.slots !== null &&
       typeof v.slots === "object"
     ) {
@@ -150,7 +149,7 @@ export async function loadWorkspaces(): Promise<void> {
       cwd = await invoke<string>("workspace_cwd");
     }
     const saved = await invoke<unknown>("workspace_get", { cwd });
-    const parsed = parseDoc(saved);
+    const parsed = parseWorkspaceDoc(saved);
     slots.clear();
     for (const [slot, data] of parsed.slots) slots.set(slot, data);
     currentSlot = parsed.current;
@@ -246,7 +245,7 @@ let switching = false;
 export async function switchWorkspace(
   api: DockviewApi,
   target: number,
-  beforeClear?: (panels: IDockviewPanel[], leavingSlot: number) => void
+  beforeClear?: (panels: IDockviewPanel[], leavingSlot: number) => void,
 ): Promise<boolean> {
   apiRef = api;
   if (target < 1 || target > WORKSPACE_SLOTS) return false;

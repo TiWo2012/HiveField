@@ -1,7 +1,7 @@
 /**
  * Settings page — a modal overlay with two tabs:
  *
- *  - **General**: font / Unicode / rendering / agents / worktrees / dictation /
+ *  - **General**: font / Unicode / rendering / agents / worktrees /
  *    notifications options. Every control writes straight into the settings
  *    store, so changes apply live to all open terminals.
  *  - **Keybinds**: every configurable keyboard shortcut, click-to-record.
@@ -10,40 +10,35 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { allAgents, type CustomAgentDef, makeCustomAgentId, RAW_MODE } from "./agents";
 import {
-  allAgents,
-  makeCustomAgentId,
-  RAW_MODE,
-  type CustomAgentDef,
-} from "./agents";
-import { THEMES } from "./themes";
+  DEFAULT_KEYBINDS,
+  formatKeybind,
+  KEYBIND_ACTIONS,
+  type KeybindAction,
+  keybindEqual,
+  keybindSearchMatches,
+  keyNeedsModifier,
+  parseKeybind,
+} from "./keybinds";
 import {
   CONTRAST_RATIO_MAX,
   CONTRAST_RATIO_MIN,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  getSettings,
   LETTER_SPACING_MAX,
   LETTER_SPACING_MIN,
   LINE_HEIGHT_MAX,
   LINE_HEIGHT_MIN,
   OPACITY_MAX,
   OPACITY_MIN,
-  getSettings,
   resetSettings,
   subscribe,
   subscribePersistError,
   updateSettings,
 } from "./settings";
-import {
-  DEFAULT_KEYBINDS,
-  KEYBIND_ACTIONS,
-  formatKeybind,
-  keyNeedsModifier,
-  keybindEqual,
-  keybindSearchMatches,
-  parseKeybind,
-  type KeybindAction,
-} from "./keybinds";
+import { THEMES } from "./themes";
 import {
   checkForUpdates,
   installUpdate,
@@ -55,16 +50,8 @@ import {
 
 const PREVIEW_TEXT = "AaBb 日本語 中文 🎉 → ①②③ NFO nf ";
 
-/** A microphone listed by the backend's `dictation_devices` command. */
-interface DictationDevice {
-  id: string;
-  name: string;
-  isDefault: boolean;
-}
-
 let overlay: HTMLElement | null = null;
 let previewEl: HTMLElement | null = null;
-let unsubscribe: (() => void) | null = null;
 /** Refresh the Keybinds tab rows whenever settings change (see openSettings). */
 let renderKeybindRows: (() => void) | null = null;
 /** Refresh the Agents section (checklist + custom-agent editor) on settings change. */
@@ -77,7 +64,7 @@ export type SettingsTabId = "general" | "updates" | "snippets" | "keybinds";
 export function openSettings(tab?: SettingsTabId): void {
   if (!overlay) {
     overlay = buildOverlay();
-    unsubscribe = subscribe((s) => {
+    subscribe((s) => {
       if (previewEl) {
         previewEl.style.fontFamily = `"${s.fontFamily}", monospace`;
         previewEl.style.fontSize = `${s.fontSize}px`;
@@ -93,9 +80,7 @@ export function openSettings(tab?: SettingsTabId): void {
     // Pop the Keybinds tab straight into its search field so the palette
     // action lands the user in a ready-to-type filter.
     if (tab === "keybinds") {
-      overlay
-        .querySelector<HTMLInputElement>(".settings-keybind-search")
-        ?.focus();
+      overlay.querySelector<HTMLInputElement>(".settings-keybind-search")?.focus();
     }
   }
 }
@@ -105,7 +90,7 @@ export function closeSettings(): void {
 }
 
 export function toggleSettings(): void {
-  if (overlay && overlay.isConnected) closeSettings();
+  if (overlay?.isConnected) closeSettings();
   else openSettings();
 }
 
@@ -121,7 +106,7 @@ function onKeydown(e: KeyboardEvent): void {
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
-  className?: string
+  className?: string,
 ): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -173,7 +158,13 @@ function fontSelect(current: string, onChange?: (v: string) => void): HTMLElemen
   return select;
 }
 
-function numberField(value: number, min: number, max: number, step: number, onChange?: (v: number) => void): HTMLElement {
+function numberField(
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+  onChange?: (v: number) => void,
+): HTMLElement {
   const input = el("input", "settings-number");
   input.type = "number";
   input.min = String(min);
@@ -207,7 +198,7 @@ function passwordField(value: string, onChange?: (v: string) => void): HTMLEleme
 function selectField<T extends string>(
   value: T,
   options: ReadonlyArray<{ value: T; label: string }>,
-  onChange?: (v: T) => void
+  onChange?: (v: T) => void,
 ): HTMLElement {
   const select = el("select", "settings-select");
   for (const opt of options) {
@@ -218,46 +209,6 @@ function selectField<T extends string>(
   }
   select.value = value;
   select.addEventListener("change", () => onChange?.(select.value as T));
-  return select;
-}
-
-/**
- * Microphone dropdown for dictation. The empty value is "system default"; the
- * list of devices is loaded from the backend. A saved id whose device was
- * unplugged is kept in the list (labelled unavailable) so the stored setting
- * isn't silently lost.
- */
-function micSelect(current: string, onChange?: (v: string) => void): HTMLElement {
-  const select = el("select", "settings-select");
-  const addOption = (value: string, label: string) => {
-    const optionEl = el("option");
-    optionEl.value = value;
-    optionEl.textContent = label;
-    select.appendChild(optionEl);
-  };
-
-  addOption("", "System default");
-  select.value = current;
-  select.addEventListener("change", () => onChange?.(select.value));
-
-  invoke<DictationDevice[]>("dictation_devices")
-    .then((devices) => {
-      const ids = new Set(devices.map((d) => d.id));
-      if (current !== "" && !ids.has(current)) {
-        addOption(current, "Unavailable (unplugged)");
-      }
-      for (const device of devices) {
-        addOption(
-          device.id,
-          device.isDefault ? `${device.name} (default)` : device.name
-        );
-      }
-      select.value = current;
-    })
-    .catch((err) => {
-      console.error("Failed to load microphones:", err);
-    });
-
   return select;
 }
 
@@ -287,7 +238,7 @@ function defaultAgentSelect(): HTMLElement {
       })),
       { value: RAW_MODE, label: "raw term" },
     ],
-    (defaultMode) => updateSettings({ defaultMode })
+    (defaultMode) => updateSettings({ defaultMode }),
   );
 }
 
@@ -489,10 +440,7 @@ function promptSnippetsEditor(): HTMLElement {
     addBtn.type = "button";
     addBtn.textContent = "+ Add snippet";
     addBtn.addEventListener("click", () => {
-      const next = [
-        ...getSettings().promptSnippets,
-        { name: "New prompt", content: "" },
-      ];
+      const next = [...getSettings().promptSnippets, { name: "New prompt", content: "" }];
       void updateSettings({ promptSnippets: next });
     });
     wrap.appendChild(addBtn);
@@ -531,29 +479,35 @@ function buildGeneralTab(): HTMLElement {
     controlRow(
       "Font family",
       fontSelect(s.fontFamily, (fontFamily) => updateSettings({ fontFamily })),
-      "Any font installed on your system"
-    )
+      "Any font installed on your system",
+    ),
   );
   fontSection.appendChild(
     controlRow(
       "Font size",
-      numberField(s.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX, 1, (fontSize) => updateSettings({ fontSize })),
-      "px"
-    )
+      numberField(s.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX, 1, (fontSize) =>
+        updateSettings({ fontSize }),
+      ),
+      "px",
+    ),
   );
   fontSection.appendChild(
     controlRow(
       "Line height",
-      numberField(s.lineHeight, LINE_HEIGHT_MIN, LINE_HEIGHT_MAX, 0.1, (lineHeight) => updateSettings({ lineHeight })),
-      "× cell height"
-    )
+      numberField(s.lineHeight, LINE_HEIGHT_MIN, LINE_HEIGHT_MAX, 0.1, (lineHeight) =>
+        updateSettings({ lineHeight }),
+      ),
+      "× cell height",
+    ),
   );
   fontSection.appendChild(
     controlRow(
       "Letter spacing",
-      numberField(s.letterSpacing, LETTER_SPACING_MIN, LETTER_SPACING_MAX, 0.5, (letterSpacing) => updateSettings({ letterSpacing })),
-      "px"
-    )
+      numberField(s.letterSpacing, LETTER_SPACING_MIN, LETTER_SPACING_MAX, 0.5, (letterSpacing) =>
+        updateSettings({ letterSpacing }),
+      ),
+      "px",
+    ),
   );
   fontSection.appendChild(
     controlRow(
@@ -564,9 +518,9 @@ function buildGeneralTab(): HTMLElement {
           { value: "normal", label: "Normal" },
           { value: "bold", label: "Bold" },
         ],
-        (fontWeight) => updateSettings({ fontWeight })
-      )
-    )
+        (fontWeight) => updateSettings({ fontWeight }),
+      ),
+    ),
   );
   fontSection.appendChild(
     controlRow(
@@ -577,16 +531,16 @@ function buildGeneralTab(): HTMLElement {
           { value: "normal", label: "Normal" },
           { value: "bold", label: "Bold" },
         ],
-        (fontWeightBold) => updateSettings({ fontWeightBold })
-      )
-    )
+        (fontWeightBold) => updateSettings({ fontWeightBold }),
+      ),
+    ),
   );
   fontSection.appendChild(
     controlRow(
       "Font ligatures",
       toggleField(s.fontLigatures, (fontLigatures) => updateSettings({ fontLigatures })),
-      "Render programming ligatures (e.g. ->, =>, ==) when the font supports them"
-    )
+      "Render programming ligatures (e.g. ->, =>, ==) when the font supports them",
+    ),
   );
   body.appendChild(fontSection);
 
@@ -601,10 +555,10 @@ function buildGeneralTab(): HTMLElement {
           { value: "6", label: "Unicode 6 (compat)" },
           { value: "11", label: "Unicode 11 (full)" },
         ],
-        (unicodeVersion) => updateSettings({ unicodeVersion })
+        (unicodeVersion) => updateSettings({ unicodeVersion }),
       ),
-      "Unicode 11 renders modern emoji and CJK at the correct width"
-    )
+      "Unicode 11 renders modern emoji and CJK at the correct width",
+    ),
   );
   body.appendChild(unicodeSection);
 
@@ -616,19 +570,19 @@ function buildGeneralTab(): HTMLElement {
       selectField(
         s.theme,
         THEMES.map((t) => ({ value: t.id, label: t.name })),
-        (theme) => updateSettings({ theme })
+        (theme) => updateSettings({ theme }),
       ),
-      "Applies to the terminal palette and the whole window chrome"
-    )
+      "Applies to the terminal palette and the whole window chrome",
+    ),
   );
   themeSection.appendChild(
     controlRow(
       "Background opacity",
       numberField(s.backgroundOpacity, OPACITY_MIN, OPACITY_MAX, 0.05, (backgroundOpacity) =>
-        updateSettings({ backgroundOpacity })
+        updateSettings({ backgroundOpacity }),
       ),
-      "Below 1 the terminal background becomes translucent with a blur"
-    )
+      "Below 1 the terminal background becomes translucent with a blur",
+    ),
   );
   body.appendChild(themeSection);
 
@@ -637,17 +591,21 @@ function buildGeneralTab(): HTMLElement {
   renderSection.appendChild(
     controlRow(
       "Cursor blink",
-      toggleField(s.cursorBlink, (cursorBlink) => updateSettings({ cursorBlink }))
-    )
+      toggleField(s.cursorBlink, (cursorBlink) => updateSettings({ cursorBlink })),
+    ),
   );
   renderSection.appendChild(
     controlRow(
       "Minimum contrast ratio",
-      numberField(s.minimumContrastRatio, CONTRAST_RATIO_MIN, CONTRAST_RATIO_MAX, 0.5, (minimumContrastRatio) =>
-        updateSettings({ minimumContrastRatio })
+      numberField(
+        s.minimumContrastRatio,
+        CONTRAST_RATIO_MIN,
+        CONTRAST_RATIO_MAX,
+        0.5,
+        (minimumContrastRatio) => updateSettings({ minimumContrastRatio }),
       ),
-      "Boost foreground text contrast against the background (1 = off)"
-    )
+      "Boost foreground text contrast against the background (1 = off)",
+    ),
   );
   body.appendChild(renderSection);
 
@@ -657,17 +615,17 @@ function buildGeneralTab(): HTMLElement {
     controlRow(
       "Copy on select",
       toggleField(s.copyOnSelect, (copyOnSelect) => updateSettings({ copyOnSelect })),
-      "Selecting text copies it to the clipboard automatically"
-    )
+      "Selecting text copies it to the clipboard automatically",
+    ),
   );
   mouseSection.appendChild(
     controlRow(
       "Middle-click paste",
       toggleField(s.pasteWithMiddleClick, (pasteWithMiddleClick) =>
-        updateSettings({ pasteWithMiddleClick })
+        updateSettings({ pasteWithMiddleClick }),
       ),
-      "Middle mouse button pastes the clipboard into the terminal"
-    )
+      "Middle mouse button pastes the clipboard into the terminal",
+    ),
   );
   body.appendChild(mouseSection);
 
@@ -692,8 +650,8 @@ function buildGeneralTab(): HTMLElement {
       controlRow(
         "Default agent",
         defaultAgentSelect(),
-        "Which session opens automatically on a fresh start (splash Skip / Continue with no saved layout), for the New agent tab shortcut, and when opening a recent project. “Nothing” opens an empty workspace — start sessions from the sidebar or palette."
-      )
+        "Which session opens automatically on a fresh start (splash Skip / Continue with no saved layout), for the New agent tab shortcut, and when opening a recent project. “Nothing” opens an empty workspace — start sessions from the sidebar or palette.",
+      ),
     );
     agentsContainer.replaceChildren(agentChecklist(), customAgentEditor());
   };
@@ -706,62 +664,10 @@ function buildGeneralTab(): HTMLElement {
     controlRow(
       "Worktree base dir",
       textField(s.worktreeBaseDir, (worktreeBaseDir) => updateSettings({ worktreeBaseDir })),
-      "Where \"worktree session\" checkouts are created (e.g. /tmp)"
-    )
+      'Where "worktree session" checkouts are created (e.g. /tmp)',
+    ),
   );
   body.appendChild(worktreeSection);
-
-  /* --- Dictation --- */
-  const dictationSection = section("Dictation");
-  dictationSection.appendChild(
-    controlRow(
-      "Engine",
-      selectField(
-        s.dictationEngine,
-        [
-          { value: "whisper", label: "Whisper (local)" },
-          { value: "cloud", label: "Cloud API" },
-        ],
-        (dictationEngine) => updateSettings({ dictationEngine })
-      ),
-      "Hold the Dictate key (rebindable in the Keybinds tab) in the terminal to dictate; Whisper uses a local model, Cloud API sends the audio to an OpenAI-compatible endpoint (needs the OPENAI_API_KEY environment variable)"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Microphone",
-      micSelect(s.dictationMic, (dictationMic) => updateSettings({ dictationMic })),
-      "Which microphone to capture from; System default follows the OS default input device"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Auto-download model",
-      toggleField(s.dictationAutoDownload, (dictationAutoDownload) =>
-        updateSettings({ dictationAutoDownload })
-      ),
-      "When the Whisper model is missing, download it on first use instead of failing with an error"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Model URL",
-      textField(s.dictationModelUrl, (dictationModelUrl) =>
-        updateSettings({ dictationModelUrl })
-      ),
-      "Download source for the Whisper model when missing (default: upstream HuggingFace release); leave empty for the default"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Model directory",
-      textField(s.dictationModelDir, (dictationModelDir) =>
-        updateSettings({ dictationModelDir })
-      ),
-      "Directory holding ggml-base.en.bin; leave empty for the default config models dir. Pre-provision a model here and disable auto-download to avoid runtime downloads"
-    )
-  );
-  body.appendChild(dictationSection);
 
   /* --- Notifications --- */
   const notifySection = section("Notifications");
@@ -769,48 +675,45 @@ function buildGeneralTab(): HTMLElement {
     controlRow(
       "Desktop notifications",
       toggleField(s.desktopNotifications, (desktopNotifications) =>
-        updateSettings({ desktopNotifications })
+        updateSettings({ desktopNotifications }),
       ),
-      "Show a system notification when a background agent session finishes"
-    )
+      "Show a system notification when a background agent session finishes",
+    ),
   );
   notifySection.appendChild(
     controlRow(
       "Push notifications (ntfy)",
       toggleField(s.ntfyEnabled, (ntfyEnabled) => updateSettings({ ntfyEnabled })),
-      "Publish agent-done notifications to an ntfy topic; subscribe your phone to receive them"
-    )
+      "Publish agent-done notifications to an ntfy topic; subscribe your phone to receive them",
+    ),
   );
   notifySection.appendChild(
     controlRow(
       "Server",
       textField(s.ntfyServer, (ntfyServer) => updateSettings({ ntfyServer })),
-      "ntfy base URL (default https://ntfy.sh, self-hosted instances welcome)"
-    )
+      "ntfy base URL (default https://ntfy.sh, self-hosted instances welcome)",
+    ),
   );
   notifySection.appendChild(
     controlRow(
       "Topic",
       textField(s.ntfyTopic, (ntfyTopic) => updateSettings({ ntfyTopic })),
-      "Published to <server>/<topic>; subscribe a device to receive the push"
-    )
+      "Published to <server>/<topic>; subscribe a device to receive the push",
+    ),
   );
   notifySection.appendChild(
     controlRow(
       "Access token",
       passwordField(s.ntfyToken, (ntfyToken) => updateSettings({ ntfyToken })),
-      "Optional ntfy access token, sent as Authorization: Bearer (stored unencrypted in settings.json)"
-    )
+      "Optional ntfy access token, sent as Authorization: Bearer (stored unencrypted in settings.json)",
+    ),
   );
   notifySection.appendChild(
     controlRow(
       "Test",
       (() => {
         const actions = el("div", "settings-actions");
-        const test = (
-          button: HTMLButtonElement,
-          send: () => Promise<void>
-        ) => {
+        const test = (button: HTMLButtonElement, send: () => Promise<void>) => {
           button.disabled = true;
           button.textContent = "Sending…";
           send()
@@ -837,8 +740,8 @@ function buildGeneralTab(): HTMLElement {
             invoke("notify_desktop", {
               title: "hiveField test",
               body: "Desktop notifications are working!",
-            })
-          )
+            }),
+          ),
         );
         const pushBtn = el("button", "settings-done");
         pushBtn.type = "button";
@@ -849,13 +752,13 @@ function buildGeneralTab(): HTMLElement {
             invoke("ntfy_send", {
               title: "hiveField test",
               body: "Push notifications are working!",
-            })
-          )
+            }),
+          ),
         );
         actions.append(desktopBtn, pushBtn);
         return actions;
-      })()
-    )
+      })(),
+    ),
   );
   body.appendChild(notifySection);
 
@@ -865,19 +768,19 @@ function buildGeneralTab(): HTMLElement {
     controlRow(
       "Play sound",
       toggleField(s.terminalBellSound, (terminalBellSound) =>
-        updateSettings({ terminalBellSound })
+        updateSettings({ terminalBellSound }),
       ),
-      "Play a bell tone when a terminal receives the BEL character"
-    )
+      "Play a bell tone when a terminal receives the BEL character",
+    ),
   );
   bellSection.appendChild(
     controlRow(
       "Notify",
       toggleField(s.terminalBellNotify, (terminalBellNotify) =>
-        updateSettings({ terminalBellNotify })
+        updateSettings({ terminalBellNotify }),
       ),
-      "Show a system notification when a terminal rings while its session is not the one you're looking at"
-    )
+      "Show a system notification when a terminal rings while its session is not the one you're looking at",
+    ),
   );
   body.appendChild(bellSection);
 
@@ -938,7 +841,6 @@ function buildKeybindsTab(): HTMLElement {
   panel.appendChild(footer);
 
   let recording: KeybindAction | null = null;
-  let recordingBtn: HTMLButtonElement | null = null;
 
   const showMessage = (text: string) => {
     message.textContent = text;
@@ -951,7 +853,6 @@ function buildKeybindsTab(): HTMLElement {
 
   const stopRecording = (): void => {
     recording = null;
-    recordingBtn = null;
     renderKeybindRows?.();
   };
 
@@ -999,7 +900,6 @@ function buildKeybindsTab(): HTMLElement {
       if (recording === def.id) {
         btn.classList.add("recording");
         btn.textContent = "Press keys…";
-        recordingBtn = btn;
       }
       btn.title = conflicting.has(def.id)
         ? "Bound to more than one action — the others won't fire"
@@ -1034,7 +934,6 @@ function buildKeybindsTab(): HTMLElement {
       // backdrop); drop the stale recording state so it doesn't linger.
       if (!overlay?.isConnected) {
         recording = null;
-        recordingBtn = null;
         return;
       }
       if (e.key === "Escape") {
@@ -1058,20 +957,15 @@ function buildKeybindsTab(): HTMLElement {
 
       const parsed = parseKeybind(formatted);
       if (!parsed) return;
-      if (
-        keyNeedsModifier(parsed.key) &&
-        !parsed.ctrl &&
-        !parsed.alt &&
-        !parsed.meta
-      ) {
+      if (keyNeedsModifier(parsed.key) && !parsed.ctrl && !parsed.alt && !parsed.meta) {
         showMessage(
-          `"${formatted}" needs a modifier (Ctrl/Alt/Meta) so it doesn't swallow terminal typing.`
+          `"${formatted}" needs a modifier (Ctrl/Alt/Meta) so it doesn't swallow terminal typing.`,
         );
         return;
       }
       const kb = getSettings().keybinds;
       const clash = KEYBIND_ACTIONS.find(
-        (a) => a.id !== recording && kb[a.id] && keybindEqual(kb[a.id], formatted)
+        (a) => a.id !== recording && kb[a.id] && keybindEqual(kb[a.id], formatted),
       );
       if (clash) {
         showMessage(`"${formatted}" is already bound to "${clash.label}".`);
@@ -1081,7 +975,7 @@ function buildKeybindsTab(): HTMLElement {
       void updateSettings({ keybinds: { ...kb, [recording]: formatted } });
       stopRecording();
     },
-    true
+    true,
   );
 
   render();
@@ -1199,9 +1093,7 @@ function buildUpdatesTab(): HTMLElement {
     setStatus("Downloading & installing…");
     try {
       const done: UpdateDone = await installUpdate();
-      setStatus(
-        `Installed ${done.version} → ${done.path}. Restart hiveField to use it.`
-      );
+      setStatus(`Installed ${done.version} → ${done.path}. Restart hiveField to use it.`);
       void invoke("notify_desktop", {
         title: "hiveField updated",
         body: `v${done.version} installed to ${done.path}. Restart to use it.`,
@@ -1306,8 +1198,7 @@ function buildOverlay(): HTMLElement {
   // write would silently diverge from what the user sees. Surface it here.
   const persistStatus = el("div", "settings-persist-status");
   persistStatus.hidden = true;
-  persistStatus.textContent =
-    "Saved in this window only — writing to disk failed.";
+  persistStatus.textContent = "Saved in this window only — writing to disk failed.";
   subscribePersistError((err) => {
     persistStatus.hidden = err === undefined;
     persistStatus.title = err ?? "";

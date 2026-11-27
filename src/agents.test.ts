@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
-  AGENTS,
   AGENT_MODES,
-  EDITOR_CMD,
-  RAW_MODE,
+  AGENTS,
   agentForModeAll,
   agentUsesWorktreeAll,
   allAgents,
+  EDITOR_CMD,
   isAgentModeAll,
   isKnownModeAll,
   makeCustomAgentId,
   modeCommandAll,
   modeIconAll,
   modeLabelAll,
+  RAW_MODE,
 } from "./agents";
 
 const NO_CUSTOMS: never[] = [];
@@ -72,9 +72,7 @@ describe("built-in registry (src/agents.json)", () => {
 
   test("editor and todotxt opt out of isolated worktrees", () => {
     for (const a of AGENTS) {
-      expect(agentUsesWorktreeAll(a.id, NO_CUSTOMS)).toBe(
-        a.id !== "editor" && a.id !== "todotxt"
-      );
+      expect(agentUsesWorktreeAll(a.id, NO_CUSTOMS)).toBe(a.id !== "editor" && a.id !== "todotxt");
     }
   });
 });
@@ -86,11 +84,7 @@ describe("custom agents merge", () => {
   ];
 
   test("allAgents appends customs after built-ins", () => {
-    expect(allAgents(customs).map((a) => a.id)).toEqual([
-      ...AGENT_MODES,
-      "custom-x",
-      "custom-y",
-    ]);
+    expect(allAgents(customs).map((a) => a.id)).toEqual([...AGENT_MODES, "custom-x", "custom-y"]);
   });
 
   test("lookup resolves built-ins and customs", () => {
@@ -136,10 +130,7 @@ describe("custom-agent id minting", () => {
   test("increments suffixes on collisions", () => {
     const existing = [{ id: "custom-x", label: "X", command: "x", icon: "✦" }];
     expect(makeCustomAgentId("X", existing)).toBe("custom-x-2");
-    const both = [
-      ...existing,
-      { id: "custom-x-2", label: "X", command: "x", icon: "✦" },
-    ];
+    const both = [...existing, { id: "custom-x-2", label: "X", command: "x", icon: "✦" }];
     expect(makeCustomAgentId("X", both)).toBe("custom-x-3");
   });
 

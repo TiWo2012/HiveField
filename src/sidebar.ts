@@ -13,29 +13,20 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { isKnownModeAll, modeIconAll, modeLabelAll } from "./agents";
-import { customs, DEFAULT_MODE, sessionModes, type Mode } from "./modes";
-import { getSettings, subscribe } from "./settings";
-import { toggleSettings } from "./settings-ui";
-import { addPanelWithMode, killParkedSession, shortLabel } from "./sessions";
-import { syncTerminalCursorFocus } from "./terminal";
-import { clearIdle, clearNotify, INDICATOR_ACTIVITY, INDICATOR_DONE } from "./titles";
-import {
-  getCurrentSlot,
-  getWorkspaceSlots,
-  renameWorkspace,
-  switchWorkspace,
-} from "./workspace";
-import { openPromptModal } from "./modal";
 import {
   beginSidebarDrag,
   buildDragGhost,
-  DRAG_GRACE_MS,
   DND_MIME,
   endSidebarDrag,
-  serializeDrag,
-  setNewWindowIndicator,
   type SessionDrag,
+  serializeDrag,
 } from "./dnd";
+import { openPromptModal } from "./modal";
+import { customs, DEFAULT_MODE, type Mode, sessionModes } from "./modes";
+import { addPanelWithMode, killParkedSession, shortLabel } from "./sessions";
+import type { AppSettings } from "./settings";
+import { getSettings, subscribe } from "./settings";
+import { toggleSettings } from "./settings-ui";
 import {
   bumpPanelCounter,
   getApi,
@@ -46,7 +37,9 @@ import {
   parkedSessions,
   sessions,
 } from "./state";
-import type { AppSettings } from "./settings";
+import { syncTerminalCursorFocus } from "./terminal";
+import { clearIdle, clearNotify, INDICATOR_ACTIVITY, INDICATOR_DONE } from "./titles";
+import { getCurrentSlot, getWorkspaceSlots, renameWorkspace, switchWorkspace } from "./workspace";
 
 /** Sidebar live sections (populated by buildSidebar). */
 let sidebarRunningEl: HTMLElement | null = null;
@@ -80,12 +73,36 @@ function sessionStatusGlyph(panelId: string): { glyph: string; cls: string } {
 }
 
 /**
+ * Coalesce sidebar refreshes to at most one per animation frame.
+ *
+ * Output bursts from several terminals can change titles/indicators many
+ * times in a single frame. Rebuilding the Running list for each change made
+ * the UI stutter with ten sessions all producing output, when one rebuild per
+ * frame shows exactly the same result. The hook stays fire-and-forget; callers
+ * never read the DOM back synchronously.
+ */
+let sidebarRefreshQueued = false;
+
+export function refreshSidebarRunning(): void {
+  if (sidebarRefreshQueued) return;
+  if (typeof requestAnimationFrame !== "function") {
+    renderSidebarRunning();
+    return;
+  }
+  sidebarRefreshQueued = true;
+  requestAnimationFrame(() => {
+    sidebarRefreshQueued = false;
+    renderSidebarRunning();
+  });
+}
+
+/**
  * Rebuild the "Running" sidebar list from the live dockview layout. The list
  * is small, so it's fine to re-render on every title/indicator/active-panel
  * change (renderTitle/setIndicator and the panel lifecycle hooks keep it in
  * sync). Newest session first.
  */
-export function refreshSidebarRunning(): void {
+function renderSidebarRunning(): void {
   if (!sidebarRunningEl) return;
   sidebarRunningEl.replaceChildren();
 
@@ -101,14 +118,12 @@ export function refreshSidebarRunning(): void {
   for (const panel of [...panels].reverse()) {
     const params = panel.api.getParameters() as Record<string, unknown>;
     const mode: Mode =
-      typeof params.mode === "string" &&
-      isKnownModeAll(params.mode, customs())
+      typeof params.mode === "string" && isKnownModeAll(params.mode, customs())
         ? params.mode
         : DEFAULT_MODE;
     const sessionId = panelToSession.get(panel.id);
     const entry = sessionId !== undefined ? sessions.get(sessionId) : undefined;
-    const cwd =
-      entry?.cwd ?? (typeof params.cwd === "string" ? params.cwd : undefined);
+    const cwd = entry?.cwd ?? (typeof params.cwd === "string" ? params.cwd : undefined);
     const { glyph, cls } = sessionStatusGlyph(panel.id);
 
     const item = document.createElement("div");
@@ -285,7 +300,7 @@ function renderWorkspaceSection(): void {
 
   addRow("Directory", launchCwd ? shortLabel(launchCwd) : "…", launchCwd);
   // "—" while the fetch is pending or when the launch dir isn't a git repo.
-  addRow("Branch", gitRoot === undefined ? undefined : gitBranch ?? "detached");
+  addRow("Branch", gitRoot === undefined ? undefined : (gitBranch ?? "detached"));
   if (gitRoot !== undefined) addRow("Worktrees", String(gitWorktreeCount));
   addRow("Sessions", String((getApi()?.panels.length ?? 0) + parkedSessions.size));
 }
@@ -302,9 +317,7 @@ let lastVisibleAgents = visibleAgentsKey(getSettings());
  * an existing one, so the sidebar must rebuild in both cases.
  */
 function visibleAgentsKey(s: AppSettings): string {
-  return `${s.visibleAgents.join(",")}|${s.customAgents
-    .map((a) => a.id)
-    .join(",")}`;
+  return `${s.visibleAgents.join(",")}|${s.customAgents.map((a) => a.id).join(",")}`;
 }
 
 /**
@@ -470,9 +483,7 @@ export function syncSidebarSourcesToSettings(): void {
  * Locate the terminal content element for a panel (it carries data-panel-id).
  */
 function findTerminalElement(panelId: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    `.terminal-panel[data-panel-id="${panelId}"]`
-  );
+  return document.querySelector<HTMLElement>(`.terminal-panel[data-panel-id="${panelId}"]`);
 }
 
 /**
@@ -528,7 +539,7 @@ function parkWorkspaceSessions(slot: number): void {
  */
 export function switchToWorkspace(slot: number): void {
   void switchWorkspace(getApi(), slot, (_panels, leavingSlot) =>
-    parkWorkspaceSessions(leavingSlot)
+    parkWorkspaceSessions(leavingSlot),
   ).then((restored) => {
     // Restored panels carry serialized ids like `panel-1`, so bump the
     // counter past them before any new panel is added (avoids duplicates).

@@ -5,7 +5,10 @@
 //! 1. Spawning a real shell (e.g. `$SHELL`, `bash`, `pwsh`) inside a
 //!    pseudo-terminal using the `portable-pty` crate.
 //! 2. Reading the shell's output and forwarding it to the frontend as
-//!    `pty://output` events carrying UTF-8 strings.
+//!    `pty://output` events carrying UTF-8 strings. Reads are coalesced into
+//!    short batches before emission: each event evaluates a JS snippet in the
+//!    webview, so one event per read saturated the UI when several terminals
+//!    were flooding output at once (see [`OutputSink`]).
 //! 3. Writing user input received from the frontend into the PTY.
 //! 4. Resizing the PTY when the xterm.js viewport changes.
 //! 5. Emitting a `pty://exit` event (with the exit code) when the shell dies.
@@ -37,7 +40,9 @@ use crate::{PtyState, Unpoisoned};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -45,7 +50,6 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 /// A live PTY session: the master end of the pseudo-terminal plus the shell
 /// child process and a handle used to emit events to the frontend.
 pub struct PtySession<R: tauri::Runtime = tauri::Wry> {
-    session_id: u64,
     /// The window that spawned this session (its label), so closing that
     /// window can tear the session down. `None` for sessions from before
     /// multi-window support (should not happen at runtime).
@@ -53,21 +57,86 @@ pub struct PtySession<R: tauri::Runtime = tauri::Wry> {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
+    /// Buffering + emission shared with this session's output emitter thread.
+    sink: Arc<OutputSink<R>>,
+}
+
+/// Per-session output buffering and delivery.
+///
+/// The reader thread hands decoded chunks to an emitter thread, which coalesces
+/// them into short batches (see [`OUTPUT_COALESCE_WINDOW`]) before emitting
+/// `pty://output`. Each emitted event compiles and evaluates a JS snippet in
+/// the webview, so emitting one event per 4 KiB read made a busy terminal
+/// flooding output saturate the main thread — and the problem multiplied with
+/// every open terminal. Batching caps the event rate per session no matter how
+/// much text the shell produces.
+///
+/// This is also the *single* output-buffering point in the app until the
+/// frontend is ready. The frontend registers its session entry *before* its
+/// first contact (the first `pty_resize` only fires after the session is
+/// registered), so every `pty://output` event is delivered to a terminal that
+/// already exists — the frontend must never re-buffer output on its side, or
+/// it would re-order/drop it across session handoffs.
+struct OutputSink<R: Runtime> {
     app: AppHandle<R>,
+    /// The window that owns this session (never broadcast), if known.
+    window_label: Option<String>,
+    session_id: u64,
     /// Set once the frontend has contacted the backend for this session (first
     /// write/resize). Until then, shell output is buffered so the initial
     /// prompt is not lost while the webview is still registering its event
     /// listeners.
-    ///
-    /// This is the *single* output-buffering point in the app. The frontend
-    /// registers its session entry *before* that first contact (the first
-    /// `pty_resize` only fires after the session is registered), so every
-    /// `pty://output` event is delivered to a terminal that already exists —
-    /// the frontend must never re-buffer output on its side, or it would
-    /// re-order/drop it across session handoffs.
-    ready: Arc<AtomicBool>,
+    ready: AtomicBool,
     /// Output buffered before the frontend was ready.
-    buffer: Arc<Mutex<Vec<String>>>,
+    buffer: Mutex<Vec<String>>,
+    /// Serializes emission so a concurrent `mark_ready` flush and the emitter
+    /// thread can never deliver batches out of order.
+    emit_lock: Mutex<()>,
+}
+
+impl<R: Runtime> OutputSink<R> {
+    fn new(app: AppHandle<R>, window_label: Option<String>, session_id: u64) -> Self {
+        Self {
+            app,
+            window_label,
+            session_id,
+            ready: AtomicBool::new(false),
+            buffer: Mutex::new(Vec::new()),
+            emit_lock: Mutex::new(()),
+        }
+    }
+
+    /// Accept one coalesced output batch: buffer it until the frontend is
+    /// ready, then deliver it (and any earlier buffered batches) in order.
+    fn push(&self, data: String) {
+        let drain = {
+            let mut pending = self.buffer.lock_unpoisoned();
+            pending.push(data);
+            if self.ready.load(Ordering::Relaxed) {
+                pending.drain(..).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
+        };
+        // Emit outside the buffer lock: sending IPC to the webview may block
+        // if the webview is busy. The emit lock still keeps batches ordered.
+        let _emit = self.emit_lock.lock_unpoisoned();
+        for s in drain {
+            emit_output(&self.app, &self.window_label, self.session_id, &s);
+        }
+    }
+
+    /// Mark the frontend as ready (first contact) and flush any output that was
+    /// buffered before the webview finished registering its event listeners.
+    fn mark_ready(&self) {
+        if !self.ready.swap(true, Ordering::Relaxed) {
+            let drained: Vec<String> = self.buffer.lock_unpoisoned().drain(..).collect();
+            let _emit = self.emit_lock.lock_unpoisoned();
+            for s in drained {
+                emit_output(&self.app, &self.window_label, self.session_id, &s);
+            }
+        }
+    }
 }
 
 /// Payload for the `pty://output` event emitted to the frontend.
@@ -185,6 +254,9 @@ impl Utf8StreamDecoder {
 ///
 /// `window_label` records which window spawned this session (its label), so
 /// closing that window can tear the session down with it.
+// The positional parameters mirror the IPC payload one-for-one; grouping them
+// into a struct would just move the same fields behind another name.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn<R: Runtime>(
     app: &AppHandle<R>,
     session_id: u64,
@@ -233,20 +305,19 @@ pub fn spawn<R: Runtime>(
     let mut reader = master.try_clone_reader()?;
     let writer = master.take_writer()?;
 
-    let ready = Arc::new(AtomicBool::new(false));
-    let buffer = Arc::new(Mutex::new(Vec::new()));
     // Events go only to the window that spawned the session (never broadcast),
     // so another window's frontend never buffers output it does not own.
-    let owner_label = window_label.clone();
-    let session = PtySession {
+    let sink = Arc::new(OutputSink::new(
+        app.clone(),
+        window_label.clone(),
         session_id,
+    ));
+    let session = PtySession {
         window_label,
         master,
         child,
         writer,
-        app: app.clone(),
-        ready: ready.clone(),
-        buffer: buffer.clone(),
+        sink: sink.clone(),
     };
     app.state::<crate::PtyState<R>>()
         .sessions
@@ -255,6 +326,12 @@ pub fn spawn<R: Runtime>(
 
     let reader_app = app.clone();
     std::thread::spawn(move || {
+        // Decode on the reader thread, coalesce + emit on a separate thread so
+        // a slow webview never stalls the PTY drain.
+        let (tx, rx) = mpsc::channel::<String>();
+        let emitter_sink = sink.clone();
+        let emitter = std::thread::spawn(move || run_emitter(rx, emitter_sink));
+
         let mut decoder = Utf8StreamDecoder::new();
         let mut buf = [0u8; READ_BUF_SIZE];
         loop {
@@ -262,29 +339,19 @@ pub fn spawn<R: Runtime>(
                 Ok(0) => break,
                 Ok(n) => {
                     let data = decoder.push(&buf[..n]);
-                    if !data.is_empty() {
-                        // Emit once the frontend is ready; otherwise buffer.
-                        // Push + check happen under the buffer lock so a
-                        // concurrent `mark_ready` sees every un-flushed chunk.
-                        let drain = {
-                            let mut pending = buffer.lock_unpoisoned();
-                            pending.push(data);
-                            if ready.load(Ordering::Relaxed) {
-                                pending.drain(..).collect::<Vec<_>>()
-                            } else {
-                                Vec::new()
-                            }
-                        };
-                        // Emit outside the lock: `emit_output` sends IPC to
-                        // the webview and may block if the webview is busy.
-                        for s in drain {
-                            emit_output(&reader_app, &owner_label, session_id, &s);
-                        }
+                    if !data.is_empty() && tx.send(data).is_err() {
+                        // The emitter thread is gone; no point continuing.
+                        break;
                     }
                 }
                 Err(_) => break,
             }
         }
+
+        // Closing the channel lets the emitter flush its last batch, and
+        // joining guarantees the output is delivered before `pty://exit`.
+        drop(tx);
+        let _ = emitter.join();
 
         let session = reader_app
             .state::<crate::PtyState<R>>()
@@ -301,12 +368,15 @@ pub fn spawn<R: Runtime>(
                     .unwrap_or(0) as i32;
                 match &session.window_label {
                     Some(label) => {
-                        let _ = session
-                            .app
-                            .emit_to(label, "pty://exit", ExitPayload { session_id, code });
+                        let _ = session.sink.app.emit_to(
+                            label,
+                            "pty://exit",
+                            ExitPayload { session_id, code },
+                        );
                     }
                     None => {
                         let _ = session
+                            .sink
                             .app
                             .emit("pty://exit", ExitPayload { session_id, code });
                     }
@@ -344,11 +414,52 @@ pub fn spawn<R: Runtime>(
 const INITIAL_PTY_ROWS: u16 = 30;
 const INITIAL_PTY_COLS: u16 = 120;
 
-/// Size of each raw read from the PTY master.
-const READ_BUF_SIZE: usize = 4096;
+/// Size of each raw read from the PTY master. A larger buffer means fewer
+/// read syscalls and fewer channel sends for a flooding shell; it does not add
+/// latency, because `read` returns as soon as any data is available.
+const READ_BUF_SIZE: usize = 64 * 1024;
+
+/// How long the emitter collects output before sending a batch. Roughly one
+/// frame at 144 Hz: low enough to feel instant, high enough to collapse a
+/// burst of PTY reads into a single `pty://output` event.
+const OUTPUT_COALESCE_WINDOW: Duration = Duration::from_millis(6);
+
+/// Upper bound on a single coalesced batch. Caps the JS payload size and the
+/// time output is held back when a shell produces data faster than the
+/// coalescing window can absorb it.
+const OUTPUT_COALESCE_MAX_BYTES: usize = 64 * 1024;
 
 /// How long after spawn the agent auto-run command is typed into the shell.
 const AUTORUN_DELAY_MS: u64 = 500;
+
+/// Receive decoded output chunks and emit them in coalesced batches until the
+/// reader closes the channel.
+fn run_emitter<R: Runtime>(rx: Receiver<String>, sink: Arc<OutputSink<R>>) {
+    while let Ok(first) = rx.recv() {
+        sink.push(coalesce(&rx, first));
+    }
+}
+
+/// Join `first` with any chunks that arrive within [`OUTPUT_COALESCE_WINDOW`]
+/// (or until [`OUTPUT_COALESCE_MAX_BYTES`] is reached).
+fn coalesce(rx: &Receiver<String>, mut batch: String) -> String {
+    let deadline = Instant::now() + OUTPUT_COALESCE_WINDOW;
+    while batch.len() < OUTPUT_COALESCE_MAX_BYTES {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok(next) => batch.push_str(&next),
+            // Window elapsed with nothing more queued.
+            Err(RecvTimeoutError::Timeout) => break,
+            // The reader is done; flush what we have and let the caller's
+            // next `recv` observe the disconnect.
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    batch
+}
 
 /// Map a session mode to the command auto-run in its shell.
 ///
@@ -421,7 +532,11 @@ pub fn editor_command() -> String {
 /// Returns `None` only when every candidate is missing or unreadable.
 fn resolve_start_dir(preferred: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = preferred {
-        if let Some(canonical) = dir.canonicalize().ok().filter(|d| std::fs::read_dir(d).is_ok()) {
+        if let Some(canonical) = dir
+            .canonicalize()
+            .ok()
+            .filter(|d| std::fs::read_dir(d).is_ok())
+        {
             return Some(canonical);
         }
     }
@@ -448,12 +563,17 @@ pub fn write<R: Runtime>(state: &PtyState<R>, session_id: u64, data: &str) -> io
     })?;
     session.writer.write_all(data.as_bytes())?;
     session.writer.flush()?;
-    mark_ready(session);
+    session.sink.mark_ready();
     Ok(())
 }
 
 /// Resize the session's PTY to match the frontend terminal viewport.
-pub fn resize<R: Runtime>(state: &PtyState<R>, session_id: u64, cols: u16, rows: u16) -> io::Result<()> {
+pub fn resize<R: Runtime>(
+    state: &PtyState<R>,
+    session_id: u64,
+    cols: u16,
+    rows: u16,
+) -> io::Result<()> {
     let mut guard = state.sessions.lock_unpoisoned();
     let session = guard.get_mut(&session_id).ok_or_else(|| {
         io::Error::new(
@@ -470,7 +590,7 @@ pub fn resize<R: Runtime>(state: &PtyState<R>, session_id: u64, cols: u16, rows:
             pixel_height: 0,
         })
         .map_err(io::Error::other)?;
-    mark_ready(session);
+    session.sink.mark_ready();
     Ok(())
 }
 
@@ -525,17 +645,6 @@ pub fn kill_window_sessions<R: Runtime>(state: &PtyState<R>, window_label: &str)
     }
 }
 
-/// Mark the frontend as ready (first contact) and flush any output that was
-/// buffered before the webview finished registering its event listeners.
-fn mark_ready<R: Runtime>(session: &mut PtySession<R>) {
-    if !session.ready.swap(true, Ordering::Relaxed) {
-        let drained: Vec<String> = session.buffer.lock_unpoisoned().drain(..).collect();
-        for s in drained {
-            emit_output(&session.app, &session.window_label, session.session_id, &s);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,7 +676,10 @@ mod tests {
     fn kill_unknown_session_is_idempotent() {
         let state = empty_state();
         assert!(kill(&state, 42).is_ok(), "first kill should be a no-op");
-        assert!(kill(&state, 42).is_ok(), "second kill should also be a no-op");
+        assert!(
+            kill(&state, 42).is_ok(),
+            "second kill should also be a no-op"
+        );
     }
 
     #[test]
@@ -668,10 +780,9 @@ mod tests {
 
         let mut ids = std::collections::BTreeSet::new();
         for entry in agents {
-            let id = entry
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| panic!("every agent in src/agents.json needs an \"id\": {entry}"));
+            let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or_else(|| {
+                panic!("every agent in src/agents.json needs an \"id\": {entry}")
+            });
             assert_ne!(
                 id, "raw",
                 "the plain-shell mode \"raw\" must never be registered as an agent"
@@ -789,8 +900,19 @@ mod tests {
 
     #[test]
     fn decoder_bytewise_reconstructs_utf8() {
-        for case in ["hello", "café", "中文", "😀", "👨\u{200D}👩\u{200D}👧", "aé中😀"] {
-            assert_eq!(decode_bytewise(case.as_bytes()), case, "round-trip failed for {case:?}");
+        for case in [
+            "hello",
+            "café",
+            "中文",
+            "😀",
+            "👨\u{200D}👩\u{200D}👧",
+            "aé中😀",
+        ] {
+            assert_eq!(
+                decode_bytewise(case.as_bytes()),
+                case,
+                "round-trip failed for {case:?}"
+            );
         }
     }
 
@@ -798,5 +920,38 @@ mod tests {
     fn decoder_bytewise_zwj_family_emoji() {
         let fam = "👨\u{200D}👩\u{200D}👧";
         assert_eq!(decode_bytewise(fam.as_bytes()), fam);
+    }
+
+    // ---- output coalescing ----
+
+    #[test]
+    fn coalesce_joins_queued_chunks_in_order() {
+        let (tx, rx) = mpsc::channel::<String>();
+        for chunk in ["one", "-", "two"] {
+            tx.send(chunk.into()).unwrap();
+        }
+        let first = rx.recv().unwrap();
+        assert_eq!(coalesce(&rx, first), "one-two");
+    }
+
+    #[test]
+    fn coalesce_stops_at_the_max_batch_size() {
+        let (tx, rx) = mpsc::channel::<String>();
+        let full = "x".repeat(OUTPUT_COALESCE_MAX_BYTES);
+        tx.send(full.clone()).unwrap();
+        tx.send("leftover".into()).unwrap();
+        let first = rx.recv().unwrap();
+        // `first` is already at the cap, so nothing further is consumed.
+        assert_eq!(coalesce(&rx, first).len(), OUTPUT_COALESCE_MAX_BYTES);
+        assert_eq!(rx.try_recv().unwrap(), "leftover");
+    }
+
+    #[test]
+    fn coalesce_flushes_when_the_reader_closes() {
+        let (tx, rx) = mpsc::channel::<String>();
+        tx.send("last words".into()).unwrap();
+        let first = rx.recv().unwrap();
+        drop(tx);
+        assert_eq!(coalesce(&rx, first), "last words");
     }
 }

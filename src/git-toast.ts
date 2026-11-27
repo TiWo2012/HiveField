@@ -27,17 +27,17 @@ const GIT_REPORT_INITIAL_DELAY_MS = 10_000;
 /** Re-arm interval between change-set polls. */
 const GIT_REPORT_POLL_MS = 30_000;
 
-let gitReportTimer: ReturnType<typeof setTimeout> | undefined;
 /** The currently visible toast (updated in-place, never stacked). */
 let gitDiffToast: HTMLElement | null = null;
 /** Mutable text spans within the toast, so polls can update without recreating the DOM. */
-let gitDiffSpans: { files: HTMLSpanElement; plus: HTMLSpanElement; minus: HTMLSpanElement } | null = null;
+let gitDiffSpans: { files: HTMLSpanElement; plus: HTMLSpanElement; minus: HTMLSpanElement } | null =
+  null;
 /** Auto-dismiss timer ID so we can reset it when the toast is refreshed. */
 let gitDiffDismissTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Start polling for repo changes since launch (first check after 10s). */
 export function scheduleGitDiffReport(): void {
-  gitReportTimer = setTimeout(() => void pollGitDiffReport(), GIT_REPORT_INITIAL_DELAY_MS);
+  setTimeout(() => void pollGitDiffReport(), GIT_REPORT_INITIAL_DELAY_MS);
 }
 
 async function pollGitDiffReport(): Promise<void> {
@@ -48,7 +48,7 @@ async function pollGitDiffReport(): Promise<void> {
     // Not a git repo / backend unavailable: nothing to report.
   }
   if (summary && summary.changed > 0) showGitDiffToast(summary);
-  gitReportTimer = setTimeout(() => void pollGitDiffReport(), GIT_REPORT_POLL_MS);
+  setTimeout(() => void pollGitDiffReport(), GIT_REPORT_POLL_MS);
 }
 
 function showGitDiffToast(summary: GitDiffSummary): void {

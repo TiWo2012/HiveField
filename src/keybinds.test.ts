@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_KEYBINDS,
-  KEYBIND_ACTIONS,
   formatKeybind,
-  keyNeedsModifier,
+  KEYBIND_ACTIONS,
   keybindEqual,
   keybindSearchMatches,
+  keyNeedsModifier,
   matchesKeybind,
   normalizeKeyName,
   parseKeybind,
@@ -34,12 +34,21 @@ describe("keybind registry", () => {
   });
 
   test("DEFAULT_KEYBINDS keys are exactly the action ids", () => {
-    expect(Object.keys(DEFAULT_KEYBINDS).sort()).toEqual([...KEYBIND_ACTIONS.map((a) => a.id)].sort());
+    expect(Object.keys(DEFAULT_KEYBINDS).sort()).toEqual(
+      [...KEYBIND_ACTIONS.map((a) => a.id)].sort(),
+    );
   });
 
   test("tab cycling defaults are Ctrl+Tab / Ctrl+Shift+Tab", () => {
     expect(DEFAULT_KEYBINDS.nextTab).toBe("Ctrl+Tab");
     expect(DEFAULT_KEYBINDS.previousTab).toBe("Ctrl+Shift+Tab");
+  });
+
+  test("open directory default is Ctrl+Shift+O", () => {
+    expect(DEFAULT_KEYBINDS.openDirectory).toBe("Ctrl+Shift+O");
+    // Must not collide with any other default binding.
+    const others = KEYBIND_ACTIONS.filter((a) => a.id !== "openDirectory").map((a) => a.default);
+    expect(others).not.toContain(DEFAULT_KEYBINDS.openDirectory);
   });
 
   test("fullscreen default is Ctrl+F", () => {
@@ -49,10 +58,15 @@ describe("keybind registry", () => {
   });
 
   test("Ctrl+F matches the fullscreen binding", () => {
-    expect(matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F", ctrlKey: true }))).toBe(true);
+    expect(matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F", ctrlKey: true }))).toBe(
+      true,
+    );
     // Ctrl+Shift+F is find, not fullscreen; bare F must not match.
     expect(
-      matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F", ctrlKey: true, shiftKey: true }))
+      matchesKeybind(
+        DEFAULT_KEYBINDS.fullscreen,
+        keyEvent({ key: "F", ctrlKey: true, shiftKey: true }),
+      ),
     ).toBe(false);
     expect(matchesKeybind(DEFAULT_KEYBINDS.fullscreen, keyEvent({ key: "F" }))).toBe(false);
   });
@@ -79,9 +93,9 @@ describe("normalizeKeyName", () => {
 
 describe("formatKeybind", () => {
   test("formats a chord in canonical modifier order", () => {
-    expect(
-      formatKeybind(keyEvent({ key: "t", ctrlKey: true, shiftKey: true }))
-    ).toBe("Ctrl+Shift+T");
+    expect(formatKeybind(keyEvent({ key: "t", ctrlKey: true, shiftKey: true }))).toBe(
+      "Ctrl+Shift+T",
+    );
   });
 
   test("returns null for modifier-only, dead and IME keys", () => {
@@ -95,7 +109,7 @@ describe("formatKeybind", () => {
 
   test("handles the equals key on US layouts (e.key '+')", () => {
     expect(formatKeybind(keyEvent({ key: "+", ctrlKey: true, shiftKey: true }))).toBe(
-      "Ctrl+Shift++"
+      "Ctrl+Shift++",
     );
   });
 });
@@ -137,14 +151,14 @@ describe("parseKeybind", () => {
 describe("matchesKeybind", () => {
   test("matches when modifiers and key align", () => {
     expect(
-      matchesKeybind("Ctrl+Shift+T", keyEvent({ key: "T", ctrlKey: true, shiftKey: true }))
+      matchesKeybind("Ctrl+Shift+T", keyEvent({ key: "T", ctrlKey: true, shiftKey: true })),
     ).toBe(true);
   });
 
   test("fails on modifier or key mismatch", () => {
     expect(matchesKeybind("Ctrl+Shift+T", keyEvent({ key: "T", ctrlKey: true }))).toBe(false);
     expect(
-      matchesKeybind("Ctrl+Shift+T", keyEvent({ key: "X", ctrlKey: true, shiftKey: true }))
+      matchesKeybind("Ctrl+Shift+T", keyEvent({ key: "X", ctrlKey: true, shiftKey: true })),
     ).toBe(false);
   });
 

@@ -8,8 +8,8 @@
  * content into the active terminal (bracketed-paste aware, like Ctrl+Shift+V).
  */
 
-import { getSettings, type PromptSnippet } from "./settings";
 import type { PaletteItem } from "./palette";
+import { getSettings, type PromptSnippet } from "./settings";
 
 /** Fallback label shown for snippets whose name was left blank. */
 const UNNAMED = "(unnamed)";

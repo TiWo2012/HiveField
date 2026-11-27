@@ -3,15 +3,19 @@ x 2026-08-09 2026-08-09 add built-in updater (GitHub releases check/download/ins
 x 2026-08-09 2026-08-09 audit repo infrastructure and document potential additions (docs/INFRA_PLAN.md)
 x 2026-08-09 2026-08-09 add the ability to search for keybindings
 x 2026-08-09 2026-08-09 add tab cycling via ctrl-tab (Ctrl+Tab / Ctrl+Shift+Tab)
-2026-08-09 wire up logging + panic hook (tauri-plugin-log, rotated log file)
+x 2026-08-09 2026-11-27 wire up logging + panic hook (tauri-plugin-log, rotated log file)
 x 2026-08-09 2026-08-09 add diagnostics command (hivefield --doctor / palette "Copy diagnostics")
-2026-08-09 add lint + format gates to CI (cargo fmt/clippy, biome for frontend)
-2026-08-09 cross-platform test matrix + macOS/Windows release assets
-2026-08-09 updater checksum verification (SHA-256 in release) + dependabot
-2026-08-09 single-source app version + CI sync check (package.json/Cargo.toml/tauri.conf.json)
-2026-08-09 release workflow_dispatch + changelog generation (git-cliff)
+x 2026-11-27 2026-08-09 add lint + format gates to CI (cargo fmt/clippy, biome for frontend)
+x 2026-08-09 2026-08-09 cross-platform test matrix + macOS/Windows release assets
+x 2026-08-09 2026-11-27 updater checksum verification (SHA-256 in release) + dependabot
+x 2026-11-27 2026-08-09 single-source app version + CI sync check (scripts/version.ts, test.yml)
+x 2026-11-27 2026-08-09 release workflow_dispatch + changelog generation (git-cliff)
 2026-08-09 coverage reporting with CI gate (cargo llvm-cov, bun --coverage)
 2026-08-09 security: set CSP + scope file_read/file_write paths
 2026-08-09 dev-experience glue: pre-commit hook, .editorconfig, CHANGELOG.md
 x 2026-08-09 2026-08-09 add fullscreen support for splits/tabs via Ctrl+F
 x 2026-08-09 2026-08-09 add a configurable default agent (Settings → Agents) with an option to open nothing
+x 2026-08-09 2026-08-09 install a .desktop menu entry (and icon) on Linux in install.sh + built-in updater
+x 2026-08-09 2026-08-09 register launcher entries on Windows (Start Menu) and macOS (Launchpad) in install.sh/install.ps1 + built-in updater
+x 2026-11-27 2026-11-27 add "Open Directory…" (Ctrl+Shift+O + File menu) to start a session in a chosen folder
+x 2026-11-27 2026-11-27 fix lag with many terminals when output streams at once

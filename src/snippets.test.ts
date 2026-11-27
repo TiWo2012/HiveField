@@ -6,8 +6,8 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
+import { DEFAULT_SETTINGS, type PromptSnippet, updateSettings } from "./settings";
 import { snippetPickerItems } from "./snippets";
-import { DEFAULT_SETTINGS, updateSettings, type PromptSnippet } from "./settings";
 
 beforeEach(async () => {
   // Restore the default snippet list between tests.

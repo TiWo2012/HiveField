@@ -12,30 +12,32 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  createDockview,
-  positionToDirection,
   type AddPanelPositionOptions,
+  createDockview,
   type IDockviewPanel,
+  positionToDirection,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
 import "./styles.css";
 import { isKnownModeAll, RAW_MODE } from "./agents";
-import { customs, defaultMode, sessionModes } from "./modes";
-import { getSettings, loadSettings, subscribe } from "./settings";
-import { getTheme } from "./themes";
-import { initDictation } from "./dictation";
-import { initSearch, isSearchOpen, rerunSearch } from "./search";
-import { initPalette } from "./palette";
 import {
-  bindWorkspaceSave,
-  clearCurrentWorkspaceIfEmpty,
-  getWorkspaceCwd,
-  getWorkspaceSlots,
-  loadWorkspaces,
-  restoreWorkspace,
-} from "./workspace";
-import { mountSplash, type SplashHandle } from "./splash";
+  isHiveFieldDrag,
+  markDragOpenedSession,
+  resolveDragPayload,
+  setupSidebarDndFallback,
+} from "./dnd";
 import { initFileDrop, shellQuote } from "./file-drop";
+import { scheduleGitDiffReport } from "./git-toast";
+import { setupKeyboard } from "./keyboard";
+import { registerGlobalListeners } from "./listeners";
+import { setupContextMenu } from "./menus";
+import { customs, defaultMode, sessionModes } from "./modes";
+import { openDirectory } from "./open-directory";
+import { initPalette } from "./palette";
+import { buildPaletteItems } from "./palette-items";
+import { initSearch, isSearchOpen, rerunSearch } from "./search";
+import { activeSessionEntry, addPanelWithMode, createTerminalComponent } from "./sessions";
+import { getSettings, loadSettings, subscribe } from "./settings";
 import {
   buildSidebar,
   refreshSidebarRunning,
@@ -44,27 +46,7 @@ import {
   scheduleWorkspaceRefresh,
   syncSidebarSourcesToSettings,
 } from "./sidebar";
-import { registerGlobalListeners } from "./listeners";
-import { setupKeyboard } from "./keyboard";
-import { setupContextMenu } from "./menus";
-import { buildPaletteItems } from "./palette-items";
-import { scheduleGitDiffReport } from "./git-toast";
-import { openNewWindow } from "./windows";
-import { addPanelWithMode, activeSessionEntry, createTerminalComponent } from "./sessions";
-import {
-  applyTerminalSettings,
-  applyUiTheme,
-  ensureTerminalFont,
-  syncSize,
-  syncTerminalCursorFocus,
-} from "./terminal";
-import { clearIndicator, panelForTabElement, renamePanel } from "./titles";
-import {
-  isHiveFieldDrag,
-  markDragOpenedSession,
-  resolveDragPayload,
-  setupSidebarDndFallback,
-} from "./dnd";
+import { mountSplash, type SplashHandle } from "./splash";
 import {
   bumpPanelCounter,
   discardSession,
@@ -79,6 +61,24 @@ import {
   setWindowFocused,
 } from "./state";
 import { initStatusBar, refreshStatusBar } from "./status-bar";
+import {
+  applyTerminalSettings,
+  applyUiTheme,
+  ensureTerminalFont,
+  syncSize,
+  syncTerminalCursorFocus,
+} from "./terminal";
+import { getTheme } from "./themes";
+import { clearIndicator, panelForTabElement, renamePanel } from "./titles";
+import { openNewWindow } from "./windows";
+import {
+  bindWorkspaceSave,
+  clearCurrentWorkspaceIfEmpty,
+  getWorkspaceCwd,
+  getWorkspaceSlots,
+  loadWorkspaces,
+  restoreWorkspace,
+} from "./workspace";
 
 async function init() {
   await loadSettings();
@@ -110,7 +110,7 @@ async function init() {
     }
     document.documentElement.style.setProperty(
       "--hivefield-font",
-      `"${settings.fontFamily}", monospace`
+      `"${settings.fontFamily}", monospace`,
     );
     applyUiTheme(settings);
     // Keep the status bar's keybind hint current.
@@ -140,9 +140,13 @@ async function init() {
     // Font API unavailable — nothing to wait on.
   }
 
-  // The native File → New Window menu item broadcasts this event; only the
-  // focused window acts on it (it knows its own launch directory, which it
-  // passes to the backend so the new window opens on the same project).
+  // The native File menu items broadcast these events; only the focused
+  // window acts on them (it knows its own launch directory, which it passes
+  // to the backend so the new window opens on the same project).
+  await listen("menu://open-directory", async () => {
+    const win = getCurrentWindow();
+    if (await win.isFocused().catch(() => true)) await openDirectory();
+  });
   await listen("menu://new-window", async () => {
     const win = getCurrentWindow();
     if (await win.isFocused().catch(() => true)) openNewWindow();
@@ -171,7 +175,7 @@ async function init() {
         if (location !== "content") return undefined;
         return { activationSize: { value: 30, type: "percentage" } };
       },
-    })
+    }),
   );
   applyUiTheme(getSettings());
 
@@ -263,8 +267,6 @@ async function init() {
   // Status bar (below the terminal area): broadcast toggle + active session info.
   initStatusBar();
 
-  initDictation();
-
   // Floating search bar (Ctrl+Shift+F) over the terminal workspace.
   initSearch({
     container: document.getElementById("terminal")!,
@@ -342,7 +344,7 @@ async function init() {
       const sessionId = panel ? panelToSession.get(panel.id) : undefined;
       if (sessionId !== undefined) {
         invoke("pty_write", { sessionId, data }).catch((err) =>
-          console.error("failed to write dropped path", err)
+          console.error("failed to write dropped path", err),
         );
         return;
       }
@@ -372,9 +374,7 @@ async function init() {
         // path in the restored shell, like a normal file drop would.
         writeIntoActiveSession(shellQuote(dropPath));
       } else {
-        const isDir = await invoke<boolean>("dir_exists", { path: dropPath }).catch(
-          () => false
-        );
+        const isDir = await invoke<boolean>("dir_exists", { path: dropPath }).catch(() => false);
         if (isDir) {
           // Nothing saved here: open the dropped folder as the session's dir.
           // The default agent when configured, else a plain shell.

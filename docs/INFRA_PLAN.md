@@ -10,6 +10,11 @@ and names the concrete files it touches.
 > This is a forward-looking backlog, not a changelog. Nothing here is
 > required to ship features; it is the work that makes the project
 > *maintainable and diagnosable* at scale.
+>
+> **Update (2026-11-27):** items **6** (version single-source + sync check)
+> and **7** (release `workflow_dispatch` + git-cliff changelog) are now
+> implemented — see `scripts/version.ts`, `cliff.toml`, `docs/RELEASING.md`,
+> and `.github/workflows/release.yml`. The remaining items are still open.
 
 Ordered roughly by impact-per-effort: **1 → 2 → 3** are cheap and fix real
 gaps today; **4 → 7** harden CI and the release pipeline; **8 → 10** are
@@ -20,7 +25,7 @@ larger, deliberate investments.
 ## 1. Actually wire up logging + a panic hook (fixes a silent no-op)
 
 **Problem.** The backend calls `log::info!` / `log::warn!` / `log::error!` in
-~10 places (`lib.rs`, `pty.rs`, `updater.rs`, `dictation/*`), but **no logger
+~10 places (`lib.rs`, `pty.rs`, `updater.rs`), but **no logger
 backend is initialized anywhere** — `log = "0.4"` is a dependency but no
 `env_logger` / `fern` / `simple_logger` / `tauri-plugin-log` is present. Every
 one of those calls is silently dropped today. There is also no panic hook, so
@@ -46,8 +51,8 @@ a panicking thread just aborts with zero trace in the log.
 - `src-tauri/src/main.rs` — logger init + panic hook.
 - `README.md` — note where logs live (`hivefield --doctor` output, see #2).
 
-**Verification.** Run the app, trigger a logged path (dictation error, failed
-git call), confirm the line lands in the log file; panic a thread in a test
+**Verification.** Run the app, trigger a logged path (failed git call),
+confirm the line lands in the log file; panic a thread in a test
 build and confirm the hook fires.
 
 ---
@@ -56,14 +61,14 @@ build and confirm the hook fires.
 
 **Problem.** Bug reports today lack environment context: OS/arch, app version,
 install dir, launch dir, git presence, settings schema version, worktree base
-dir, which dictation engine, log file path. Collecting it by hand is tedious
+dir, log file path. Collecting it by hand is tedious
 and error-prone.
 
 **Design.**
 - New IPC command `diagnostics()` returning a flat JSON blob: `CARGO_PKG_VERSION`,
   OS/arch, install dir (`updater::install_dir()`), launch cwd, whether the
   launch dir is a git repo + its root, `SETTINGS_SCHEMA_VERSION`, the resolved
-  worktree base dir, active dictation engine, and the log file path from #1.
+  worktree base dir, and the log file path from #1.
 - Frontend: a palette action "Copy diagnostics" that invokes it and puts the
   formatted text on the clipboard (reuses `clipboard.ts`), so pasting a bug
   report is one keypress.
@@ -120,10 +125,10 @@ README's update story is Linux-only in practice despite the platform badge.
 
 **Design.**
 - `test.yml`: make the backend job a matrix over `ubuntu-24.04`,
-  `macos-14` (arm64 runner), and `windows-latest`. The frontend job can stay
+  `macos-15` (arm64 runner), and `windows-latest`. The frontend job can stay
   Linux-only (pure TS, no platform code) — but running it on the matrix costs
   little.
-- `release.yml`: add `macos-14` and `windows-latest` build jobs that publish
+- `release.yml`: add `macos-15` and `windows-latest` build jobs that publish
   `hivefield-macos-{arch}.tar.gz` / `hivefield-windows-{arch}.exe` updater
   assets alongside the Linux ones. Unsigned macOS builds are fine to start
   (users right-click-open); note the notarization/signing gap in the README.
@@ -232,7 +237,7 @@ measurement — the repo can't see which modules are untested, and the
 "improve test coverage" todo can't be tracked. Rough count: ~15 of ~40
 frontend modules have no test file at all (`sessions.ts`, `sidebar.ts`,
 `palette.ts`, `search.ts`, `workspace.ts`, `terminal.ts`, `dnd.ts`, `menus.ts`,
-`keyboard.ts`, `listeners.ts`, `splash.ts`, `titles.ts`, `dictation.ts`,
+`keyboard.ts`, `listeners.ts`, `splash.ts`, `titles.ts`,
 `bell.ts`, `status-bar.ts`, `settings-ui.ts`, `updater.ts`, `windows.ts`,
 `git-toast.ts`, `modal.ts`, `main.ts`).
 
