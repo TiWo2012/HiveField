@@ -41,7 +41,7 @@ tar = "0.4"
 flate2 = "1"
 # SHA-256 verification of downloaded release assets against the release's
 # checksums.txt (see updater.rs verify_checksum).
-sha2 = "0.10"
+sha2 = "0.11"
 
 [features]
 default = []
