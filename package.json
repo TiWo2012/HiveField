@@ -8,6 +8,10 @@
     "build": "tsc --noEmit && bun build src/main.ts --outdir dist && cp index.html dist/",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
+    "version:show": "bun scripts/version.ts show",
+    "version:check": "bun scripts/version.ts check",
+    "version:bump": "bun scripts/version.ts bump",
+    "version:verify-tag": "bun scripts/version.ts verify-tag",
     "dev": "bun run build",
     "dev:no-reload": "tauri dev --no-watch --no-dev-server"
   },

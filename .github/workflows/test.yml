@@ -9,7 +9,14 @@ name: Tests
 on:
   push:
     branches: [dev]
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      # release.yml passes the commit it prepared (which may include a version
+      # bump), so the tests exercise exactly what gets shipped.
+      ref:
+        description: Commit to check out (defaults to the triggering commit).
+        required: false
+        type: string
 
 jobs:
   frontend:
@@ -17,9 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
+
+      # package.json / src-tauri/Cargo.toml / src-tauri/tauri.conf.json must
+      # all carry the same version; release tags are validated against it too.
+      - name: Check version files agree
+        run: bun scripts/version.ts check
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -42,6 +56,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       # tauri::generate_context!() embeds the frontend and fails if ../dist
       # does not exist, so build it before running cargo test.
@@ -90,6 +106,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       # End-to-end test of the repo installer against a mock GitHub release
       # (curl is stubbed, so no network is needed). Runs on macOS to prove
@@ -103,6 +121,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       # End-to-end test of the Windows installer against a mock GitHub
       # release (a local HttpListener, pointed at via HF_API_BASE /
