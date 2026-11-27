@@ -348,6 +348,25 @@ with a `localStorage` fallback:
   exits without opening the app (on Windows release builds the console is
   hidden, so use the palette action there)
 
+### Logs
+
+Backend logs go to `<app log dir>/hivefield.log` (the exact path is in the
+diagnostics blob):
+
+- Linux: `~/.local/share/dev.hivefield.terminal/logs/hivefield.log`
+- macOS: `~/Library/Logs/dev.hivefield.terminal/hivefield.log`
+- Windows: `%LOCALAPPDATA%\dev.hivefield.terminal\logs\hivefield.log`
+
+The file rotates at 2 MB, keeping up to 3 timestamped archives. Debug builds
+also mirror log output to stderr. Set `HF_LOG` (or `RUST_LOG`) to control the
+level, e.g. `HF_LOG=debug`, `HF_LOG=hivefield_lib=debug` or
+`HF_LOG=info,hivefield_lib::pty=trace`.
+
+Panics are captured by a hook that appends the thread name, location, panic
+payload and a backtrace to the same log before the unchanged default hook
+prints to stderr.
+
+
 ---
 
 ## Architecture

@@ -2,6 +2,7 @@ mod dictation;
 mod diagnostics;
 mod fonts;
 mod git;
+mod logging;
 mod net;
 mod notifications;
 mod pty;
@@ -512,6 +513,13 @@ pub fn diagnostics_cli() -> serde_json::Value {
     diagnostics::collect_cli()
 }
 
+/// Install the process-wide panic hook (see `logging::install_panic_hook`).
+/// Called by `main()` before the Tauri app boots so panics during startup are
+/// recorded too, not just panics after the logger plugin is initialized.
+pub fn install_panic_hook() {
+    logging::install_panic_hook();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Capture the repo + HEAD commit the app launched against, so the UI can
@@ -522,9 +530,30 @@ pub fn run() {
             .unwrap_or_else(|_| PathBuf::from(".")),
     );
     tauri::Builder::default()
+        // Install the logger first so every later plugin / setup log line is
+        // captured. The panic hook itself is installed from `main()`.
+        .plugin(logging::plugin())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let log_file = app
+                .path()
+                .app_log_dir()
+                .map(|dir| dir.join(logging::LOG_FILE_NAME));
+            log::info!(
+                "hiveField {} starting on {} {} (pid {})",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                std::process::id()
+            );
+            match log_file {
+                Ok(path) => log::info!("logging to {}", path.display()),
+                Err(e) => log::warn!("failed to resolve the app log directory: {e}"),
+            }
+            Ok(())
+        })
         .manage(PtyState::<tauri::Wry>::default())
         .manage(windows::WindowState::default())
         .manage(git::GitCache::default())
