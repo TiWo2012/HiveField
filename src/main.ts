@@ -23,7 +23,6 @@ import { isKnownModeAll, RAW_MODE } from "./agents";
 import { customs, defaultMode, sessionModes } from "./modes";
 import { getSettings, loadSettings, subscribe } from "./settings";
 import { getTheme } from "./themes";
-import { initDictation } from "./dictation";
 import { initSearch, isSearchOpen, rerunSearch } from "./search";
 import { initPalette } from "./palette";
 import {
@@ -267,8 +266,6 @@ async function init() {
 
   // Status bar (below the terminal area): broadcast toggle + active session info.
   initStatusBar();
-
-  initDictation();
 
   // Floating search bar (Ctrl+Shift+F) over the terminal workspace.
   initSearch({

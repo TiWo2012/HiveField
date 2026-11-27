@@ -64,8 +64,7 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libasound2-dev
+            librsvg2-dev
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2

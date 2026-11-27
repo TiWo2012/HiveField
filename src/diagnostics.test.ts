@@ -12,7 +12,6 @@ const sample: Diagnostics = {
   gitCommit: "abc123",
   settingsSchemaVersion: 1,
   worktreeBaseDir: "/tmp",
-  dictationEngine: "whisper",
   logFile: "/home/u/.local/share/dev.hivefield.terminal/logs/hivefield.log",
 };
 

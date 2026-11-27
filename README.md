@@ -29,7 +29,6 @@ worktrees — all inside a tabbed, split-pane interface.
   - [Appearance & Themes](#appearance--themes)
   - [Prompt Snippets](#prompt-snippets)
   - [Drag & Drop](#drag--drop)
-  - [Dictation](#dictation)
   - [Keybindings](#keybindings)
   - [Configuration](#configuration)
   - [Diagnostics](#diagnostics)
@@ -318,19 +317,6 @@ installer ensures WebView2 is present if missing.
   continues (the folder lands in the resumed shell, or becomes the session
   directory when nothing is saved here)
 
-### Dictation
-
-- Hold `Ctrl+Alt+D` (rebindable) in the terminal to record; release to
-  transcribe and insert the text into the pane that was active when recording
-  started
-- **Cloud** engine works out of the box — sends audio to an OpenAI-compatible
-  `/audio/transcriptions` endpoint and reads `OPENAI_API_KEY` from the
-  environment
-- **Local Whisper** — requires a build with the `whisper` cargo feature; the
-  model downloads on first use (configurable model directory and URL, and
-  auto-download can be turned off)
-- Configurable microphone selection in Settings, including the system default
-
 ### Keybindings
 
 - Every keyboard shortcut is rebindable in **Settings → Keybinds** — click a
@@ -359,7 +345,6 @@ with a `localStorage` fallback:
 | **Mouse** | Copy on select, middle-click paste |
 | **Notifications** | Desktop notifications on/off, ntfy server/topic/token |
 | **Terminal Bell** | Sound on/off, notification on/off |
-| **Dictation** | Cloud or local Whisper, microphone, model directory/URL, auto-download |
 | **Keybinds** | Remap any shortcut |
 | **Snippets** | Prompt snippet library |
 
@@ -368,7 +353,7 @@ with a `localStorage` fallback:
 - **Copy diagnostics** (command palette) — copies a flat environment context
   blob to the clipboard for pasting into bug reports: app version, OS/arch,
   install dir, launch dir, git repo/commit (when inside one), settings schema
-  version, worktree base dir, dictation engine, and the log file path
+  version, worktree base dir, and the log file path
 - `hivefield --doctor` prints the same blob as pretty JSON to stdout and
   exits without opening the app (on Windows release builds the console is
   hidden, so use the palette action there)
@@ -418,8 +403,6 @@ The Rust backend (`src-tauri/src/`) owns:
 - **Settings** — read/write `settings.json` in the app config dir
   (`settings.rs`)
 - **Notifications** — desktop and ntfy push notifications (`notifications.rs`)
-- **Dictation** — cloud speech-to-text plus optional local Whisper
-  (`dictation/`)
 - **Font discovery** — system font enumeration (`fonts.rs`)
 - **Diagnostics** — environment blob for bug reports and `--doctor`
   (`diagnostics.rs`)
@@ -432,13 +415,9 @@ The Rust backend (`src-tauri/src/`) owns:
   ([see Tauri docs](https://v2.tauri.app/start/prerequisites/))
 - **Bun** — used as the package manager, bundler, and test runner
 - **Linux**: `build-essential`, `pkg-config`, `libwebkit2gtk-4.1-dev`,
-  `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,
-  and `libasound2-dev`
+  `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
 - **macOS**: Xcode Command Line Tools
 - **Windows**: Microsoft Visual Studio C++ Build Tools, WebView2
-
-Local Whisper dictation is opt-in and adds `cmake` and a C++ compiler to the
-build. Without the `whisper` cargo feature, only cloud dictation is available.
 
 ---
 
@@ -450,9 +429,6 @@ bun install
 
 # Build the Rust backend
 (cd src-tauri && cargo build)
-
-# Optional: build with local Whisper dictation
-(cd src-tauri && cargo build --features whisper)
 
 # Launch in dev mode (hot-reload frontend, restart backend on changes)
 bun run tauri dev
@@ -476,10 +452,6 @@ bun run tauri build
 ```
 
 Outputs are in `src-tauri/target/release/bundle/`.
-
-Release builds ship without local Whisper by default; pass
-`--features whisper` to `tauri build` to include it (requires `cmake` and a
-C++ compiler).
 
 ---
 
@@ -559,8 +531,6 @@ launch directory or on app-wide state.
 | Rust → JS   | `menu://open-directory`, `menu://new-window` | no payload — the native File menu asks the focused window to act |
 | Rust → JS   | `updater://progress`                | `{ percent, total }` — update download progress |
 | Rust → JS   | `updater://done`                    | `{ version, path }` — update installed |
-| Rust → JS   | `dictation://status`                | `{ status, detail? }` — `idle`, `listening`, `transcribing`, `error` |
-| Rust → JS   | `dictation://result`                | `{ text, sessionId }` — sent to the window that started the dictation |
 | JS → Rust   | `pty_spawn`                         | `{ mode, cwd?, autorun?, cols?, rows? }` — `mode` is the agent id (`"opencode"`, `"pi"`, `"codex"`, `"copilot"`, `"claude"`, ...) or `"raw"`; `cwd` optionally pins the start directory (e.g. a worktree); `autorun` overrides the command when the CLI binary differs from the mode id → returns `sessionId` |
 | JS → Rust   | `editor_command`                    | () → the command the built-in Editor agent auto-runs: `$EDITOR` resolved with per-platform fallback (`${EDITOR:-vi}` on unix, `%EDITOR%`/`notepad` on Windows) |
 | JS → Rust   | `pty_write`                         | `{ sessionId, data }` |
@@ -586,13 +556,9 @@ launch directory or on app-wide state.
 | JS → Rust   | `list_system_fonts`                 | () → sorted, deduplicated system font family names |
 | JS → Rust   | `notify_desktop`                    | `{ title, body }` — show a native desktop notification |
 | JS → Rust   | `ntfy_send`                         | `{ title, body }` — publish a push notification to the configured ntfy server/topic (no-op when disabled) |
-| JS → Rust   | `dictation_devices`                 | () → available microphones as `{ id, name, isDefault }`, default first |
-| JS → Rust   | `dictation_start`                   | `{ engine?, device?, sessionId? }` — start capture; `engine` is `"whisper"` or `"cloud"`, `device` is an id from `dictation_devices`; returns quickly while a model downloads or loads |
-| JS → Rust   | `dictation_stop`                    | () — stop capture, transcribe, and emit `dictation://result` |
-| JS → Rust   | `dictation_status`                  | () → `{ status, detail? }` |
 | JS → Rust   | `updater_check`                     | () → latest release info from TiWo2012/HiveField (`{ currentVersion, latestVersion, publishedAt, changelog, htmlUrl, assetName, assetUrl, assetSize, installDir, updateAvailable }`) |
 | JS → Rust   | `updater_install`                   | () → download the latest release and install it to the shared install dir; emits `updater://progress` / `updater://done` — returns `{ version, path }` |
-| JS → Rust   | `diagnostics`                       | () → flat diagnostics blob for bug reports: `{ app, version, os, arch, installDir, launchDir, gitRepo, gitCommit, settingsSchemaVersion, worktreeBaseDir, dictationEngine, logFile }` (same data as `hivefield --doctor`) |
+| JS → Rust   | `diagnostics`                       | () → flat diagnostics blob for bug reports: `{ app, version, os, arch, installDir, launchDir, gitRepo, gitCommit, settingsSchemaVersion, worktreeBaseDir, logFile }` (same data as `hivefield --doctor`) |
 
 Workspace persistence commands are keyed by the canonicalized launch directory
 (`cwd`), not by session.

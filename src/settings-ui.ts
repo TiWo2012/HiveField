@@ -1,7 +1,7 @@
 /**
  * Settings page — a modal overlay with two tabs:
  *
- *  - **General**: font / Unicode / rendering / agents / worktrees / dictation /
+ *  - **General**: font / Unicode / rendering / agents / worktrees /
  *    notifications options. Every control writes straight into the settings
  *    store, so changes apply live to all open terminals.
  *  - **Keybinds**: every configurable keyboard shortcut, click-to-record.
@@ -54,13 +54,6 @@ import {
 } from "./updater";
 
 const PREVIEW_TEXT = "AaBb 日本語 中文 🎉 → ①②③ NFO nf ";
-
-/** A microphone listed by the backend's `dictation_devices` command. */
-interface DictationDevice {
-  id: string;
-  name: string;
-  isDefault: boolean;
-}
 
 let overlay: HTMLElement | null = null;
 let previewEl: HTMLElement | null = null;
@@ -218,46 +211,6 @@ function selectField<T extends string>(
   }
   select.value = value;
   select.addEventListener("change", () => onChange?.(select.value as T));
-  return select;
-}
-
-/**
- * Microphone dropdown for dictation. The empty value is "system default"; the
- * list of devices is loaded from the backend. A saved id whose device was
- * unplugged is kept in the list (labelled unavailable) so the stored setting
- * isn't silently lost.
- */
-function micSelect(current: string, onChange?: (v: string) => void): HTMLElement {
-  const select = el("select", "settings-select");
-  const addOption = (value: string, label: string) => {
-    const optionEl = el("option");
-    optionEl.value = value;
-    optionEl.textContent = label;
-    select.appendChild(optionEl);
-  };
-
-  addOption("", "System default");
-  select.value = current;
-  select.addEventListener("change", () => onChange?.(select.value));
-
-  invoke<DictationDevice[]>("dictation_devices")
-    .then((devices) => {
-      const ids = new Set(devices.map((d) => d.id));
-      if (current !== "" && !ids.has(current)) {
-        addOption(current, "Unavailable (unplugged)");
-      }
-      for (const device of devices) {
-        addOption(
-          device.id,
-          device.isDefault ? `${device.name} (default)` : device.name
-        );
-      }
-      select.value = current;
-    })
-    .catch((err) => {
-      console.error("Failed to load microphones:", err);
-    });
-
   return select;
 }
 
@@ -710,58 +663,6 @@ function buildGeneralTab(): HTMLElement {
     )
   );
   body.appendChild(worktreeSection);
-
-  /* --- Dictation --- */
-  const dictationSection = section("Dictation");
-  dictationSection.appendChild(
-    controlRow(
-      "Engine",
-      selectField(
-        s.dictationEngine,
-        [
-          { value: "whisper", label: "Whisper (local)" },
-          { value: "cloud", label: "Cloud API" },
-        ],
-        (dictationEngine) => updateSettings({ dictationEngine })
-      ),
-      "Hold the Dictate key (rebindable in the Keybinds tab) in the terminal to dictate; Whisper uses a local model, Cloud API sends the audio to an OpenAI-compatible endpoint (needs the OPENAI_API_KEY environment variable)"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Microphone",
-      micSelect(s.dictationMic, (dictationMic) => updateSettings({ dictationMic })),
-      "Which microphone to capture from; System default follows the OS default input device"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Auto-download model",
-      toggleField(s.dictationAutoDownload, (dictationAutoDownload) =>
-        updateSettings({ dictationAutoDownload })
-      ),
-      "When the Whisper model is missing, download it on first use instead of failing with an error"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Model URL",
-      textField(s.dictationModelUrl, (dictationModelUrl) =>
-        updateSettings({ dictationModelUrl })
-      ),
-      "Download source for the Whisper model when missing (default: upstream HuggingFace release); leave empty for the default"
-    )
-  );
-  dictationSection.appendChild(
-    controlRow(
-      "Model directory",
-      textField(s.dictationModelDir, (dictationModelDir) =>
-        updateSettings({ dictationModelDir })
-      ),
-      "Directory holding ggml-base.en.bin; leave empty for the default config models dir. Pre-provision a model here and disable auto-download to avoid runtime downloads"
-    )
-  );
-  body.appendChild(dictationSection);
 
   /* --- Notifications --- */
   const notifySection = section("Notifications");

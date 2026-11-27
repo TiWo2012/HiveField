@@ -19,8 +19,7 @@ import { openNewWindow } from "./windows";
 import { defaultMode } from "./modes";
 import { RAW_MODE } from "./agents";
 import { openDirectory } from "./open-directory";
-import { getApi, panelToSession } from "./state";
-import { startDictation, stopDictation } from "./dictation";
+import { getApi } from "./state";
 import { toggleBroadcast } from "./broadcast";
 
 /** Bump the global terminal font size by `delta` (persisted in settings). */
@@ -74,20 +73,10 @@ export function setupKeyboard() {
       e.preventDefault();
       toggleSettings();
     }
-    // Dictation push-to-talk: on keydown (not repeat), start capturing
-    // audio. The target session is pinned now so the transcribed text lands
-    // in the terminal that was active when the key went down.
+    // Broadcast toggle: send the shortcut to every pane.
     if (matchesKeybind(kb.broadcastToggle, e)) {
       e.preventDefault();
       toggleBroadcast();
-      return;
-    }
-    if (matchesKeybind(kb.dictate, e)) {
-      if (e.repeat) return;
-      e.preventDefault();
-      const panel = getApi().activePanel;
-      const sessionId = panel ? panelToSession.get(panel.id) : undefined;
-      startDictation(sessionId);
       return;
     }
     // Paste the system clipboard into the active terminal / copy its
@@ -116,24 +105,12 @@ export function setupKeyboard() {
     }
   });
 
-  // Dictation is push-to-talk: releasing the keybind stops the capture.
-  // Also stop on window blur so a stuck key doesn't keep the mic open.
-  window.addEventListener("keyup", (e) => {
-    if (uiOpen()) return;
-    if (matchesKeybind(getSettings().keybinds.dictate, e)) {
-      e.preventDefault();
-      stopDictation();
-    }
-  });
-  window.addEventListener("blur", () => stopDictation());
-
   // Vim-style pane movement (focus left/down/up/right), workspace switching
-  // (1…10), dictation (push-to-talk) and font-size zoom. Registered in the
+  // (1…10) and font-size zoom. Registered in the
   // CAPTURE phase so the keys are intercepted before xterm sees them
   // (otherwise a rebound Ctrl+H is backspace, Ctrl+J newline, Ctrl+K
   // kill-line, Ctrl+L clear-screen). If there is no adjacent pane in that
-  // direction the key falls through to the terminal. Dictation's keydown is
-  // also stopped here to prevent the key combo from reaching the shell.
+  // direction the key falls through to the terminal.
   window.addEventListener(
     "keydown",
     (e) => {
@@ -204,15 +181,6 @@ export function setupKeyboard() {
       // Broadcast toggle: stop the combo from reaching the shell when
       // rebound to a printable key.
       if (matchesKeybind(kb.broadcastToggle, e)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      // Dictation push-to-talk: stop the combo from reaching the shell, but
-      // let the bubble-phase handler actually start the capture (it has the
-      // active-panel check and the repeat-key guard). We match here too so
-      // that a rebound printable-key combo doesn't leak into xterm.
-      if (matchesKeybind(kb.dictate, e)) {
         e.preventDefault();
         e.stopPropagation();
         return;

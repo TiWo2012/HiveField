@@ -27,8 +27,6 @@ export interface Diagnostics {
   settingsSchemaVersion: number | null;
   /** Effective worktree base dir. */
   worktreeBaseDir: string | null;
-  /** Resolved dictation engine id (`whisper` / `cloud`). */
-  dictationEngine: string | null;
   /** The rotated log file the app writes to. */
   logFile: string | null;
 }

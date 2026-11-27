@@ -23,7 +23,6 @@ import {
 
 export type FontWeightValue = "normal" | "bold";
 export type UnicodeVersion = "6" | "11";
-export type DictationEngine = "whisper" | "cloud";
 
 /** A prompt snippet: a named chunk of text inserted into the active terminal. */
 export interface PromptSnippet {
@@ -94,30 +93,6 @@ export interface AppSettings {
   theme: string;
   /** Terminal background opacity: 1 = opaque, < 1 = translucent. */
   backgroundOpacity: number;
-  dictationEngine: DictationEngine;
-  /**
-   * Stable device id of the microphone used for dictation, as reported by the
-   * `dictation_devices` IPC command. Empty string means the system default
-   * input device.
-   */
-  dictationMic: string;
-  /**
-   * Directory that contains the local Whisper model (`ggml-base.en.bin`).
-   * Empty string = the default `<app config>/models` directory. Lets users or
-   * deployments pre-provision a model and point the app at it.
-   */
-  dictationModelDir: string;
-  /**
-   * Download URL for the local Whisper model when it is missing. Empty string
-   * = the upstream HuggingFace release. Self-hosted mirrors can pin their own.
-   */
-  dictationModelUrl: string;
-  /**
-   * Whether a missing Whisper model is downloaded automatically at first use.
-   * When disabled, dictation reports a clear error instead of downloading a
-   * multi-megabyte model behind the user's back.
-   */
-  dictationAutoDownload: boolean;
   /** Base directory for auto-created worktree sessions (default /tmp). */
   worktreeBaseDir: string;
   /** Show a native desktop notification when an agent session finishes. */
@@ -185,11 +160,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontLigatures: true,
   theme: DEFAULT_THEME_ID,
   backgroundOpacity: 1,
-  dictationEngine: "whisper",
-  dictationMic: "",
-  dictationModelDir: "",
-  dictationModelUrl: "",
-  dictationAutoDownload: true,
   worktreeBaseDir: "/tmp",
   desktopNotifications: true,
   terminalBellSound: true,
@@ -408,21 +378,6 @@ function normalize(value: unknown): AppSettings {
       typeof v.theme === "string" ? (v.theme as string) : undefined
     ).id,
     backgroundOpacity: Math.max(OPACITY_MIN, Math.min(OPACITY_MAX, pickNum("backgroundOpacity", DEFAULT_SETTINGS.backgroundOpacity))),
-    dictationEngine:
-      v.dictationEngine === "cloud" ? v.dictationEngine : "whisper",
-    dictationMic: pickStr("dictationMic", DEFAULT_SETTINGS.dictationMic),
-    dictationModelDir: pickStr(
-      "dictationModelDir",
-      DEFAULT_SETTINGS.dictationModelDir
-    ),
-    dictationModelUrl: pickStr(
-      "dictationModelUrl",
-      DEFAULT_SETTINGS.dictationModelUrl
-    ),
-    dictationAutoDownload: pickBool(
-      "dictationAutoDownload",
-      DEFAULT_SETTINGS.dictationAutoDownload
-    ),
     worktreeBaseDir: pickStr("worktreeBaseDir", DEFAULT_SETTINGS.worktreeBaseDir),
     desktopNotifications: pickBool(
       "desktopNotifications",

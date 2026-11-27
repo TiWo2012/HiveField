@@ -52,7 +52,6 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libasound2-dev \
             libfuse2t64
 
       - name: Cache cargo build

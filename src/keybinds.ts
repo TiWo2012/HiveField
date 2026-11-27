@@ -28,7 +28,6 @@ export type KeybindAction =
   | "fullscreen"
   | "zoomIn"
   | "zoomOut"
-  | "dictate"
   | "workspace1"
   | "workspace2"
   | "workspace3"
@@ -69,7 +68,6 @@ export const KEYBIND_ACTIONS: KeybindDef[] = [
   { id: "fullscreen", label: "Fullscreen active pane", group: "Tabs", default: "Ctrl+F" },
   { id: "zoomIn", label: "Increase font size", group: "Font", default: "Ctrl+=" },
   { id: "zoomOut", label: "Decrease font size", group: "Font", default: "Ctrl+-" },
-  { id: "dictate", label: "Dictate (hold)", group: "Dictation", default: "Ctrl+Alt+D" },
   { id: "workspace1", label: "Switch to workspace 1", group: "Workspaces", default: "Ctrl+1" },
   { id: "workspace2", label: "Switch to workspace 2", group: "Workspaces", default: "Ctrl+2" },
   { id: "workspace3", label: "Switch to workspace 3", group: "Workspaces", default: "Ctrl+3" },
