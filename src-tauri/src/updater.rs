@@ -11,6 +11,11 @@
 //! binary is accepted as a fallback. The `.github/workflows/release.yml`
 //! workflow publishes exactly these assets.
 //!
+//! Every release also ships `checksums.txt` (SHA-256 per asset, `sha256sum`
+//! format). `install_blocking` downloads it, looks up the selected asset's
+//! digest, and refuses to install on a missing entry or a mismatch — the same
+//! contract install.sh and install.ps1 honor.
+//!
 //! IPC surface:
 //!
 //!   - `updater_check()`  — query the latest release; return the version,
@@ -54,12 +59,17 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use crate::net::HttpClient;
 
+/// GitHub repository that hosts releases (shared with install.sh/install.ps1).
+pub const REPO: &str = "TiWo2012/HiveField";
 /// GitHub Releases API base for `TiWo2012/HiveField`.
 pub const API_BASE: &str = "https://api.github.com/repos/TiWo2012/HiveField/releases";
+/// Name of the per-release SHA-256 manifest (shared with install.sh/install.ps1).
+pub const CHECKSUMS_NAME: &str = "checksums.txt";
 /// Env override shared with `install.sh`; wins over the platform default.
 pub const INSTALL_DIR_ENV: &str = "HF_INSTALL_DIR";
 /// Env override to pin a release tag (shared with `install.sh`).
@@ -431,6 +441,89 @@ fn bin_name(os: &str) -> &'static str {
     }
 }
 
+/// Download URL for the release's checksum manifest. `version` is the tag
+/// without its `v` prefix (as stored in `UpdateInfo.latest_version`).
+fn checksums_url(version: &str) -> String {
+    format!("https://github.com/{REPO}/releases/download/v{version}/{CHECKSUMS_NAME}")
+}
+
+/// Find an asset's SHA-256 in a `sha256sum`-format manifest (`<hex>  <name>`
+/// per line, optional `*` binary marker before the name). Returns the digest
+/// lowercased, or `None` when the asset has no (well-formed) entry. Must stay
+/// in sync with install.sh's `verify_checksum` and install.ps1's
+/// `Get-ExpectedChecksum`.
+fn parse_checksums(text: &str, asset_name: &str) -> Option<String> {
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(hash) = fields.next() else {
+            continue;
+        };
+        let Some(file) = fields.next() else {
+            continue;
+        };
+        let file = file.strip_prefix('*').unwrap_or(file);
+        if file != asset_name {
+            continue;
+        }
+        if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(hash.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+/// SHA-256 of a file, streaming it so a large release archive is never read
+/// into memory at once.
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("failed to open {}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 256 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Verify a downloaded release asset against the release's `checksums.txt`.
+/// A missing manifest, a missing entry, or a digest mismatch is fatal — an
+/// unverified binary is never installed (docs/INFRA_PLAN.md §5). Mirrors
+/// install.sh's `verify_checksum` / install.ps1's checksum block.
+fn verify_checksum(
+    client: &HttpClient,
+    version: &str,
+    asset: &Asset,
+    archive_path: &Path,
+) -> Result<(), String> {
+    let url = checksums_url(version);
+    let text = client.get_text(&url).map_err(|e| {
+        format!(
+            "release v{version} does not publish {CHECKSUMS_NAME}; refusing to install an unverified binary: {e}"
+        )
+    })?;
+    let expected = parse_checksums(&text, &asset.name).ok_or_else(|| {
+        format!(
+            "{CHECKSUMS_NAME} for release v{version} has no valid entry for {}; refusing to install",
+            asset.name
+        )
+    })?;
+    let actual = sha256_file(archive_path)?;
+    if actual != expected {
+        return Err(format!(
+            "SHA-256 mismatch for {} (expected {expected}, got {actual}); refusing to install",
+            asset.name
+        ));
+    }
+    log::info!("verified SHA-256 for {} ({actual})", asset.name);
+    Ok(())
+}
+
 /// One release asset.
 struct Asset {
     name: String,
@@ -678,6 +771,13 @@ fn install_blocking(app: &AppHandle) -> Result<UpdateDone, String> {
             })?;
     }
 
+    // Refuse to touch an asset whose digest does not match the release's
+    // published checksum manifest.
+    if let Err(e) = verify_checksum(&client, &version, &asset, &archive_path) {
+        let _ = fs::remove_file(&archive_path);
+        return Err(e);
+    }
+
     // Stage the new binary under a temp name, then rename it over the live
     // one: an interrupted install never leaves a truncated binary behind, and
     // the swap is atomic on unix. On Windows replacing a running exe fails;
@@ -871,6 +971,63 @@ mod tests {
         assert_eq!(bin_name("windows"), "hivefield.exe");
         assert_eq!(bin_name("linux"), "hivefield");
         assert_eq!(bin_name("macos"), "hivefield");
+    }
+
+    #[test]
+    fn checksums_url_points_at_the_release_manifest() {
+        assert_eq!(
+            checksums_url("0.2.0-build.9"),
+            "https://github.com/TiWo2012/HiveField/releases/download/v0.2.0-build.9/checksums.txt"
+        );
+    }
+
+    #[test]
+    fn parse_checksums_finds_the_asset_digest() {
+        let text = "\
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  hivefield-linux-x86_64.tar.gz
+0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  hivefield-macos-aarch64.tar.gz
+";
+        assert_eq!(
+            parse_checksums(text, "hivefield-linux-x86_64.tar.gz").as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+        assert_eq!(
+            parse_checksums(text, "hivefield-macos-aarch64.tar.gz").as_deref(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    #[test]
+    fn parse_checksums_handles_uppercase_and_binary_markers() {
+        let text = "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD *hivefield\n";
+        assert_eq!(
+            parse_checksums(text, "hivefield").as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+    }
+
+    #[test]
+    fn parse_checksums_ignores_missing_or_malformed_entries() {
+        let text = "\
+not-a-hash  hivefield-linux-x86_64.tar.gz
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  hivefield-macos-aarch64.tar.gz
+";
+        // Wrong/malformed digest for the looked-up asset is not accepted...
+        assert!(parse_checksums(text, "hivefield-linux-x86_64.tar.gz").is_none());
+        // ...and an asset absent from the manifest yields nothing.
+        assert!(parse_checksums(text, "hivefield-windows-x86_64.exe").is_none());
+        assert!(parse_checksums("", "hivefield").is_none());
+    }
+
+    #[test]
+    fn sha256_file_matches_the_known_digest_of_abc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("abc");
+        fs::write(&file, b"abc").unwrap();
+        assert_eq!(
+            sha256_file(&file).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

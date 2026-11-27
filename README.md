@@ -483,6 +483,11 @@ the Start Menu shortcut (mirroring `HF_NO_PATH`).
 automatically for Linux, macOS (x86_64 + aarch64), and Windows. If a release
 lacks the tarball, a bare `hivefield-<os>-<arch>` binary is used instead.
 
+Every release also publishes a `checksums.txt` (SHA-256 in `sha256sum`
+format). The built-in updater, `install.sh`, and `install.ps1` download it and
+**refuse to install** when the asset has no entry or its digest does not
+match, so a corrupted or tampered download never replaces a working binary.
+
 ## IPC Contract
 
 All commands/events are addressed by a `sessionId` (a number allocated by the

@@ -210,6 +210,17 @@ jobs:
           path: dist-artifacts
           merge-multiple: true
 
+      # SHA-256 for every published asset, in `sha256sum` format
+      # (`<hex>  <name>` per line). install.sh, install.ps1, and the built-in
+      # updater (src-tauri/src/updater.rs) download this file and refuse to
+      # install an asset whose digest does not match (docs/INFRA_PLAN.md §5).
+      # The checksum contract — one line per asset name — must stay in sync
+      # with those three verifiers.
+      - name: Generate SHA-256 checksums
+        run: |
+          ( cd dist-artifacts && sha256sum -- * > ../checksums.txt )
+          cat checksums.txt
+
       - name: Resolve app version
         run: |
           APP_VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
@@ -241,4 +252,6 @@ jobs:
             > macOS binaries are unsigned and not notarized — right-click the
             > app and choose **Open** the first time (Gatekeeper). Windows
             > binaries are unsigned — SmartScreen may prompt. See the README.
-          files: dist-artifacts/*
+          files: |
+            dist-artifacts/*
+            checksums.txt

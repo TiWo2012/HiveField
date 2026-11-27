@@ -35,6 +35,9 @@ ureq = "3"
 # shell out. flate2 is already in the tree via other deps; tar is new.
 tar = "0.4"
 flate2 = "1"
+# SHA-256 verification of downloaded release assets against the release's
+# checksums.txt (see updater.rs verify_checksum).
+sha2 = "0.10"
 cpal = "0.18.1"
 rubato = "4.0.0"
 # whisper-rs is a binding to whisper.cpp and 0.16 is its newest crate release;

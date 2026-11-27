@@ -22,7 +22,12 @@ New-Item -ItemType Directory -Force -Path $apiDir, $assetDir | Out-Null
 # ---- build a fake release: GitHub API response + exe asset ----
 $tag = 'v9.9.9-test'
 $asset = 'hivefield-windows-x86_64.exe'
-Set-Content -Path (Join-Path $assetDir $asset) -Value 'mock-hivefield-exe' -NoNewline
+$assetPath = Join-Path $assetDir $asset
+Set-Content -Path $assetPath -Value 'mock-hivefield-exe' -NoNewline
+
+# Publish the SHA-256 manifest the installer verifies against.
+$assetHash = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -Path (Join-Path $assetDir 'checksums.txt') -Value "$assetHash  $asset"
 
 $latestJson = @{
     tag_name = $tag
@@ -91,6 +96,41 @@ try {
     & (Join-Path $root 'install.ps1')
     if (-not (Test-Path $exe)) { throw "install.ps1 (pinned) did not install $exe" }
     Write-Host "PASS: install.ps1 (HF_VERSION pin) -> $exe"
+
+    # 3. Tampered asset: a manifest with the wrong digest must abort the
+    #    install and leave no binary behind.
+    $goodChecksums = Get-Content -Raw (Join-Path $mock 'assets\checksums.txt')
+    Set-Content -Path (Join-Path $mock 'assets\checksums.txt') -Value ("0" * 64 + "  $asset")
+    $env:HF_INSTALL_DIR = Join-Path $mock 'install-tampered'
+    $rejected = $false
+    try {
+        & (Join-Path $root 'install.ps1')
+    } catch {
+        $rejected = $true
+        if ($_.Exception.Message -notlike '*SHA-256 mismatch*') { throw }
+    }
+    if (-not $rejected) { throw 'install.ps1 accepted an asset with a mismatched SHA-256' }
+    if (Test-Path (Join-Path $env:HF_INSTALL_DIR 'hivefield.exe')) {
+        throw 'install.ps1 installed a binary despite a checksum mismatch'
+    }
+    Write-Host 'PASS: install.ps1 rejects a tampered asset'
+
+    # 4. Missing manifest: a release without checksums.txt must not install.
+    Remove-Item -Force (Join-Path $mock 'assets\checksums.txt')
+    $env:HF_INSTALL_DIR = Join-Path $mock 'install-no-checksums'
+    $rejected = $false
+    try {
+        & (Join-Path $root 'install.ps1')
+    } catch {
+        $rejected = $true
+        if ($_.Exception.Message -notlike '*does not publish checksums.txt*') { throw }
+    }
+    if (-not $rejected) { throw 'install.ps1 installed from a release with no checksums.txt' }
+    if (Test-Path (Join-Path $env:HF_INSTALL_DIR 'hivefield.exe')) {
+        throw 'install.ps1 installed a binary with no checksum manifest'
+    }
+    Set-Content -Path (Join-Path $mock 'assets\checksums.txt') -Value $goodChecksums
+    Write-Host 'PASS: install.ps1 rejects a release with no checksum manifest'
 
     Write-Host 'install.ps1 end-to-end test PASSED'
 } finally {
