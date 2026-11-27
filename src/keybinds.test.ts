@@ -42,6 +42,15 @@ describe("keybind registry", () => {
     expect(DEFAULT_KEYBINDS.previousTab).toBe("Ctrl+Shift+Tab");
   });
 
+  test("open directory default is Ctrl+Shift+O", () => {
+    expect(DEFAULT_KEYBINDS.openDirectory).toBe("Ctrl+Shift+O");
+    // Must not collide with any other default binding.
+    const others = KEYBIND_ACTIONS.filter((a) => a.id !== "openDirectory").map(
+      (a) => a.default
+    );
+    expect(others).not.toContain(DEFAULT_KEYBINDS.openDirectory);
+  });
+
   test("fullscreen default is Ctrl+F", () => {
     expect(DEFAULT_KEYBINDS.fullscreen).toBe("Ctrl+F");
     // Must not collide with the find binding (Ctrl+Shift+F).

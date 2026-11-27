@@ -52,7 +52,9 @@ hivefield
 It opens in that directory and remembers your layout per project — the next
 time you launch from `my-project`, your tabs and splits are restored.
 
-To open a new window for a different project, press `Ctrl+Shift+N` or use
+To open another project in the current window, press `Ctrl+Shift+O` or use
+**File → Open Directory…** — pick a folder and a session starts there. To open
+a new window for a different project, press `Ctrl+Shift+N` or use
 **File → New Window**.
 
 ---
@@ -160,6 +162,8 @@ To open a new window for a different project, press `Ctrl+Shift+N` or use
 
 ### Multiple Windows
 
+- `Ctrl+Shift+O` (also **File → Open Directory…** and the command palette)
+  opens a native folder picker and starts a session in the chosen directory
 - `Ctrl+Shift+N` (also **File → New Window** and the command palette) opens a
   new app window
 - Every window is fully independent: its own tabs/splits, sessions, workspace

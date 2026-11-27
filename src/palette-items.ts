@@ -25,6 +25,7 @@ import {
 import { renamePanel } from "./titles";
 import { switchToWorkspace, renameWorkspacePrompt } from "./sidebar";
 import { openNewWindow } from "./windows";
+import { openDirectory } from "./open-directory";
 import { getCurrentSlot, getWorkspaceSlots } from "./workspace";
 import type { KeybindAction } from "./keybinds";
 import {
@@ -113,6 +114,12 @@ export function buildPaletteItems(): PaletteItem[] {
       detail: kb().find,
       icon: "⌕",
       run: () => openSearch(),
+    },
+    {
+      label: "Open directory…",
+      detail: kb().openDirectory,
+      icon: "📂",
+      run: () => void openDirectory(),
     },
     {
       label: "New window",

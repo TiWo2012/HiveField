@@ -50,6 +50,7 @@ import { setupContextMenu } from "./menus";
 import { buildPaletteItems } from "./palette-items";
 import { scheduleGitDiffReport } from "./git-toast";
 import { openNewWindow } from "./windows";
+import { openDirectory } from "./open-directory";
 import { addPanelWithMode, activeSessionEntry, createTerminalComponent } from "./sessions";
 import {
   applyTerminalSettings,
@@ -140,9 +141,13 @@ async function init() {
     // Font API unavailable — nothing to wait on.
   }
 
-  // The native File → New Window menu item broadcasts this event; only the
-  // focused window acts on it (it knows its own launch directory, which it
-  // passes to the backend so the new window opens on the same project).
+  // The native File menu items broadcast these events; only the focused
+  // window acts on them (it knows its own launch directory, which it passes
+  // to the backend so the new window opens on the same project).
+  await listen("menu://open-directory", async () => {
+    const win = getCurrentWindow();
+    if (await win.isFocused().catch(() => true)) await openDirectory();
+  });
   await listen("menu://new-window", async () => {
     const win = getCurrentWindow();
     if (await win.isFocused().catch(() => true)) openNewWindow();

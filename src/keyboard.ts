@@ -18,6 +18,7 @@ import { switchToWorkspace } from "./sidebar";
 import { openNewWindow } from "./windows";
 import { defaultMode } from "./modes";
 import { RAW_MODE } from "./agents";
+import { openDirectory } from "./open-directory";
 import { getApi, panelToSession } from "./state";
 import { startDictation, stopDictation } from "./dictation";
 import { toggleBroadcast } from "./broadcast";
@@ -48,6 +49,11 @@ export function setupKeyboard() {
       // "New agent tab": the configured default agent, or a plain shell
       // when the setting is "don't auto-open anything".
       addPanelWithMode(defaultMode() ?? RAW_MODE);
+    }
+    // Pick a folder and start a session in it (File → Open Directory…).
+    if (matchesKeybind(kb.openDirectory, e)) {
+      e.preventDefault();
+      void openDirectory();
     }
     // Open a new app window (see openNewWindow).
     if (matchesKeybind(kb.newWindow, e)) {
